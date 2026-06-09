@@ -435,6 +435,26 @@ func (dm *DesktopMode) setupCardActions(card *GroupCard, grp config.Group) {
 	card.SetOnSizeChanged(func(name string, w, h float64) {
 		dm.manager.UpdateGroupSize(name, w, h)
 	})
+	card.SetOnRename(func(name string) {
+		newName, ok := ShowInputDialog(dm.mainWindow, "重命名分组", "请输入新名称：", name)
+		if ok && newName != "" && newName != name {
+			dm.manager.RenameGroup(name, newName)
+			dm.refreshCards()
+		}
+	})
+	card.SetOnColor(func(name string) {
+		color, ok := ShowColorDialog(dm.mainWindow, "修改颜色", PresetColors)
+		if ok && color != "" {
+			dm.manager.UpdateGroupColor(name, color)
+			dm.refreshCards()
+		}
+	})
+	card.SetOnDelete(func(name string) {
+		if ShowConfirmDialog(dm.mainWindow, "删除分组", "确定要删除分组「"+name+"」吗？\n分组内的项目将移回桌面。") {
+			dm.manager.DeleteGroup(name)
+			dm.refreshCards()
+		}
+	})
 }
 
 // refreshCards 刷新所有卡片

@@ -17,6 +17,11 @@ const (
 	cardMinHeight    = 160
 	cardHeaderHeight = 30
 	resizeHandleSize = 8
+
+	actionBtnWidth  = 22
+	actionBtnHeight = 20
+	actionBtnGap    = 2
+	doubleClickMs   = 500 // 双击判定时间（毫秒）
 )
 
 // GroupCard 分组卡片组件
@@ -55,7 +60,14 @@ type GroupCard struct {
 	// 回调
 	onPositionChanged func(name string, x, y float64)
 	onSizeChanged     func(name string, w, h float64)
+	onRename          func(name string)
+	onColor           func(name string)
+	onDelete          func(name string)
 	onRefresh         func()
+
+	// 双击检测状态
+	lastClickTime time.Time
+	lastClickIdx  int // 上次点击的图标索引
 }
 
 // ResizeEdge 缩放方向
@@ -135,17 +147,58 @@ func NewGroupCard(parent walk.Container, grp config.Group, mgr *group.Manager, e
 // setupMouseEvents 设置鼠标事件
 func (gc *GroupCard) setupMouseEvents() {
 	gc.bodyWidget.MouseDown().Attach(func(x, y int, button walk.MouseButton) {
-		if button == walk.LeftButton {
-			edge := gc.getResizeEdge(x, y)
-			if edge != ResizeNone {
-				gc.startResize(x, y, edge)
-			} else if y < cardHeaderHeight {
-				gc.dragStartX = x
-				gc.dragStartY = y
-				gc.dragStartTime = time.Now()
-				gc.isDragging = false
-				go gc.checkDragStart()
+		if button != walk.LeftButton {
+			return
+		}
+
+		// 缩放边缘检测
+		edge := gc.getResizeEdge(x, y)
+		if edge != ResizeNone {
+			gc.startResize(x, y, edge)
+			return
+		}
+
+		if y < cardHeaderHeight {
+			// 检查是否点击了操作按钮
+			if btn := gc.getActionButtonAt(x); btn != "" {
+				switch btn {
+				case "rename":
+					if gc.onRename != nil {
+						gc.onRename(gc.groupName)
+					}
+				case "color":
+					if gc.onColor != nil {
+						gc.onColor(gc.groupName)
+					}
+				case "delete":
+					if gc.onDelete != nil {
+						gc.onDelete(gc.groupName)
+					}
+				}
+				return
 			}
+
+			// 标题栏拖拽
+			gc.dragStartX = x
+			gc.dragStartY = y
+			gc.dragStartTime = time.Now()
+			gc.isDragging = false
+			go gc.checkDragStart()
+			return
+		}
+
+		// 图标区域：检测双击
+		idx := gc.getItemIndexAt(x, y)
+		if idx >= 0 && idx < len(gc.items) {
+			now := time.Now()
+			if idx == gc.lastClickIdx && now.Sub(gc.lastClickTime) < doubleClickMs*time.Millisecond {
+				// 双击：执行程序
+				gc.executor.Execute(gc.items[idx].Path)
+				gc.lastClickTime = time.Time{} // 重置，防止三击
+				return
+			}
+			gc.lastClickTime = now
+			gc.lastClickIdx = idx
 		}
 	})
 
@@ -364,6 +417,66 @@ func (gc *GroupCard) updateCursor(x, y int) {
 	}
 }
 
+// getActionButtonAt 根据 x 坐标判断点击了哪个操作按钮
+func (gc *GroupCard) getActionButtonAt(x int) string {
+	bounds := gc.bodyWidget.ClientBoundsPixels()
+	// 按钮从右到左排列：[×] [色] [✎]
+	btnRight := bounds.X + bounds.Width - 4
+	btnLeft := btnRight - actionBtnWidth
+
+	// × 删除（最右）
+	if x > btnLeft && x < btnRight {
+		return "delete"
+	}
+	btnRight = btnLeft - actionBtnGap
+	btnLeft = btnRight - actionBtnWidth
+	// 色 颜色（中间）
+	if x > btnLeft && x < btnRight {
+		return "color"
+	}
+	btnRight = btnLeft - actionBtnGap
+	btnLeft = btnRight - actionBtnWidth
+	// ✎ 重命名（最左）
+	if x > btnLeft && x < btnRight {
+		return "rename"
+	}
+	return ""
+}
+
+// getItemIndexAt 获取指定像素位置对应的图标索引
+func (gc *GroupCard) getItemIndexAt(x, y int) int {
+	bounds := gc.bodyWidget.ClientBoundsPixels()
+	startY := bounds.Y + cardHeaderHeight + 4
+	startX := bounds.X + 4
+	colWidth := desktopIconItemWidth
+	maxCols := (bounds.Width - 8) / colWidth
+	if maxCols < 1 {
+		maxCols = 1
+	}
+
+	// 计算点击的行列
+	col := (x - startX) / colWidth
+	row := (y - startY) / desktopIconItemHeight
+
+	if col < 0 || col >= maxCols || row < 0 {
+		return -1
+	}
+
+	idx := row*maxCols + col
+	if idx >= len(gc.items) {
+		return -1
+	}
+
+	// 精确校验：确保点击在图标磁贴范围内
+	tileX := startX + col*colWidth
+	tileY := startY + row*desktopIconItemHeight
+	if x < tileX || x > tileX+colWidth || y < tileY || y > tileY+desktopIconItemHeight {
+		return -1
+	}
+
+	return idx
+}
+
 // paintBody 绘制卡片主体
 func (gc *GroupCard) paintBody(canvas *walk.Canvas, updateBounds walk.Rectangle) error {
 	bounds := gc.bodyWidget.ClientBoundsPixels()
@@ -389,17 +502,58 @@ func (gc *GroupCard) paintBackground(canvas *walk.Canvas, bounds walk.Rectangle)
 	}
 }
 
-// paintHeader 绘制标题栏
+// paintHeader 绘制标题栏（含操作按钮）
 func (gc *GroupCard) paintHeader(canvas *walk.Canvas, bounds walk.Rectangle) {
-	font, _ := walk.NewFont("Microsoft YaHei", 12, walk.FontBold)
-	if font != nil {
-		defer font.Dispose()
+	// 标题文字（预留按钮空间）
+	btnAreaW := (actionBtnWidth+actionBtnGap)*3 + 4
+	titleFont, _ := walk.NewFont("Microsoft YaHei", 12, walk.FontBold)
+	if titleFont != nil {
+		defer titleFont.Dispose()
 		headerBounds := walk.Rectangle{
 			X: bounds.X + 8, Y: bounds.Y + 4,
-			Width: bounds.Width - 16, Height: cardHeaderHeight,
+			Width: bounds.Width - 16 - btnAreaW, Height: cardHeaderHeight,
 		}
-		canvas.DrawTextPixels(gc.groupName, font, walk.RGB(0xFF, 0xFF, 0xFF),
+		canvas.DrawTextPixels(gc.groupName, titleFont, walk.RGB(0xFF, 0xFF, 0xFF),
 			headerBounds, walk.TextSingleLine|walk.TextVCenter)
+	}
+
+	// 绘制操作按钮（白色半透明圆角小方块 + 符号文字）
+	btnFont, _ := walk.NewFont("Microsoft YaHei", 11, walk.FontBold)
+	if btnFont != nil {
+		defer btnFont.Dispose()
+		btnY := bounds.Y + (cardHeaderHeight-actionBtnHeight)/2
+		btnRight := bounds.X + bounds.Width - 4
+
+		type btnDef struct {
+			label string
+			x     int
+		}
+		btns := []btnDef{
+			{"×", btnRight - actionBtnWidth},                                       // 删除
+			{"色", btnRight - (actionBtnWidth+actionBtnGap)*2 + actionBtnGap},      // 颜色
+			{"✎", btnRight - (actionBtnWidth+actionBtnGap)*3 + actionBtnGap*2},     // 重命名
+		}
+
+		for _, b := range btns {
+			// 按钮背景（半透明）
+			btnRect := walk.Rectangle{
+				X: b.x, Y: btnY,
+				Width: actionBtnWidth, Height: actionBtnHeight,
+			}
+			bgImg := image.NewRGBA(image.Rect(0, 0, actionBtnWidth, actionBtnHeight))
+			for py := 0; py < actionBtnHeight; py++ {
+				for px := 0; px < actionBtnWidth; px++ {
+					bgImg.SetRGBA(px, py, color.RGBA{0, 0, 0, 80})
+				}
+			}
+			if bgBmp, err := walk.NewBitmapFromImage(bgImg); err == nil {
+				canvas.DrawBitmapWithOpacityPixels(bgBmp, btnRect, 80)
+				bgBmp.Dispose()
+			}
+			// 按钮文字
+			canvas.DrawTextPixels(b.label, btnFont, walk.RGB(0xFF, 0xFF, 0xFF),
+				btnRect, walk.TextCenter|walk.TextVCenter|walk.TextSingleLine)
+		}
 	}
 
 	// 绘制分隔线
@@ -520,6 +674,21 @@ func (gc *GroupCard) SetOnPositionChanged(fn func(name string, x, y float64)) {
 // SetOnSizeChanged 设置尺寸变更回调
 func (gc *GroupCard) SetOnSizeChanged(fn func(name string, w, h float64)) {
 	gc.onSizeChanged = fn
+}
+
+// SetOnRename 设置重命名回调
+func (gc *GroupCard) SetOnRename(fn func(name string)) {
+	gc.onRename = fn
+}
+
+// SetOnColor 设置修改颜色回调
+func (gc *GroupCard) SetOnColor(fn func(name string)) {
+	gc.onColor = fn
+}
+
+// SetOnDelete 设置删除回调
+func (gc *GroupCard) SetOnDelete(fn func(name string)) {
+	gc.onDelete = fn
 }
 
 // Refresh 刷新卡片内容
