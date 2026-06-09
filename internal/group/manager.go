@@ -335,11 +335,12 @@ func (m *Manager) groupForPath(filePath, name string, isDir bool) string {
 	return "桌面"
 }
 
-// desktopItemInfo 桌面项信息
+// desktopItemInfo 桌面项信息（与 ui.DesktopItem 字段保持一致）
 type desktopItemInfo struct {
-	Path  string
-	Name  string
-	IsDir bool
+	Path      string // 文件完整路径
+	Name      string // 显示名称（不含扩展名）
+	IsDir     bool   // 是否为文件夹
+	GroupName string // 所属分组名（由 groupForPath 填充，scan 阶段为空）
 }
 
 // collectDesktopPaths 收集桌面目录中的文件

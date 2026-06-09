@@ -18,12 +18,6 @@ type DesktopAPI interface {
 	ShowTaskbar()
 }
 
-// GroupItem 表示分组中的一个项目
-type GroupItem struct {
-	Path string // 文件路径
-	Name string // 显示名称
-}
-
 // DesktopItem 表示桌面项
 type DesktopItem struct {
 	Path      string // 文件完整路径

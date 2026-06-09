@@ -57,9 +57,9 @@ flowchart TB
 
 | ID | 优先级 | 描述 | 状态 |
 |----|--------|------|------|
-| TODO-1 | P1 | `internal/ui/desktop_api.go` 中的 `GroupItem` 与 `internal/group/manager.go` 重复 | 待修复 |
-| TODO-2 | P1 | `internal/ui/program.go` 中的 `CollectDesktopPaths()` 是死代码（未被调用） | 待清理 |
-| TODO-3 | P1 | `internal/group/manager.go` 中的 `desktopItemInfo` 和 `ui.DesktopItem` 未统一 | 待统一 |
+| TODO-1 | P1 | `internal/ui/desktop_api.go` 中的 `GroupItem` 与 `internal/group/manager.go` 重复 | ✅ 已修复 |
+| TODO-2 | P1 | `internal/ui/program.go` 中的 `CollectDesktopPaths()` 是死代码（未被调用） | ✅ 已清理 |
+| TODO-3 | P1 | `internal/group/manager.go` 中的 `desktopItemInfo` 和 `ui.DesktopItem` 未统一 | ✅ 已统一 |
 | TODO-4 | P2 | 卡片操作按钮（重命名、颜色、删除）尚未绑定点击事件 | 待实现 |
 | TODO-5 | P2 | 双击打开项目（分组内）尚未实现 | 待实现 |
 | TODO-6 | P2 | SPEC.md 中 GUI 框架写为 Fyne，实际为 lxn/walk | 待修正 |

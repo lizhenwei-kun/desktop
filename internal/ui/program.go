@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -42,48 +41,4 @@ func (pe *ProgramExecutor) openWithAssoc(path string) error {
 		HideWindow: true,
 	}
 	return cmd.Start()
-}
-
-// GetDesktopPath 获取桌面路径
-func GetDesktopPath() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, "Desktop")
-}
-
-// GetPublicDesktopPath 获取公共桌面路径
-func GetPublicDesktopPath() string {
-	public := os.Getenv("PUBLIC")
-	if public == "" {
-		public = `C:\Users\Public`
-	}
-	return filepath.Join(public, "Desktop")
-}
-
-// CollectDesktopPaths 收集桌面目录中的所有文件路径
-func CollectDesktopPaths() []DesktopItem {
-	var items []DesktopItem
-
-	desktopPaths := []string{GetDesktopPath(), GetPublicDesktopPath()}
-
-	for _, desktopDir := range desktopPaths {
-		entries, err := os.ReadDir(desktopDir)
-		if err != nil {
-			continue
-		}
-		for _, entry := range entries {
-			name := entry.Name()
-			// 跳过 desktop.ini
-			if strings.EqualFold(name, "desktop.ini") {
-				continue
-			}
-			fullPath := filepath.Join(desktopDir, name)
-			items = append(items, DesktopItem{
-				Path:  fullPath,
-				Name:  strings.TrimSuffix(name, filepath.Ext(name)),
-				IsDir: entry.IsDir(),
-			})
-		}
-	}
-
-	return items
 }
