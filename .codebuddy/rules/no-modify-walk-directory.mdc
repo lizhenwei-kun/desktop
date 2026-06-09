@@ -1,0 +1,15 @@
+---
+description: 
+alwaysApply: true
+enabled: true
+updatedAt: 2026-06-03T08:45:10.798Z
+provider: 
+---
+
+## 禁止修改 walk 目录
+
+**严禁修改 `walk/` 目录下的任何文件。**
+
+- `walk/` 目录包含第三方/框架代码，不允许进行任何修改（包括编辑、删除、重命名等操作）
+- 所有自定义代码应在 `internal/` 目录或其他非 walk 目录下进行
+- 如果需要扩展或覆盖 walk 中的功能，应通过在 `internal/` 中编写包装代码来实现

@@ -1,0 +1,379 @@
+package group
+
+import (
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"sync"
+
+	"desktop_go/internal/config"
+)
+
+// Manager 分组数据管理器
+type Manager struct {
+	cfg      *config.Config
+	mu       sync.RWMutex
+	onChange func()
+}
+
+// NewManager 创建分组管理器
+func NewManager() *Manager {
+	cfg := config.Load()
+	return &Manager{
+		cfg: cfg,
+	}
+}
+
+// SetOnChange 设置变更回调函数
+func (m *Manager) SetOnChange(fn func()) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.onChange = fn
+}
+
+// notifyChange 通知变更
+func (m *Manager) notifyChange() {
+	if m.onChange != nil {
+		m.onChange()
+	}
+}
+
+// save 保存配置
+func (m *Manager) save() {
+	config.Save(m.cfg)
+}
+
+// GetConfig 获取当前配置
+func (m *Manager) GetConfig() *config.Config {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.cfg
+}
+
+// GetGroups 获取所有分组
+func (m *Manager) GetGroups() []config.Group {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	result := make([]config.Group, len(m.cfg.Groups))
+	copy(result, m.cfg.Groups)
+	return result
+}
+
+// GetGroupItems 获取指定分组的所有项目
+func (m *Manager) GetGroupItems(groupName string) []GroupItem {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var items []GroupItem
+	for path, gName := range m.cfg.DesktopItems {
+		if gName == groupName {
+			name := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+			items = append(items, GroupItem{Path: path, Name: name})
+		}
+	}
+
+	// 按名称排序
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].Name < items[j].Name
+	})
+	return items
+}
+
+// GetUngroupedItems 获取未分组的项目
+func (m *Manager) GetUngroupedItems() []GroupItem {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var items []GroupItem
+	for path, gName := range m.cfg.DesktopItems {
+		if gName == "" {
+			name := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+			items = append(items, GroupItem{Path: path, Name: name})
+		}
+	}
+
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].Name < items[j].Name
+	})
+	return items
+}
+
+// GroupItem 分组中的项目
+type GroupItem struct {
+	Path string
+	Name string
+}
+
+// CreateGroup 创建新分组
+func (m *Manager) CreateGroup(name, color string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// 检查是否已存在
+	for _, g := range m.cfg.Groups {
+		if g.Name == name {
+			return
+		}
+	}
+
+	m.cfg.Groups = append(m.cfg.Groups, config.Group{
+		Name:     name,
+		Position: config.Position{X: 0.1, Y: 0.1},
+		Size:     config.Size{Width: 0.156, Height: 0.288},
+		Color:    color,
+	})
+
+	m.save()
+	m.notifyChange()
+}
+
+// DeleteGroup 删除分组（保留磁盘文件）
+func (m *Manager) DeleteGroup(name string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	newGroups := make([]config.Group, 0, len(m.cfg.Groups))
+	for _, g := range m.cfg.Groups {
+		if g.Name != name {
+			newGroups = append(newGroups, g)
+		}
+	}
+	m.cfg.Groups = newGroups
+
+	// 将该分组的项目标记为未分组
+	for path, gName := range m.cfg.DesktopItems {
+		if gName == name {
+			m.cfg.DesktopItems[path] = ""
+		}
+	}
+
+	m.save()
+	m.notifyChange()
+}
+
+// RenameGroup 重命名分组
+func (m *Manager) RenameGroup(oldName, newName string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for i, g := range m.cfg.Groups {
+		if g.Name == oldName {
+			m.cfg.Groups[i].Name = newName
+			break
+		}
+	}
+
+	// 更新桌面项映射
+	for path, gName := range m.cfg.DesktopItems {
+		if gName == oldName {
+			m.cfg.DesktopItems[path] = newName
+		}
+	}
+
+	m.save()
+	m.notifyChange()
+}
+
+// AddItemToGroup 添加项目到分组
+func (m *Manager) AddItemToGroup(groupName, itemPath, itemName string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.cfg.DesktopItems[itemPath] = groupName
+	m.save()
+	m.notifyChange()
+}
+
+// RemoveItemFromGroup 从分组移除项目
+func (m *Manager) RemoveItemFromGroup(groupName, itemPath string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.cfg.DesktopItems[itemPath] == groupName {
+		m.cfg.DesktopItems[itemPath] = ""
+	}
+	m.save()
+	m.notifyChange()
+}
+
+// MoveItemToGroup 移动项目到指定分组
+func (m *Manager) MoveItemToGroup(itemPath, groupName string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.cfg.DesktopItems[itemPath] = groupName
+	m.save()
+	m.notifyChange()
+}
+
+// MoveItemToDesktop 将项目移出分组到桌面区域
+func (m *Manager) MoveItemToDesktop(itemPath string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.cfg.DesktopItems[itemPath] = ""
+	m.save()
+	m.notifyChange()
+}
+
+// UpdateGroupPosition 更新分组位置并持久化（相对坐标）
+func (m *Manager) UpdateGroupPosition(name string, x, y float64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for i, g := range m.cfg.Groups {
+		if g.Name == name {
+			m.cfg.Groups[i].Position = config.Position{X: x, Y: y}
+			break
+		}
+	}
+	m.save()
+}
+
+// UpdateGroupSize 更新分组尺寸并持久化（相对坐标）
+func (m *Manager) UpdateGroupSize(name string, w, h float64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for i, g := range m.cfg.Groups {
+		if g.Name == name {
+			m.cfg.Groups[i].Size = config.Size{Width: w, Height: h}
+			break
+		}
+	}
+	m.save()
+}
+
+// UpdateGroupColor 更新分组颜色并持久化
+func (m *Manager) UpdateGroupColor(name, color string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for i, g := range m.cfg.Groups {
+		if g.Name == name {
+			m.cfg.Groups[i].Color = color
+			break
+		}
+	}
+	m.save()
+	m.notifyChange()
+}
+
+// ReloadDesktopItems 从 Windows 桌面目录重新同步内容
+func (m *Manager) ReloadDesktopItems() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// 收集桌面路径
+	desktopPaths := collectDesktopPaths()
+
+	// 移除不再存在的项目
+	for path := range m.cfg.DesktopItems {
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			delete(m.cfg.DesktopItems, path)
+		}
+	}
+
+	// 添加新发现的项目
+	for _, item := range desktopPaths {
+		if _, exists := m.cfg.DesktopItems[item.Path]; !exists {
+			groupName := m.groupForPath(item.Path, item.Name, item.IsDir)
+			m.cfg.DesktopItems[item.Path] = groupName
+		}
+	}
+
+	m.save()
+	m.notifyChange()
+}
+
+// groupForPath 根据文件类型和名称确定默认分组
+func (m *Manager) groupForPath(filePath, name string, isDir bool) string {
+	ext := strings.ToLower(filepath.Ext(filePath))
+	nameLower := strings.ToLower(name)
+
+	// 快捷方式
+	switch ext {
+	case ".lnk", ".url", ".exe":
+		return "快捷方式"
+	}
+
+	// 文件夹
+	if isDir {
+		return "备份文件"
+	}
+
+	// 文档
+	switch ext {
+	case ".doc", ".docx", ".txt", ".pdf", ".xls", ".xlsx", ".ppt", ".pptx", ".rtf":
+		return "Word"
+	}
+
+	// 图片
+	switch ext {
+	case ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".svg", ".webp":
+		return "图片"
+	}
+
+	// 按名称匹配
+	if strings.Contains(nameLower, "快捷") {
+		return "快捷方式"
+	}
+	if strings.Contains(nameLower, "文件") || strings.Contains(nameLower, "备份") {
+		return "备份文件"
+	}
+	if strings.Contains(nameLower, "word") || strings.Contains(nameLower, "文档") {
+		return "Word"
+	}
+	if strings.Contains(nameLower, "图片") {
+		return "图片"
+	}
+	if strings.Contains(nameLower, "桌面") {
+		return "桌面"
+	}
+
+	return "桌面"
+}
+
+// desktopItemInfo 桌面项信息
+type desktopItemInfo struct {
+	Path  string
+	Name  string
+	IsDir bool
+}
+
+// collectDesktopPaths 收集桌面目录中的文件
+func collectDesktopPaths() []desktopItemInfo {
+	var items []desktopItemInfo
+
+	home, _ := os.UserHomeDir()
+	desktopDir := filepath.Join(home, "Desktop")
+	publicDesktop := filepath.Join(os.Getenv("PUBLIC"), "Desktop")
+	if publicDesktop == filepath.Join("", "Desktop") {
+		publicDesktop = `C:\Users\Public\Desktop`
+	}
+
+	for _, dir := range []string{desktopDir, publicDesktop} {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			name := entry.Name()
+			if strings.EqualFold(name, "desktop.ini") {
+				continue
+			}
+			fullPath := filepath.Join(dir, name)
+			items = append(items, desktopItemInfo{
+				Path:  fullPath,
+				Name:  strings.TrimSuffix(name, filepath.Ext(name)),
+				IsDir: entry.IsDir(),
+			})
+		}
+	}
+
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].Name < items[j].Name
+	})
+	return items
+}

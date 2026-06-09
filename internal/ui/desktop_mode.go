@@ -1,0 +1,480 @@
+package ui
+
+import (
+	"image"
+	"image/color"
+	"time"
+
+	"github.com/lxn/walk"
+	"github.com/lxn/win"
+
+	"desktop_go/internal/config"
+	"desktop_go/internal/desktop"
+	"desktop_go/internal/group"
+	"desktop_go/internal/logger"
+)
+
+// DesktopMode 桌面模式 UI 管理器
+type DesktopMode struct {
+	mainWindow *walk.MainWindow
+	container  *walk.Composite // 无布局容器，用于绝对定位
+	manager    *group.Manager
+	executor   *ProgramExecutor
+	winAPI     *desktop.WindowsAPI
+	lifecycle  *LifecycleManager
+	cards      []*GroupCard
+	bodyWidget *walk.CustomWidget
+
+	screenW      int
+	screenH      int
+	workX        int
+	workY        int
+	workW        int
+	workH        int
+	wallpaperBmp *walk.Bitmap // 缓存的壁纸 bitmap
+}
+
+// NewDesktopMode 创建桌面模式
+func NewDesktopMode(mw *walk.MainWindow, mgr *group.Manager, winAPI *desktop.WindowsAPI, lifecycle *LifecycleManager) *DesktopMode {
+	dm := &DesktopMode{
+		mainWindow: mw,
+		manager:    mgr,
+		executor:   NewProgramExecutor(),
+		winAPI:     winAPI,
+		lifecycle:  lifecycle,
+	}
+	dm.screenW, dm.screenH = winAPI.GetScreenSize()
+	left, top, right, bottom := winAPI.GetWorkAreaRect()
+	dm.workX = left
+	dm.workY = top
+	dm.workW = right - left
+	dm.workH = bottom - top
+	logger.Debug("screen=%dx%d, workArea=(%d,%d,%d,%d), workSize=%dx%d",
+		dm.screenW, dm.screenH, left, top, right, bottom, dm.workW, dm.workH)
+	return dm
+}
+
+// Setup 设置桌面模式 UI
+func (dm *DesktopMode) Setup() error {
+	logger.Debug("Setup: DPI=%d, bounds=(%d,%d,%dx%d)",
+		dm.mainWindow.DPI(), dm.workX, dm.workY, dm.workW, dm.workH)
+
+	// 设置主窗口尺寸为工作区
+	dm.mainWindow.SetBoundsPixels(walk.Rectangle{
+		X: dm.workX, Y: dm.workY,
+		Width: dm.workW, Height: dm.workH,
+	})
+
+	// 设置窗口背景色为深色（消除白边）
+	bg, _ := walk.NewSolidColorBrush(walk.RGB(0x1A, 0x1A, 0x2E))
+	dm.mainWindow.SetBackground(bg)
+
+	// 预加载壁纸
+	dm.loadWallpaper()
+
+	// 创建一个 Composite 容器放在 VBox 中，让它占满空间
+	var err error
+	dm.container, err = walk.NewComposite(dm.mainWindow)
+	if err != nil {
+		return err
+	}
+
+	// 让 container 在 VBox 中占满剩余空间
+	if layout, ok := dm.mainWindow.Layout().(*walk.BoxLayout); ok {
+		layout.SetStretchFactor(dm.container, 1)
+	}
+
+	// container 使用 VBox（margins/spacing 为0），walk 要求所有 Container 必须有 Layout
+	containerLayout := walk.NewVBoxLayout()
+	containerLayout.SetMargins(walk.Margins{})
+	containerLayout.SetSpacing(0)
+	dm.container.SetLayout(containerLayout)
+
+	// 创建主绘制区域（背景 + 壁纸 + 卡片内容）放在 container 中
+	dm.bodyWidget, err = walk.NewCustomWidgetPixels(dm.container, 0, dm.paintDesktop)
+	if err != nil {
+		return err
+	}
+	dm.bodyWidget.SetPaintMode(walk.PaintBuffered)
+	dm.bodyWidget.SetInvalidatesOnResize(true)
+
+	// bodyWidget 占满 container
+	containerLayout.SetStretchFactor(dm.bodyWidget, 1)
+
+	// 监听 container 尺寸变化，延迟重新应用卡片绝对定位
+	// （布局是异步执行的，需要等布局完成后再覆盖）
+	dm.container.SizeChanged().Attach(func() {
+		go func() {
+			time.Sleep(50 * time.Millisecond)
+			dm.mainWindow.Synchronize(func() {
+				dm.reapplyCardPositions()
+			})
+		}()
+	})
+
+	// 设置键盘快捷键 Alt+F6 退出全屏
+	dm.setupHotkeys()
+
+	// 鼠标双击事件（打开项目）
+	dm.bodyWidget.MouseDown().Attach(dm.handleMouseDown)
+
+	// 创建分组卡片（在 container 中，绝对定位）
+	dm.createGroupCards()
+
+	// 延迟去边框：等消息循环启动后再去边框
+	go dm.delayedSetup()
+
+	return nil
+}
+
+// delayedSetup 消息循环启动后去边框、沉底、禁止最小化
+func (dm *DesktopMode) delayedSetup() {
+	// 等待消息循环启动
+	time.Sleep(300 * time.Millisecond)
+
+	dm.mainWindow.Synchronize(func() {
+		hwnd := dm.mainWindow.Handle()
+		logger.Debug("delayedSetup: hwnd=%v, pos=(%d,%d,%dx%d)",
+			hwnd, dm.workX, dm.workY, dm.workW, dm.workH)
+
+		// 移除菜单栏（walk MainWindow 默认创建了空菜单栏，占用顶部空间）
+		dm.winAPI.RemoveWindowMenu(win.HWND(hwnd))
+
+		// 去除边框并定位（内部使用 HWND_BOTTOM 沉底）
+		dm.winAPI.SetBorderlessAndPosition(win.HWND(hwnd), dm.workX, dm.workY, dm.workW, dm.workH)
+
+		// 禁用最小化
+		dm.winAPI.DisableMinimize(win.HWND(hwnd))
+
+		// 确保窗口在 Z 序最底层
+		dm.winAPI.SetWindowBottom(win.HWND(hwnd))
+	})
+
+	// 去边框后客户区变大，通过尺寸变化触发 walk 重新布局（不重绘避免闪烁）
+	time.Sleep(100 * time.Millisecond)
+
+	dm.mainWindow.Synchronize(func() {
+		hwnd := dm.mainWindow.Handle()
+		// +1 不重绘触发 WM_WINDOWPOSCHANGED，让 walk 用新客户区尺寸重新布局
+		dm.winAPI.SetWindowPosNoRedraw(win.HWND(hwnd), dm.workX, dm.workY, dm.workW+1, dm.workH+1)
+	})
+
+	time.Sleep(50 * time.Millisecond)
+
+	dm.mainWindow.Synchronize(func() {
+		hwnd := dm.mainWindow.Handle()
+		// 恢复正确尺寸，layout 已更新（不重绘）
+		dm.winAPI.SetWindowPosNoRedraw(win.HWND(hwnd), dm.workX, dm.workY, dm.workW, dm.workH)
+		dm.winAPI.SetWindowBottom(win.HWND(hwnd))
+	})
+
+	time.Sleep(100 * time.Millisecond)
+
+	dm.mainWindow.Synchronize(func() {
+		// 最终确认：强制 container 和 bodyWidget 覆盖整个客户区
+		hwnd := dm.mainWindow.Handle()
+		_ = hwnd
+
+		// 获取当前客户区（去边框+移除菜单后应该等于窗口大小）
+		clientBounds := dm.mainWindow.ClientBoundsPixels()
+		logger.Debug("delayedSetup: clientBounds=(%d,%d,%dx%d)",
+			clientBounds.X, clientBounds.Y, clientBounds.Width, clientBounds.Height)
+
+		// 强制 container 铺满整个窗口客户区（从 Y=0 开始，高度为完整客户区）
+		fullH := clientBounds.Y + clientBounds.Height
+		dm.container.SetBoundsPixels(walk.Rectangle{
+			X: 0, Y: 0,
+			Width: dm.workW, Height: fullH,
+		})
+		dm.bodyWidget.SetBoundsPixels(walk.Rectangle{
+			X: 0, Y: 0,
+			Width: dm.workW, Height: fullH,
+		})
+
+		// 强制重新应用卡片的绝对定位
+		dm.reapplyCardPositions()
+
+		// 手动触发一次完整重绘（仅此一次）
+		dm.bodyWidget.Invalidate()
+
+		finalBounds := dm.mainWindow.BoundsPixels()
+		containerBounds := dm.container.BoundsPixels()
+		bodyBounds := dm.bodyWidget.BoundsPixels()
+		logger.Debug("delayedSetup done: window=(%d,%d,%dx%d), container=(%d,%d,%dx%d), body=(%d,%d,%dx%d)",
+			finalBounds.X, finalBounds.Y, finalBounds.Width, finalBounds.Height,
+			containerBounds.X, containerBounds.Y, containerBounds.Width, containerBounds.Height,
+			bodyBounds.X, bodyBounds.Y, bodyBounds.Width, bodyBounds.Height)
+
+		dm.lifecycle.MarkReady()
+
+		// 启动后台协程持续维护 Z 序（防止被意外提升到前台）
+		go dm.maintainBottomZOrder()
+	})
+}
+
+// maintainBottomZOrder 持续维护窗口在 Z 序最底层
+// 仅在窗口意外被提到前台时推底，不干扰用户打开的其他程序
+func (dm *DesktopMode) maintainBottomZOrder() {
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		if dm.lifecycle.State() != StateReady {
+			return
+		}
+		dm.mainWindow.Synchronize(func() {
+			if dm.lifecycle.State() == StateReady {
+				hwnd := dm.mainWindow.Handle()
+				// 只有我们的窗口意外成为前台时才推底
+				// 用户打开其他程序时不做任何操作，避免抢夺前台
+				if dm.winAPI.IsForegroundWindow(win.HWND(hwnd)) {
+					dm.winAPI.SetWindowBottom(win.HWND(hwnd))
+				}
+			}
+		})
+	}
+}
+
+// reapplyCardPositions 重新应用所有卡片的绝对定位
+func (dm *DesktopMode) reapplyCardPositions() {
+	for _, card := range dm.cards {
+		card.ReapplyBounds()
+	}
+}
+
+// paintDesktop 绘制桌面内容
+var paintCount int
+
+func (dm *DesktopMode) paintDesktop(canvas *walk.Canvas, updateBounds walk.Rectangle) error {
+	bounds := dm.bodyWidget.ClientBoundsPixels()
+	paintCount++
+	if paintCount <= 3 {
+		logger.Debug("paintDesktop #%d: bounds=(%d,%d,%dx%d), wallpaperBmp=%v",
+			paintCount, bounds.X, bounds.Y, bounds.Width, bounds.Height, dm.wallpaperBmp != nil)
+	}
+
+	// 1. 绘制深色背景
+	dm.paintBackground(canvas, bounds)
+
+	// 2. 绘制壁纸
+	dm.paintWallpaper(canvas, bounds)
+
+	// 3. 绘制工具栏
+	dm.paintToolbar(canvas, bounds)
+
+	// 4. 绘制未分组的桌面图标
+	dm.paintFreeItems(canvas, bounds)
+
+	return nil
+}
+
+// paintBackground 绘制深色背景
+func (dm *DesktopMode) paintBackground(canvas *walk.Canvas, bounds walk.Rectangle) {
+	bgColor := color.RGBA{R: 0x1A, G: 0x1A, B: 0x2E, A: 0xFF}
+	bgImg := image.NewRGBA(image.Rect(0, 0, bounds.Width, bounds.Height))
+	for y := 0; y < bounds.Height; y++ {
+		for x := 0; x < bounds.Width; x++ {
+			bgImg.SetRGBA(x, y, bgColor)
+		}
+	}
+	bmp, err := walk.NewBitmapFromImage(bgImg)
+	if err == nil {
+		defer bmp.Dispose()
+		canvas.DrawBitmapWithOpacityPixels(bmp, bounds, 255)
+	}
+}
+
+// loadWallpaper 预加载壁纸
+func (dm *DesktopMode) loadWallpaper() {
+	wallpaperPath := GetCurrentWallpaper()
+	logger.Debug("loadWallpaper: path=%q", wallpaperPath)
+	if wallpaperPath == "" {
+		logger.Debug("loadWallpaper: 壁纸路径为空，跳过")
+		return
+	}
+
+	dpi := dm.mainWindow.DPI()
+	if dpi <= 0 {
+		dpi = 96
+	}
+	logger.Debug("loadWallpaper: 加载壁纸 dpi=%d", dpi)
+	bmp, err := walk.NewBitmapFromFileForDPI(wallpaperPath, dpi)
+	if err != nil {
+		logger.Debug("loadWallpaper: dpi=%d 加载失败: %v, 尝试96", dpi, err)
+		bmp, err = walk.NewBitmapFromFileForDPI(wallpaperPath, 96)
+		if err != nil {
+			logger.Debug("loadWallpaper: 96dpi也失败: %v", err)
+			return
+		}
+	}
+	size := bmp.Size()
+	logger.Debug("loadWallpaper: 加载成功, bmpSize=%dx%d", size.Width, size.Height)
+	dm.wallpaperBmp = bmp
+}
+
+// paintWallpaper 绘制壁纸
+func (dm *DesktopMode) paintWallpaper(canvas *walk.Canvas, bounds walk.Rectangle) {
+	if dm.wallpaperBmp == nil {
+		return
+	}
+	canvas.DrawBitmapWithOpacityPixels(dm.wallpaperBmp, bounds, 255)
+}
+
+// paintToolbar 绘制工具栏
+func (dm *DesktopMode) paintToolbar(canvas *walk.Canvas, bounds walk.Rectangle) {
+	font, _ := walk.NewFont("Microsoft YaHei", 14, 0)
+	if font == nil {
+		return
+	}
+	defer font.Dispose()
+
+	// "+ 添加卡片" 按钮区域
+	toolbarBounds := walk.Rectangle{
+		X: bounds.Width - 140, Y: 10,
+		Width: 120, Height: 30,
+	}
+
+	// 绘制按钮背景
+	btnColor := color.RGBA{R: 0x30, G: 0x34, B: 0x3C, A: 0xBD}
+	btnImg := image.NewRGBA(image.Rect(0, 0, toolbarBounds.Width, toolbarBounds.Height))
+	for y := 0; y < toolbarBounds.Height; y++ {
+		for x := 0; x < toolbarBounds.Width; x++ {
+			btnImg.SetRGBA(x, y, btnColor)
+		}
+	}
+	btnBmp, err := walk.NewBitmapFromImage(btnImg)
+	if err == nil {
+		defer btnBmp.Dispose()
+		canvas.DrawBitmapWithOpacityPixels(btnBmp, toolbarBounds, byte(btnColor.A))
+	}
+
+	canvas.DrawTextPixels("+ 添加卡片", font, walk.RGB(0xFF, 0xFF, 0xFF),
+		toolbarBounds, walk.TextCenter|walk.TextVCenter|walk.TextSingleLine)
+}
+
+// paintFreeItems 绘制未分组的桌面图标
+func (dm *DesktopMode) paintFreeItems(canvas *walk.Canvas, bounds walk.Rectangle) {
+	items := dm.manager.GetUngroupedItems()
+	if len(items) == 0 {
+		return
+	}
+
+	startX := bounds.Width - desktopIconItemWidth - 20
+	startY := 60
+
+	for i, item := range items {
+		y := startY + i*desktopIconItemHeight
+		if y+desktopIconItemHeight > bounds.Height {
+			break
+		}
+		gc := &GroupCard{executor: dm.executor}
+		gc.paintIconTile(canvas, item, startX, y)
+	}
+}
+
+// handleMouseDown 处理鼠标按下事件
+func (dm *DesktopMode) handleMouseDown(x, y int, button walk.MouseButton) {
+	if button != walk.LeftButton {
+		return
+	}
+
+	// 检查是否点击了 "+ 添加卡片" 按钮
+	bounds := dm.bodyWidget.ClientBoundsPixels()
+	btnRect := walk.Rectangle{
+		X: bounds.Width - 140, Y: 10,
+		Width: 120, Height: 30,
+	}
+	if x >= btnRect.X && x <= btnRect.X+btnRect.Width &&
+		y >= btnRect.Y && y <= btnRect.Y+btnRect.Height {
+		dm.addNewCard()
+		return
+	}
+
+	// 检查双击打开项目（未分组项）
+	items := dm.manager.GetUngroupedItems()
+	startX := bounds.Width - desktopIconItemWidth - 20
+	startY := 60
+	for i, item := range items {
+		iy := startY + i*desktopIconItemHeight
+		if x >= startX && x <= startX+desktopIconItemWidth &&
+			y >= iy && y <= iy+desktopIconItemHeight {
+			dm.executor.Execute(item.Path)
+			return
+		}
+	}
+}
+
+// addNewCard 添加新卡片
+func (dm *DesktopMode) addNewCard() {
+	name, ok := ShowInputDialog(dm.mainWindow, "新建分组", "请输入分组名称：", "")
+	if !ok || name == "" {
+		return
+	}
+	dm.manager.CreateGroup(name, "#30343CBD")
+	dm.refreshCards()
+}
+
+// createGroupCards 创建所有分组卡片
+func (dm *DesktopMode) createGroupCards() {
+	groups := dm.manager.GetGroups()
+	for _, grp := range groups {
+		card, err := NewGroupCard(dm.container, grp, dm.manager, dm.executor, dm.mainWindow, dm.workW, dm.workH)
+		if err != nil {
+			continue
+		}
+		dm.setupCardActions(card, grp)
+		dm.cards = append(dm.cards, card)
+	}
+}
+
+// setupCardActions 设置卡片操作按钮回调
+func (dm *DesktopMode) setupCardActions(card *GroupCard, grp config.Group) {
+	card.SetOnPositionChanged(func(name string, x, y float64) {
+		dm.manager.UpdateGroupPosition(name, x, y)
+	})
+	card.SetOnSizeChanged(func(name string, w, h float64) {
+		dm.manager.UpdateGroupSize(name, w, h)
+	})
+}
+
+// refreshCards 刷新所有卡片
+func (dm *DesktopMode) refreshCards() {
+	// 移除旧卡片
+	for _, card := range dm.cards {
+		card.Container().Dispose()
+	}
+	dm.cards = nil
+
+	// 重新创建
+	dm.createGroupCards()
+	dm.bodyWidget.Invalidate()
+}
+
+// setupHotkeys 设置快捷键
+func (dm *DesktopMode) setupHotkeys() {
+	// Alt+F6 退出全屏模式
+	dm.mainWindow.KeyDown().Attach(func(key walk.Key) {
+		if key == walk.KeyF6 {
+			// 检查 Alt 是否按下
+			if win.GetKeyState(int32(win.VK_MENU)) < 0 {
+				dm.exitDesktopMode()
+			}
+		}
+	})
+}
+
+// exitDesktopMode 退出桌面模式
+func (dm *DesktopMode) exitDesktopMode() {
+	dm.lifecycle.MarkClosing()
+	dm.lifecycle.ExecuteCleanups()
+	dm.winAPI.ShowTaskbar()
+	dm.mainWindow.Close()
+}
+
+// Refresh 刷新桌面模式
+func (dm *DesktopMode) Refresh() {
+	for _, card := range dm.cards {
+		card.Refresh()
+	}
+	dm.bodyWidget.Invalidate()
+}

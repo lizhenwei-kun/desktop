@@ -1,0 +1,25 @@
+Walk 窗口去边框后布局问题及解决方案
+==========================================
+
+问题描述：
+walk 的 MainWindow 在去边框（SetWindowBorderless）+ 移除菜单栏（SetMenu(hwnd, NULL)）后，
+客户区大小会变大（原来要减去标题栏+边框+菜单栏高度），但 walk 内部的 VBox 布局系统
+不会自动重新计算 clientComposite/container/bodyWidget 的尺寸，导致内容区只占据客户区的一部分，壁纸被压扁。
+
+根本原因：
+FormBase.WndProc 处理 WM_WINDOWPOSCHANGED 时如果 SWP_NOSIZE 标志被设置会跳过布局，
+所以必须产生真实的尺寸变化才能触发重新布局。
+
+解决方案：
+
+1. 去边框后先 MoveWindow 到 workW+1/workH+1 再 MoveWindow 回 workW/workH，
+   通过真实的尺寸变化触发 WM_WINDOWPOSCHANGED，让 walk 的 FormBase.startLayout()
+   用新的客户区大小重新布局。
+
+2. 最后手动调用 container.SetBoundsPixels 和 bodyWidget.SetBoundsPixels
+   强制铺满整个客户区作为双重保险。
+
+关键点：
+- 必须产生真实的尺寸变化（+1 再 -1），不能只是同样大小的 MoveWindow
+- FormBase.WndProc 在 WM_WINDOWPOSCHANGED 中检查 SWP_NOSIZE，有该标志则跳过布局
+- 手动 SetBoundsPixels 作为兜底保障

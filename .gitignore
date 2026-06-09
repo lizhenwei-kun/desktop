@@ -1,0 +1,37 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.syso
+*.test
+*.out
+
+# Build output
+rsrc.syso
+
+# Logs
+log/
+*.log
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Walk (embedded git repo, not tracked)
+walk/
+
+# Archives
+*.rar
+
+# Walk generated
+walk/**/*.syso
+walk/**/*.manifest
