@@ -156,8 +156,8 @@ func (dm *DesktopMode) delayedSetup() {
 		logger.Debug("delayedSetup: hwnd=%v, pos=(%d,%d,%dx%d)",
 			hwnd, dm.workX, dm.workY, dm.workW, dm.workH)
 
-		// 隐藏系统桌面图标（防止系统图标显示在窗口上层）
-		dm.winAPI.HideDesktopIcons()
+		// 注意：不再调用 HideDesktopIcons，因为窗口嵌入到 shell WorkerW 后
+		// 通过 Z 序置顶覆盖 SHELLDLL_DefView（桌面图标）
 
 		// 移除菜单栏（walk MainWindow 默认创建了空菜单栏，占用顶部空间）
 		dm.winAPI.RemoveWindowMenu(win.HWND(hwnd))
@@ -490,7 +490,6 @@ func (dm *DesktopMode) exitDesktopMode() {
 	hwnd := dm.mainWindow.Handle()
 	// 从桌面层脱离
 	dm.winAPI.DetachFromDesktop(win.HWND(hwnd))
-	dm.winAPI.ShowDesktopIcons()
 	dm.mainWindow.Close()
 }
 

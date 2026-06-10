@@ -31,6 +31,9 @@ var (
 	procGetForegroundWindow = user32.NewProc("GetForegroundWindow")
 	procIsIconic            = user32.NewProc("IsIconic")
 	procIsWindowVisible     = user32.NewProc("IsWindowVisible")
+	procGetWindowRect        = user32.NewProc("GetWindowRect")
+	procGetClassNameW        = user32.NewProc("GetClassNameW")
+	procEnumChildWindows     = user32.NewProc("EnumChildWindows")
 	procSetWindowSubclass    = comctl32.NewProc("SetWindowSubclass")
 	procRemoveWindowSubclass = comctl32.NewProc("RemoveWindowSubclass")
 	procDefSubclassProc      = comctl32.NewProc("DefSubclassProc")
@@ -137,30 +140,29 @@ func (api *WindowsAPI) FindProgman() win.HWND {
 	return win.HWND(progman)
 }
 
-// FindWorkerW 查找桌面 WorkerW 窗口句柄（包含 SHELLDLL_DefView 的那个 WorkerW 的父窗口）
-func (api *WindowsAPI) FindWorkerW() win.HWND {
+// FindShellWorkerW 查找包含 SHELLDLL_DefView 的 WorkerW（桌面图标层）
+// 发送 0x052C 后确保 WorkerW 存在
+func (api *WindowsAPI) FindShellWorkerW() win.HWND {
 	progman := api.FindProgman()
-	logger.Debug("FindWorkerW: Progman=%v", progman)
+	logger.Debug("FindShellWorkerW: Progman=%v", progman)
 	if progman == 0 {
-		logger.Error("FindWorkerW: Progman not found")
+		logger.Error("FindShellWorkerW: Progman not found")
 		return 0
 	}
 
-	// 发送 0x052C 消息让 Progman 生成 WorkerW
-	// SendMessageTimeoutW(hWnd, Msg, wParam, lParam, fuFlags, uTimeout, lpdwResult)
+	// 发送 0x052C 消息确保 WorkerW 存在
 	var result uintptr
 	ret, _, err := procSendMessageW.Call(
 		uintptr(progman),
 		0x052C,
-		0xD,              // wParam - 触发 WorkerW 创建
-		1,                // lParam
-		0,                // fuFlags: SMTO_NORMAL
-		uintptr(1000),    // uTimeout: 1000ms
+		0xD, 1,
+		0, uintptr(1000),
 		uintptr(unsafe.Pointer(&result)),
 	)
-	logger.Debug("FindWorkerW: SendMessage 0x052C ret=%v, result=%v, err=%v", ret, result, err)
+	logger.Debug("FindShellWorkerW: SendMessage 0x052C ret=%v, result=%v, err=%v", ret, result, err)
 
-	var workerW win.HWND
+	// 找到包含 SHELLDLL_DefView 的顶层窗口
+	var shellWorkerW win.HWND
 	enumFunc := syscall.NewCallback(func(hwnd win.HWND, lParam uintptr) uintptr {
 		shellView, _, _ := procFindWindowExW.Call(
 			uintptr(hwnd),
@@ -169,69 +171,83 @@ func (api *WindowsAPI) FindWorkerW() win.HWND {
 			0,
 		)
 		if shellView != 0 {
-			logger.Debug("FindWorkerW: found SHELLDLL_DefView=%v in parent=%v", shellView, hwnd)
-			// 找到 SHELLDLL_DefView 的下一个 WorkerW
-			next, _, _ := procFindWindowExW.Call(0, uintptr(hwnd), uintptr(unsafe.Pointer(syscall.StringToUTF16Ptr("WorkerW"))), 0)
-			logger.Debug("FindWorkerW: next WorkerW after parent=%v → %v", hwnd, next)
-			if next != 0 {
-				workerW = win.HWND(next)
-			}
+			shellWorkerW = hwnd
+			logger.Debug("FindShellWorkerW: found SHELLDLL_DefView=%v in parent=%v", shellView, hwnd)
+			return 0
 		}
-		return 1 // 继续枚举
+		return 1
 	})
 
 	procEnumWindows.Call(enumFunc, 0)
-	logger.Debug("FindWorkerW: workerW=%v", workerW)
-	return workerW
+	logger.Debug("FindShellWorkerW: shellWorkerW=%v", shellWorkerW)
+	return shellWorkerW
 }
 
 // SetAsDesktopChild 将窗口嵌入桌面层级
-// 策略：SetParent 到 Progman，然后隐藏覆盖在上面的 WorkerW
+// 策略：SetParent 到包含 SHELLDLL_DefView 的 WorkerW 中，窗口置顶覆盖桌面图标
 // 返回是否成功嵌入
 func (api *WindowsAPI) SetAsDesktopChild(hwnd win.HWND) bool {
-	progman := api.FindProgman()
-	if progman == 0 {
-		logger.Error("SetAsDesktopChild: Progman not found")
+	// 记录嵌入前窗口状态
+	visible := api.IsWindowVisible(hwnd)
+	var rect [4]int32
+	procGetWindowRect.Call(uintptr(hwnd), uintptr(unsafe.Pointer(&rect[0])))
+	logger.Debug("SetAsDesktopChild: before - hwnd=%v, visible=%v, rect=(%d,%d,%d,%d)",
+		hwnd, visible, rect[0], rect[1], rect[2], rect[3])
+
+	// 找到包含 SHELLDLL_DefView 的 WorkerW
+	shellWorkerW := api.FindShellWorkerW()
+	if shellWorkerW == 0 {
+		logger.Error("SetAsDesktopChild: shell WorkerW not found")
 		return false
 	}
 
-	// 发送 0x052C 触发 WorkerW 创建
-	var result uintptr
-	procSendMessageW.Call(
-		uintptr(progman),
-		0x052C,
-		0xD, 1,
-		0, uintptr(1000),
-		uintptr(unsafe.Pointer(&result)),
-	)
+	// 检查目标 WorkerW 的可见性
+	targetVisible := api.IsWindowVisible(shellWorkerW)
+	logger.Debug("SetAsDesktopChild: shell WorkerW=%v, visible=%v", shellWorkerW, targetVisible)
 
-	// 找到并隐藏覆盖在 Progman 上面的 WorkerW（包含 SHELLDLL_DefView 的那个）
-	workerW := api.FindWorkerW()
-	if workerW != 0 {
-		logger.Debug("SetAsDesktopChild: hiding WorkerW=%v", workerW)
-		procShowWindow.Call(uintptr(workerW), uintptr(SW_HIDE))
-	}
-
-	// 将窗口设为 Progman 的子窗口
-	logger.Debug("SetAsDesktopChild: hwnd=%v, SetParent to Progman=%v", hwnd, progman)
-	prevParent, _, err := procSetParent.Call(uintptr(hwnd), uintptr(progman))
+	// 将窗口设为该 WorkerW 的子窗口（和 SHELLDLL_DefView 同级）
+	logger.Debug("SetAsDesktopChild: SetParent hwnd=%v to WorkerW=%v", hwnd, shellWorkerW)
+	prevParent, _, err := procSetParent.Call(uintptr(hwnd), uintptr(shellWorkerW))
 	logger.Debug("SetAsDesktopChild: SetParent returned prevParent=%v, err=%v", prevParent, err)
 
-	// 确保窗口可见
+	// 确保窗口可见并置于 WorkerW 子窗口的最顶层（覆盖 SHELLDLL_DefView）
 	procShowWindow.Call(uintptr(hwnd), uintptr(SW_SHOW))
+	ret, _, _ := procSetWindowPos.Call(
+		uintptr(hwnd), HWND_TOP,
+		0, 0, 0, 0,
+		uintptr(SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE),
+	)
+	logger.Debug("SetAsDesktopChild: SetWindowPos HWND_TOP ret=%v", ret)
+
+	// 记录嵌入后窗口状态
+	visible2 := api.IsWindowVisible(hwnd)
+	var rect2 [4]int32
+	procGetWindowRect.Call(uintptr(hwnd), uintptr(unsafe.Pointer(&rect2[0])))
+	style, _, _ := procGetWindowLongW.Call(uintptr(hwnd), negIntToUintptr(GWL_STYLE))
+	exStyle, _, _ := procGetWindowLongW.Call(uintptr(hwnd), negIntToUintptr(GWL_EXSTYLE))
+	logger.Debug("SetAsDesktopChild: after - visible=%v, rect=(%d,%d,%d,%d), style=0x%X, exStyle=0x%X",
+		visible2, rect2[0], rect2[1], rect2[2], rect2[3], style, exStyle)
+
 	logger.Debug("SetAsDesktopChild: done")
 	return true
 }
 
-// DetachFromDesktop 将窗口从桌面层脱离（恢复为顶级窗口），并恢复被隐藏的 WorkerW
+// logChildWindows 枚举并日志输出某窗口的子窗口
+func (api *WindowsAPI) logChildWindows(parent win.HWND, parentName string) {
+	enumChildFunc := syscall.NewCallback(func(hwnd win.HWND, lParam uintptr) uintptr {
+		visible := api.IsWindowVisible(hwnd)
+		var className [256]uint16
+		procGetClassNameW.Call(uintptr(hwnd), uintptr(unsafe.Pointer(&className[0])), 256)
+		name := syscall.UTF16ToString(className[:])
+		logger.Debug("  child of %s: hwnd=%v, class=%q, visible=%v", parentName, hwnd, name, visible)
+		return 1
+	})
+	procEnumChildWindows.Call(uintptr(parent), enumChildFunc, 0)
+}
+
+// DetachFromDesktop 将窗口从桌面层脱离（恢复为顶级窗口）
 func (api *WindowsAPI) DetachFromDesktop(hwnd win.HWND) {
 	procSetParent.Call(uintptr(hwnd), 0)
-
-	// 恢复被隐藏的 WorkerW
-	workerW := api.FindWorkerW()
-	if workerW != 0 {
-		procShowWindow.Call(uintptr(workerW), uintptr(SW_SHOW))
-	}
 }
 
 // HideDesktopIcons 隐藏系统桌面图标（隐藏包含 SHELLDLL_DefView 的父窗口）
