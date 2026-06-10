@@ -9,6 +9,8 @@ import (
 
 var (
 	user32               = syscall.NewLazyDLL("user32.dll")
+	comctl32             = syscall.NewLazyDLL("comctl32.dll")
+
 	procFindWindowW      = user32.NewProc("FindWindowW")
 	procSetParent        = user32.NewProc("SetParent")
 	procShowWindow       = user32.NewProc("ShowWindow")
@@ -26,6 +28,11 @@ var (
 	procGetClientRect    = user32.NewProc("GetClientRect")
 	procSendMessageW2    = user32.NewProc("SendMessageW")
 	procGetForegroundWindow = user32.NewProc("GetForegroundWindow")
+	procIsIconic            = user32.NewProc("IsIconic")
+	procIsWindowVisible     = user32.NewProc("IsWindowVisible")
+	procSetWindowSubclass    = comctl32.NewProc("SetWindowSubclass")
+	procRemoveWindowSubclass = comctl32.NewProc("RemoveWindowSubclass")
+	procDefSubclassProc      = comctl32.NewProc("DefSubclassProc")
 )
 
 const (
@@ -74,7 +81,10 @@ const (
 
 	SC_MINIMIZE = 0xF020
 
-	WM_SIZE = 0x0005
+	WM_SIZE        = 0x0005
+	WM_SYSCOMMAND  = 0x0112
+
+	subclassID = 1
 )
 
 // WindowsAPI Windows API 封装
@@ -156,11 +166,57 @@ func (api *WindowsAPI) FindWorkerW() win.HWND {
 	return workerW
 }
 
-// SetAsDesktopChild 将窗口设为桌面子窗口
+// SetAsDesktopChild 将窗口设为桌面 WorkerW 子窗口（使窗口嵌入桌面层，不受 Win+D 影响）
 func (api *WindowsAPI) SetAsDesktopChild(hwnd win.HWND) {
 	workerW := api.FindWorkerW()
 	if workerW != 0 {
 		procSetParent.Call(uintptr(hwnd), uintptr(workerW))
+	}
+}
+
+// HideDesktopIcons 隐藏系统桌面图标（隐藏包含 SHELLDLL_DefView 的父窗口）
+func (api *WindowsAPI) HideDesktopIcons() {
+	var targetHwnd win.HWND
+	enumFunc := syscall.NewCallback(func(hwnd win.HWND, lParam uintptr) uintptr {
+		shellView, _, _ := procFindWindowExW.Call(
+			uintptr(hwnd),
+			0,
+			uintptr(unsafe.Pointer(syscall.StringToUTF16Ptr("SHELLDLL_DefView"))),
+			0,
+		)
+		if shellView != 0 {
+			targetHwnd = hwnd
+			return 0 // 停止枚举
+		}
+		return 1
+	})
+	procEnumWindows.Call(enumFunc, 0)
+
+	if targetHwnd != 0 {
+		procShowWindow.Call(uintptr(targetHwnd), uintptr(SW_HIDE))
+	}
+}
+
+// ShowDesktopIcons 显示系统桌面图标
+func (api *WindowsAPI) ShowDesktopIcons() {
+	var targetHwnd win.HWND
+	enumFunc := syscall.NewCallback(func(hwnd win.HWND, lParam uintptr) uintptr {
+		shellView, _, _ := procFindWindowExW.Call(
+			uintptr(hwnd),
+			0,
+			uintptr(unsafe.Pointer(syscall.StringToUTF16Ptr("SHELLDLL_DefView"))),
+			0,
+		)
+		if shellView != 0 {
+			targetHwnd = hwnd
+			return 0
+		}
+		return 1
+	})
+	procEnumWindows.Call(enumFunc, 0)
+
+	if targetHwnd != 0 {
+		procShowWindow.Call(uintptr(targetHwnd), uintptr(SW_SHOW))
 	}
 }
 
@@ -221,6 +277,18 @@ func (api *WindowsAPI) SetWindowBottom(hwnd win.HWND) {
 func (api *WindowsAPI) IsForegroundWindow(hwnd win.HWND) bool {
 	fg, _, _ := procGetForegroundWindow.Call()
 	return win.HWND(fg) == hwnd
+}
+
+// IsIconic 判断窗口是否处于最小化状态
+func (api *WindowsAPI) IsIconic(hwnd win.HWND) bool {
+	ret, _, _ := procIsIconic.Call(uintptr(hwnd))
+	return ret != 0
+}
+
+// IsWindowVisible 判断窗口是否可见
+func (api *WindowsAPI) IsWindowVisible(hwnd win.HWND) bool {
+	ret, _, _ := procIsWindowVisible.Call(uintptr(hwnd))
+	return ret != 0
 }
 
 // RemoveWindowMenu 移除窗口菜单栏（消除顶部空白区域）
@@ -321,4 +389,35 @@ func (api *WindowsAPI) ForceShowAndRaise(hwnd win.HWND) {
 // negIntToUintptr 将负整数常量安全转换为 uintptr
 func negIntToUintptr(v int) uintptr {
 	return uintptr(v)
+}
+
+// subclassProc 子类化回调：拦截 WM_SYSCOMMAND SC_MINIMIZE，忽略最小化请求
+func subclassProc(hwnd uintptr, msg uint32, wParam, lParam, uIDSubclass, dwRefData uintptr) uintptr {
+	if msg == WM_SYSCOMMAND && (wParam&0xFFF0) == SC_MINIMIZE {
+		// 吞掉最小化消息，不传递给原 WndProc
+		return 0
+	}
+	ret, _, _ := procDefSubclassProc.Call(hwnd, uintptr(msg), wParam, lParam)
+	return ret
+}
+
+var subclassCB = syscall.NewCallback(subclassProc)
+
+// InstallMinimizeBlock 安装子类化拦截最小化消息（仅影响本窗口）
+func (api *WindowsAPI) InstallMinimizeBlock(hwnd win.HWND) {
+	procSetWindowSubclass.Call(
+		uintptr(hwnd),
+		subclassCB,
+		uintptr(subclassID),
+		0,
+	)
+}
+
+// RemoveMinimizeBlock 移除子类化
+func (api *WindowsAPI) RemoveMinimizeBlock(hwnd win.HWND) {
+	procRemoveWindowSubclass.Call(
+		uintptr(hwnd),
+		subclassCB,
+		uintptr(subclassID),
+	)
 }

@@ -61,9 +61,11 @@ Setup()
 delayedSetup()
 ├── 等待300ms
 ├── Synchronize:
+│   ├── HideDesktopIcons (隐藏系统桌面图标)
 │   ├── RemoveWindowMenu
 │   ├── SetBorderlessAndPosition
 │   ├── DisableMinimize
+│   ├── InstallMinimizeBlock (子类化拦截最小化)
 │   └── SetWindowBottom
 ├── 等待100ms
 ├── Synchronize: SetWindowPosNoRedraw(w+1, h+1)
@@ -84,8 +86,22 @@ delayedSetup()
 ## Z 序守护
 
 - 每 500ms 轮询一次
-- 仅当我们的窗口意外成为前台窗口时推底
+- 检测 IsIconic → SW_RESTORE + SetWindowBottom
+- 检测 !IsWindowVisible → SW_SHOWNA + SetWindowBottom
+- 检测 IsForegroundWindow → SetWindowBottom 推底
 - 用户打开其他程序时不做任何操作
+
+## 桌面图标遮挡方案
+
+- `HideDesktopIcons()`: 隐藏包含 SHELLDLL_DefView 的父窗口，防止系统图标显示在应用窗口上层
+- `ShowDesktopIcons()`: 退出时恢复系统桌面图标
+
+## Win+D 防护方案
+
+- 使用 `SetWindowSubclass` (comctl32.dll) 对本窗口子类化
+- 子类化回调拦截 `WM_SYSCOMMAND` + `SC_MINIMIZE`，返回 0 忽略最小化
+- 仅影响本窗口，不影响其他程序对 Win+D 的正常响应
+- 退出时 `RemoveWindowSubclass` 恢复
 
 ## 交互事件
 
@@ -95,6 +111,18 @@ delayedSetup()
 | 点击未分组图标 | 鼠标按下 | 执行程序/打开文件 |
 | Alt+F6 | 键盘 | exitDesktopMode → lifecycle关闭 → Close |
 
+## 退出清理
+
+```
+exitDesktopMode()
+├── lifecycle.MarkClosing()
+├── lifecycle.ExecuteCleanups()
+├── RemoveMinimizeBlock (卸载子类化)
+├── ShowDesktopIcons (恢复系统桌面图标)
+├── ShowTaskbar
+└── mainWindow.Close()
+```
+
 ## 检查清单
 
 - [ ] 去边框后客户区正确铺满，无白边
@@ -102,3 +130,5 @@ delayedSetup()
 - [ ] Z序守护不会干扰用户打开其他程序
 - [ ] Alt+F6 正确退出桌面模式
 - [ ] 添加/删除分组后 UI 正确刷新
+- [ ] 系统桌面图标被隐藏，不会遮挡应用
+- [ ] Win+D 不会最小化本窗口，不影响其他程序

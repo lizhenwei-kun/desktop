@@ -390,7 +390,6 @@ func (r *Runner) setupNotifyIcon() {
 		} else {
 			r.mw.SetVisible(true)
 			if r.mode == ModeDesktop {
-				// 桌面模式：显示后保持在最底层
 				r.winAPI.SetWindowBottom(r.mw.Handle())
 			} else {
 				r.winAPI.ForceShowAndRaise(r.mw.Handle())
@@ -406,6 +405,10 @@ func (r *Runner) setupNotifyIcon() {
 	exitAction.Triggered().Attach(func() {
 		r.lifecycle.MarkClosing()
 		r.lifecycle.ExecuteCleanups()
+		if r.mode == ModeDesktop {
+			r.winAPI.RemoveMinimizeBlock(r.mw.Handle())
+			r.winAPI.ShowDesktopIcons()
+		}
 		r.ni.Dispose()
 		walk.App().Exit(0)
 	})

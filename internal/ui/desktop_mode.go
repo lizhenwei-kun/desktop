@@ -137,6 +137,9 @@ func (dm *DesktopMode) delayedSetup() {
 		logger.Debug("delayedSetup: hwnd=%v, pos=(%d,%d,%dx%d)",
 			hwnd, dm.workX, dm.workY, dm.workW, dm.workH)
 
+		// 隐藏系统桌面图标（防止系统图标显示在窗口上层）
+		dm.winAPI.HideDesktopIcons()
+
 		// 移除菜单栏（walk MainWindow 默认创建了空菜单栏，占用顶部空间）
 		dm.winAPI.RemoveWindowMenu(win.HWND(hwnd))
 
@@ -145,6 +148,9 @@ func (dm *DesktopMode) delayedSetup() {
 
 		// 禁用最小化
 		dm.winAPI.DisableMinimize(win.HWND(hwnd))
+
+		// 安装子类化拦截最小化消息（Win+D 不会最小化本窗口，但不影响其他程序）
+		dm.winAPI.InstallMinimizeBlock(win.HWND(hwnd))
 
 		// 确保窗口在 Z 序最底层
 		dm.winAPI.SetWindowBottom(win.HWND(hwnd))
@@ -207,13 +213,13 @@ func (dm *DesktopMode) delayedSetup() {
 
 		dm.lifecycle.MarkReady()
 
-		// 启动后台协程持续维护 Z 序（防止被意外提升到前台）
+		// 启动后台协程持续维护 Z 序（防止被 Win+D 等操作影响）
 		go dm.maintainBottomZOrder()
 	})
 }
 
 // maintainBottomZOrder 持续维护窗口在 Z 序最底层
-// 仅在窗口意外被提到前台时推底，不干扰用户打开的其他程序
+// 处理 Win+D 等操作导致窗口被最小化或隐藏的情况
 func (dm *DesktopMode) maintainBottomZOrder() {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
@@ -223,17 +229,27 @@ func (dm *DesktopMode) maintainBottomZOrder() {
 			return
 		}
 		dm.mainWindow.Synchronize(func() {
-			if dm.lifecycle.State() == StateReady {
-				hwnd := dm.mainWindow.Handle()
-				// 只有我们的窗口意外成为前台时才推底
-				// 用户打开其他程序时不做任何操作，避免抢夺前台
-				if dm.winAPI.IsForegroundWindow(win.HWND(hwnd)) {
-					dm.winAPI.SetWindowBottom(win.HWND(hwnd))
-				}
+			if dm.lifecycle.State() != StateReady {
+				return
+			}
+			hwnd := dm.mainWindow.Handle()
+
+			// 检测窗口是否被 Win+D 最小化或隐藏，若是则恢复并沉底
+			if dm.winAPI.IsIconic(win.HWND(hwnd)) {
+				dm.winAPI.ShowWindowCmd(win.HWND(hwnd), 9) // SW_RESTORE
+				dm.winAPI.SetWindowBottom(win.HWND(hwnd))
+			} else if !dm.winAPI.IsWindowVisible(win.HWND(hwnd)) {
+				dm.winAPI.ShowWindowCmd(win.HWND(hwnd), 8) // SW_SHOWNA
+				dm.winAPI.SetWindowBottom(win.HWND(hwnd))
+			} else if dm.winAPI.IsForegroundWindow(win.HWND(hwnd)) {
+				// 意外成为前台时推底
+				dm.winAPI.SetWindowBottom(win.HWND(hwnd))
 			}
 		})
 	}
 }
+
+
 
 // reapplyCardPositions 重新应用所有卡片的绝对定位
 func (dm *DesktopMode) reapplyCardPositions() {
@@ -487,6 +503,8 @@ func (dm *DesktopMode) setupHotkeys() {
 func (dm *DesktopMode) exitDesktopMode() {
 	dm.lifecycle.MarkClosing()
 	dm.lifecycle.ExecuteCleanups()
+	dm.winAPI.RemoveMinimizeBlock(win.HWND(dm.mainWindow.Handle()))
+	dm.winAPI.ShowDesktopIcons()
 	dm.winAPI.ShowTaskbar()
 	dm.mainWindow.Close()
 }
