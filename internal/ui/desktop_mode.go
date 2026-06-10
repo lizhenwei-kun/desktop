@@ -144,7 +144,7 @@ func (dm *DesktopMode) Setup() error {
 	return nil
 }
 
-// delayedSetup 消息循环启动后去边框、沉底、禁止最小化
+// delayedSetup 消息循环启动后去边框、嵌入桌面层级
 func (dm *DesktopMode) delayedSetup() {
 	defer recoverGoroutine("delayedSetup")
 
@@ -162,22 +162,19 @@ func (dm *DesktopMode) delayedSetup() {
 		// 移除菜单栏（walk MainWindow 默认创建了空菜单栏，占用顶部空间）
 		dm.winAPI.RemoveWindowMenu(win.HWND(hwnd))
 
-		// 去除边框并定位（内部使用 HWND_BOTTOM 沉底）
-		dm.winAPI.SetBorderlessAndPosition(win.HWND(hwnd), dm.workX, dm.workY, dm.workW, dm.workH)
+		// 去除边框（使用全屏尺寸，嵌入桌面层后覆盖整个屏幕）
+		dm.winAPI.SetWindowBorderless(win.HWND(hwnd))
 
-		// 禁用最小化
-		dm.winAPI.DisableMinimize(win.HWND(hwnd))
+		// 将窗口嵌入桌面层级（SetParent 到 WorkerW）
+		if !dm.winAPI.SetAsDesktopChild(win.HWND(hwnd)) {
+			logger.Error("delayedSetup: SetAsDesktopChild failed, WorkerW not found, exiting")
+			os.Exit(1)
+		}
+		logger.Debug("delayedSetup: SetAsDesktopChild done")
 
-		// 安装子类化拦截最小化消息
-		dm.winAPI.InstallMinimizeBlock(win.HWND(hwnd))
-		logger.Debug("delayedSetup: InstallMinimizeBlock done")
-
-		// 安装事件钩子：监听本窗口最小化/隐藏事件，立即恢复（应对 Win+D）
-		dm.winAPI.InstallWinEventHook(win.HWND(hwnd))
-		logger.Debug("delayedSetup: InstallWinEventHook done")
-
-		// 确保窗口在 Z 序最底层
-		dm.winAPI.SetWindowBottom(win.HWND(hwnd))
+		// 嵌入后设置窗口位置铺满工作区
+		dm.winAPI.MoveWindow(win.HWND(hwnd), dm.workX, dm.workY, dm.workW, dm.workH)
+		logger.Debug("delayedSetup: MoveWindow done")
 	})
 
 	// 去边框后客户区变大，通过尺寸变化触发 walk 重新布局（不重绘避免闪烁）
@@ -193,24 +190,19 @@ func (dm *DesktopMode) delayedSetup() {
 
 	dm.mainWindow.Synchronize(func() {
 		hwnd := dm.mainWindow.Handle()
-		// 恢复正确尺寸，layout 已更新（不重绘）
-		dm.winAPI.SetWindowPosNoRedraw(win.HWND(hwnd), dm.workX, dm.workY, dm.workW, dm.workH)
-		dm.winAPI.SetWindowBottom(win.HWND(hwnd))
+		// 恢复正确尺寸
+		dm.winAPI.MoveWindow(win.HWND(hwnd), dm.workX, dm.workY, dm.workW, dm.workH)
 	})
 
 	time.Sleep(100 * time.Millisecond)
 
 	dm.mainWindow.Synchronize(func() {
 		// 最终确认：强制 container 和 bodyWidget 覆盖整个客户区
-		hwnd := dm.mainWindow.Handle()
-		_ = hwnd
-
-		// 获取当前客户区（去边框+移除菜单后应该等于窗口大小）
 		clientBounds := dm.mainWindow.ClientBoundsPixels()
 		logger.Debug("delayedSetup: clientBounds=(%d,%d,%dx%d)",
 			clientBounds.X, clientBounds.Y, clientBounds.Width, clientBounds.Height)
 
-		// 强制 container 铺满整个窗口客户区（从 Y=0 开始，高度为完整客户区）
+		// 强制 container 铺满整个窗口客户区
 		fullH := clientBounds.Y + clientBounds.Height
 		dm.container.SetBoundsPixels(walk.Rectangle{
 			X: 0, Y: 0,
@@ -224,7 +216,7 @@ func (dm *DesktopMode) delayedSetup() {
 		// 强制重新应用卡片的绝对定位
 		dm.reapplyCardPositions()
 
-		// 手动触发一次完整重绘（仅此一次）
+		// 手动触发一次完整重绘
 		dm.bodyWidget.Invalidate()
 
 		finalBounds := dm.mainWindow.BoundsPixels()
@@ -236,43 +228,10 @@ func (dm *DesktopMode) delayedSetup() {
 			bodyBounds.X, bodyBounds.Y, bodyBounds.Width, bodyBounds.Height)
 
 		dm.lifecycle.MarkReady()
-
-		// 启动后台协程持续维护 Z 序（防止被 Win+D 等操作影响）
-		go dm.maintainBottomZOrder()
 	})
 }
 
-// maintainBottomZOrder 持续维护窗口在 Z 序最底层
-// 处理窗口异常状态（被最小化或隐藏）的情况
-func (dm *DesktopMode) maintainBottomZOrder() {
-	defer recoverGoroutine("maintainBottomZOrder")
 
-	ticker := time.NewTicker(200 * time.Millisecond)
-	defer ticker.Stop()
-
-	for range ticker.C {
-		if dm.lifecycle.State() != StateReady {
-			return
-		}
-		dm.mainWindow.Synchronize(func() {
-			if dm.lifecycle.State() != StateReady {
-				return
-			}
-			hwnd := dm.mainWindow.Handle()
-
-			// 检测窗口是否被意外最小化或隐藏，若是则恢复并沉底
-			if dm.winAPI.IsIconic(win.HWND(hwnd)) {
-				dm.winAPI.ShowWindowCmd(win.HWND(hwnd), 9) // SW_RESTORE
-				dm.winAPI.SetWindowBottom(win.HWND(hwnd))
-			} else if !dm.winAPI.IsWindowVisible(win.HWND(hwnd)) {
-				dm.winAPI.ShowWindowCmd(win.HWND(hwnd), 8) // SW_SHOWNA
-				dm.winAPI.SetWindowBottom(win.HWND(hwnd))
-			} else if dm.winAPI.IsForegroundWindow(win.HWND(hwnd)) {
-				dm.winAPI.SetWindowBottom(win.HWND(hwnd))
-			}
-		})
-	}
-}
 
 
 
@@ -529,10 +488,9 @@ func (dm *DesktopMode) exitDesktopMode() {
 	dm.lifecycle.MarkClosing()
 	dm.lifecycle.ExecuteCleanups()
 	hwnd := dm.mainWindow.Handle()
-	dm.winAPI.RemoveMinimizeBlock(win.HWND(hwnd))
-	dm.winAPI.RemoveWinEventHook()
+	// 从桌面层脱离
+	dm.winAPI.DetachFromDesktop(win.HWND(hwnd))
 	dm.winAPI.ShowDesktopIcons()
-	dm.winAPI.ShowTaskbar()
 	dm.mainWindow.Close()
 }
 

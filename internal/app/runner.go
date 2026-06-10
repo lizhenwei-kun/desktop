@@ -389,9 +389,7 @@ func (r *Runner) setupNotifyIcon() {
 			r.mw.SetVisible(false)
 		} else {
 			r.mw.SetVisible(true)
-			if r.mode == ModeDesktop {
-				r.winAPI.SetWindowBottom(r.mw.Handle())
-			} else {
+			if r.mode != ModeDesktop {
 				r.winAPI.ForceShowAndRaise(r.mw.Handle())
 			}
 		}
@@ -406,7 +404,7 @@ func (r *Runner) setupNotifyIcon() {
 		r.lifecycle.MarkClosing()
 		r.lifecycle.ExecuteCleanups()
 		if r.mode == ModeDesktop {
-			r.winAPI.RemoveMinimizeBlock(r.mw.Handle())
+			r.winAPI.DetachFromDesktop(r.mw.Handle())
 			r.winAPI.ShowDesktopIcons()
 		}
 		r.ni.Dispose()
@@ -418,9 +416,7 @@ func (r *Runner) setupNotifyIcon() {
 	r.ni.MouseDown().Attach(func(x, y int, button walk.MouseButton) {
 		if button == walk.LeftButton {
 			r.mw.SetVisible(true)
-			if r.mode == ModeDesktop {
-				r.winAPI.SetWindowBottom(r.mw.Handle())
-			} else {
+			if r.mode != ModeDesktop {
 				r.winAPI.ForceShowAndRaise(r.mw.Handle())
 			}
 		}

@@ -4,6 +4,7 @@ import (
 	"syscall"
 	"unsafe"
 
+	"desktop_go/internal/logger"
 	"github.com/lxn/win"
 )
 
@@ -127,23 +128,37 @@ func (api *WindowsAPI) GetWorkAreaRect() (left, top, right, bottom int) {
 	return int(rect.Left), int(rect.Top), int(rect.Right), int(rect.Bottom)
 }
 
-// FindWorkerW 查找桌面 WorkerW 窗口句柄
-func (api *WindowsAPI) FindWorkerW() win.HWND {
+// FindProgman 查找 Progman 窗口句柄
+func (api *WindowsAPI) FindProgman() win.HWND {
 	progman, _, _ := procFindWindowW.Call(
 		uintptr(unsafe.Pointer(syscall.StringToUTF16Ptr("Progman"))),
 		0,
 	)
+	return win.HWND(progman)
+}
+
+// FindWorkerW 查找桌面 WorkerW 窗口句柄（包含 SHELLDLL_DefView 的那个 WorkerW 的父窗口）
+func (api *WindowsAPI) FindWorkerW() win.HWND {
+	progman := api.FindProgman()
+	logger.Debug("FindWorkerW: Progman=%v", progman)
 	if progman == 0 {
+		logger.Error("FindWorkerW: Progman not found")
 		return 0
 	}
 
 	// 发送 0x052C 消息让 Progman 生成 WorkerW
-	procSendMessageW.Call(
-		progman,
-		0x052C, 0, 0,
-		uintptr(1000), // timeout
-		0,
+	// SendMessageTimeoutW(hWnd, Msg, wParam, lParam, fuFlags, uTimeout, lpdwResult)
+	var result uintptr
+	ret, _, err := procSendMessageW.Call(
+		uintptr(progman),
+		0x052C,
+		0xD,              // wParam - 触发 WorkerW 创建
+		1,                // lParam
+		0,                // fuFlags: SMTO_NORMAL
+		uintptr(1000),    // uTimeout: 1000ms
+		uintptr(unsafe.Pointer(&result)),
 	)
+	logger.Debug("FindWorkerW: SendMessage 0x052C ret=%v, result=%v, err=%v", ret, result, err)
 
 	var workerW win.HWND
 	enumFunc := syscall.NewCallback(func(hwnd win.HWND, lParam uintptr) uintptr {
@@ -154,8 +169,10 @@ func (api *WindowsAPI) FindWorkerW() win.HWND {
 			0,
 		)
 		if shellView != 0 {
+			logger.Debug("FindWorkerW: found SHELLDLL_DefView=%v in parent=%v", shellView, hwnd)
 			// 找到 SHELLDLL_DefView 的下一个 WorkerW
 			next, _, _ := procFindWindowExW.Call(0, uintptr(hwnd), uintptr(unsafe.Pointer(syscall.StringToUTF16Ptr("WorkerW"))), 0)
+			logger.Debug("FindWorkerW: next WorkerW after parent=%v → %v", hwnd, next)
 			if next != 0 {
 				workerW = win.HWND(next)
 			}
@@ -164,20 +181,57 @@ func (api *WindowsAPI) FindWorkerW() win.HWND {
 	})
 
 	procEnumWindows.Call(enumFunc, 0)
+	logger.Debug("FindWorkerW: workerW=%v", workerW)
 	return workerW
 }
 
-// SetAsDesktopChild 将窗口设为桌面 WorkerW 子窗口（使窗口嵌入桌面层，不受 Win+D 影响）
-func (api *WindowsAPI) SetAsDesktopChild(hwnd win.HWND) {
+// SetAsDesktopChild 将窗口嵌入桌面层级
+// 策略：SetParent 到 Progman，然后隐藏覆盖在上面的 WorkerW
+// 返回是否成功嵌入
+func (api *WindowsAPI) SetAsDesktopChild(hwnd win.HWND) bool {
+	progman := api.FindProgman()
+	if progman == 0 {
+		logger.Error("SetAsDesktopChild: Progman not found")
+		return false
+	}
+
+	// 发送 0x052C 触发 WorkerW 创建
+	var result uintptr
+	procSendMessageW.Call(
+		uintptr(progman),
+		0x052C,
+		0xD, 1,
+		0, uintptr(1000),
+		uintptr(unsafe.Pointer(&result)),
+	)
+
+	// 找到并隐藏覆盖在 Progman 上面的 WorkerW（包含 SHELLDLL_DefView 的那个）
 	workerW := api.FindWorkerW()
 	if workerW != 0 {
-		procSetParent.Call(uintptr(hwnd), uintptr(workerW))
+		logger.Debug("SetAsDesktopChild: hiding WorkerW=%v", workerW)
+		procShowWindow.Call(uintptr(workerW), uintptr(SW_HIDE))
 	}
+
+	// 将窗口设为 Progman 的子窗口
+	logger.Debug("SetAsDesktopChild: hwnd=%v, SetParent to Progman=%v", hwnd, progman)
+	prevParent, _, err := procSetParent.Call(uintptr(hwnd), uintptr(progman))
+	logger.Debug("SetAsDesktopChild: SetParent returned prevParent=%v, err=%v", prevParent, err)
+
+	// 确保窗口可见
+	procShowWindow.Call(uintptr(hwnd), uintptr(SW_SHOW))
+	logger.Debug("SetAsDesktopChild: done")
+	return true
 }
 
-// DetachFromDesktop 将窗口从桌面层脱离（恢复为顶级窗口）
+// DetachFromDesktop 将窗口从桌面层脱离（恢复为顶级窗口），并恢复被隐藏的 WorkerW
 func (api *WindowsAPI) DetachFromDesktop(hwnd win.HWND) {
 	procSetParent.Call(uintptr(hwnd), 0)
+
+	// 恢复被隐藏的 WorkerW
+	workerW := api.FindWorkerW()
+	if workerW != 0 {
+		procShowWindow.Call(uintptr(workerW), uintptr(SW_SHOW))
+	}
 }
 
 // HideDesktopIcons 隐藏系统桌面图标（隐藏包含 SHELLDLL_DefView 的父窗口）
