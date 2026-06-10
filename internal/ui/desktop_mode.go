@@ -293,19 +293,29 @@ func (dm *DesktopMode) loadWallpaper() {
 		return
 	}
 
-	dpi := dm.mainWindow.DPI()
-	if dpi <= 0 {
-		dpi = 96
-	}
-	logger.Debug("loadWallpaper: 加载壁纸 dpi=%d", dpi)
-	bmp, err := walk.NewBitmapFromFileForDPI(wallpaperPath, dpi)
-	if err != nil {
-		logger.Debug("loadWallpaper: dpi=%d 加载失败: %v, 尝试96", dpi, err)
-		bmp, err = walk.NewBitmapFromFileForDPI(wallpaperPath, 96)
+	// 使用 Go 标准库加载壁纸，按 Fill 模式裁剪到工作区尺寸
+	img := LoadWallpaperImage(dm.workW, dm.workH)
+	if img == nil {
+		logger.Debug("loadWallpaper: LoadWallpaperImage 返回 nil，回退到 GDI+ 加载")
+		dpi := dm.mainWindow.DPI()
+		if dpi <= 0 {
+			dpi = 96
+		}
+		bmp, err := walk.NewBitmapFromFileForDPI(wallpaperPath, dpi)
 		if err != nil {
-			logger.Debug("loadWallpaper: 96dpi也失败: %v", err)
+			logger.Debug("loadWallpaper: GDI+ 也失败: %v", err)
 			return
 		}
+		size := bmp.Size()
+		logger.Debug("loadWallpaper: GDI+ 加载成功, bmpSize=%dx%d", size.Width, size.Height)
+		dm.wallpaperBmp = bmp
+		return
+	}
+
+	bmp, err := walk.NewBitmapFromImageForDPI(img, 96)
+	if err != nil {
+		logger.Debug("loadWallpaper: NewBitmapFromImageForDPI failed: %v", err)
+		return
 	}
 	size := bmp.Size()
 	logger.Debug("loadWallpaper: 加载成功, bmpSize=%dx%d", size.Width, size.Height)
