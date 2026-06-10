@@ -20,7 +20,7 @@ var (
 	procSetWindowLongW   = user32.NewProc("SetWindowLongW")
 	procGetWindowLongW   = user32.NewProc("GetWindowLongW")
 	procEnumWindows      = user32.NewProc("EnumWindows")
-	procSendMessageW     = user32.NewProc("SendMessageTimeout")
+	procSendMessageW     = user32.NewProc("SendMessageTimeoutW")
 	procFindWindowExW    = user32.NewProc("FindWindowExW")
 	procSystemParametersInfoW = user32.NewProc("SystemParametersInfoW")
 	procSetMenu          = user32.NewProc("SetMenu")
@@ -33,6 +33,7 @@ var (
 	procSetWindowSubclass    = comctl32.NewProc("SetWindowSubclass")
 	procRemoveWindowSubclass = comctl32.NewProc("RemoveWindowSubclass")
 	procDefSubclassProc      = comctl32.NewProc("DefSubclassProc")
+
 )
 
 const (
@@ -172,6 +173,11 @@ func (api *WindowsAPI) SetAsDesktopChild(hwnd win.HWND) {
 	if workerW != 0 {
 		procSetParent.Call(uintptr(hwnd), uintptr(workerW))
 	}
+}
+
+// DetachFromDesktop 将窗口从桌面层脱离（恢复为顶级窗口）
+func (api *WindowsAPI) DetachFromDesktop(hwnd win.HWND) {
+	procSetParent.Call(uintptr(hwnd), 0)
 }
 
 // HideDesktopIcons 隐藏系统桌面图标（隐藏包含 SHELLDLL_DefView 的父窗口）
@@ -420,4 +426,92 @@ func (api *WindowsAPI) RemoveMinimizeBlock(hwnd win.HWND) {
 		subclassCB,
 		uintptr(subclassID),
 	)
+}
+
+// --- WinEvent Hook：监听窗口最小化/隐藏事件，立即恢复 ---
+
+const (
+	EVENT_SYSTEM_MINIMIZESTART = 0x0016
+	EVENT_OBJECT_HIDE          = 0x8003
+	WINEVENT_OUTOFCONTEXT      = 0x0000
+)
+
+var (
+	procSetWinEventHook   = user32.NewProc("SetWinEventHook")
+	procUnhookWinEvent    = user32.NewProc("UnhookWinEvent")
+)
+
+var (
+	winEventHookHandle  uintptr
+	winEventHookHandle2 uintptr
+	watchedHwnd         win.HWND
+)
+
+// winEventProc 事件钩子回调：检测到本窗口被最小化时立即恢复
+func winEventProc(hWinEventHook, event, hwnd, idObject, idChild, dwEventThread, dwmsEventTime uintptr) uintptr {
+	if win.HWND(hwnd) != watchedHwnd {
+		return 0
+	}
+	if event == EVENT_SYSTEM_MINIMIZESTART {
+		// 窗口被最小化，立即恢复并沉底
+		procShowWindow.Call(hwnd, 9) // SW_RESTORE
+		procSetWindowPos.Call(
+			hwnd, uintptr(HWND_BOTTOM),
+			0, 0, 0, 0,
+			uintptr(SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE),
+		)
+	} else if event == EVENT_OBJECT_HIDE {
+		// 窗口被隐藏，立即恢复并沉底
+		procShowWindow.Call(hwnd, uintptr(SW_SHOWNA))
+		procSetWindowPos.Call(
+			hwnd, uintptr(HWND_BOTTOM),
+			0, 0, 0, 0,
+			uintptr(SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE),
+		)
+	}
+	return 0
+}
+
+var winEventCB = syscall.NewCallback(winEventProc)
+
+// InstallWinEventHook 安装事件钩子监听本窗口的最小化/隐藏事件
+func (api *WindowsAPI) InstallWinEventHook(hwnd win.HWND) {
+	watchedHwnd = hwnd
+
+	// 监听最小化事件
+	h1, _, _ := procSetWinEventHook.Call(
+		uintptr(EVENT_SYSTEM_MINIMIZESTART), // eventMin
+		uintptr(EVENT_SYSTEM_MINIMIZESTART), // eventMax
+		0,                            // hmodWinEventProc (0 = 当前进程)
+		winEventCB,                   // pfnWinEventProc
+		0,                            // idProcess (0 = 所有进程)
+		0,                            // idThread (0 = 所有线程)
+		uintptr(WINEVENT_OUTOFCONTEXT), // dwFlags
+	)
+	winEventHookHandle = h1
+
+	// 监听隐藏事件
+	h2, _, _ := procSetWinEventHook.Call(
+		uintptr(EVENT_OBJECT_HIDE),
+		uintptr(EVENT_OBJECT_HIDE),
+		0,
+		winEventCB,
+		0,
+		0,
+		uintptr(WINEVENT_OUTOFCONTEXT),
+	)
+	winEventHookHandle2 = h2
+}
+
+// RemoveWinEventHook 移除事件钩子
+func (api *WindowsAPI) RemoveWinEventHook() {
+	watchedHwnd = 0
+	if winEventHookHandle != 0 {
+		procUnhookWinEvent.Call(winEventHookHandle)
+		winEventHookHandle = 0
+	}
+	if winEventHookHandle2 != 0 {
+		procUnhookWinEvent.Call(winEventHookHandle2)
+		winEventHookHandle2 = 0
+	}
 }

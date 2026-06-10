@@ -3,12 +3,14 @@ package main
 import (
 	"fmt"
 	"os"
+	"runtime/debug"
 	"syscall"
 	"unsafe"
 
 	"github.com/lxn/walk"
 
 	"desktop_go/internal/app"
+	"desktop_go/internal/logger"
 )
 
 var (
@@ -36,6 +38,24 @@ func ensureSingleInstance() bool {
 }
 
 func main() {
+	// 全局 panic 捕获，写入日志文件
+	defer func() {
+		if r := recover(); r != nil {
+			stack := string(debug.Stack())
+			// 尝试写入日志
+			logger.Error("PANIC: %v\n%s", r, stack)
+			logger.Sync()
+			// 同时写入崩溃文件（防止 logger 未初始化）
+			crashFile, err := os.OpenFile("log/crash.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+			if err == nil {
+				fmt.Fprintf(crashFile, "PANIC: %v\n%s\n", r, stack)
+				crashFile.Close()
+			}
+			fmt.Fprintf(os.Stderr, "PANIC: %v\n%s\n", r, stack)
+			os.Exit(2)
+		}
+	}()
+
 	if !ensureSingleInstance() {
 		// 已有实例在运行，直接退出
 		os.Exit(0)

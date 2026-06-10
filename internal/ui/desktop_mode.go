@@ -1,8 +1,11 @@
 package ui
 
 import (
+	"fmt"
 	"image"
 	"image/color"
+	"os"
+	"runtime/debug"
 	"time"
 
 	"github.com/lxn/walk"
@@ -13,6 +16,20 @@ import (
 	"desktop_go/internal/group"
 	"desktop_go/internal/logger"
 )
+
+// recoverGoroutine 在 goroutine 中捕获 panic 并写入日志
+func recoverGoroutine(name string) {
+	if r := recover(); r != nil {
+		stack := string(debug.Stack())
+		logger.Error("PANIC in %s: %v\n%s", name, r, stack)
+		logger.Sync()
+		crashFile, err := os.OpenFile("log/crash.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		if err == nil {
+			fmt.Fprintf(crashFile, "PANIC in %s: %v\n%s\n", name, r, stack)
+			crashFile.Close()
+		}
+	}
+}
 
 // DesktopMode 桌面模式 UI 管理器
 type DesktopMode struct {
@@ -129,6 +146,8 @@ func (dm *DesktopMode) Setup() error {
 
 // delayedSetup 消息循环启动后去边框、沉底、禁止最小化
 func (dm *DesktopMode) delayedSetup() {
+	defer recoverGoroutine("delayedSetup")
+
 	// 等待消息循环启动
 	time.Sleep(300 * time.Millisecond)
 
@@ -149,8 +168,13 @@ func (dm *DesktopMode) delayedSetup() {
 		// 禁用最小化
 		dm.winAPI.DisableMinimize(win.HWND(hwnd))
 
-		// 安装子类化拦截最小化消息（Win+D 不会最小化本窗口，但不影响其他程序）
+		// 安装子类化拦截最小化消息
 		dm.winAPI.InstallMinimizeBlock(win.HWND(hwnd))
+		logger.Debug("delayedSetup: InstallMinimizeBlock done")
+
+		// 安装事件钩子：监听本窗口最小化/隐藏事件，立即恢复（应对 Win+D）
+		dm.winAPI.InstallWinEventHook(win.HWND(hwnd))
+		logger.Debug("delayedSetup: InstallWinEventHook done")
 
 		// 确保窗口在 Z 序最底层
 		dm.winAPI.SetWindowBottom(win.HWND(hwnd))
@@ -219,9 +243,11 @@ func (dm *DesktopMode) delayedSetup() {
 }
 
 // maintainBottomZOrder 持续维护窗口在 Z 序最底层
-// 处理 Win+D 等操作导致窗口被最小化或隐藏的情况
+// 处理窗口异常状态（被最小化或隐藏）的情况
 func (dm *DesktopMode) maintainBottomZOrder() {
-	ticker := time.NewTicker(500 * time.Millisecond)
+	defer recoverGoroutine("maintainBottomZOrder")
+
+	ticker := time.NewTicker(200 * time.Millisecond)
 	defer ticker.Stop()
 
 	for range ticker.C {
@@ -234,7 +260,7 @@ func (dm *DesktopMode) maintainBottomZOrder() {
 			}
 			hwnd := dm.mainWindow.Handle()
 
-			// 检测窗口是否被 Win+D 最小化或隐藏，若是则恢复并沉底
+			// 检测窗口是否被意外最小化或隐藏，若是则恢复并沉底
 			if dm.winAPI.IsIconic(win.HWND(hwnd)) {
 				dm.winAPI.ShowWindowCmd(win.HWND(hwnd), 9) // SW_RESTORE
 				dm.winAPI.SetWindowBottom(win.HWND(hwnd))
@@ -242,7 +268,6 @@ func (dm *DesktopMode) maintainBottomZOrder() {
 				dm.winAPI.ShowWindowCmd(win.HWND(hwnd), 8) // SW_SHOWNA
 				dm.winAPI.SetWindowBottom(win.HWND(hwnd))
 			} else if dm.winAPI.IsForegroundWindow(win.HWND(hwnd)) {
-				// 意外成为前台时推底
 				dm.winAPI.SetWindowBottom(win.HWND(hwnd))
 			}
 		})
@@ -503,7 +528,9 @@ func (dm *DesktopMode) setupHotkeys() {
 func (dm *DesktopMode) exitDesktopMode() {
 	dm.lifecycle.MarkClosing()
 	dm.lifecycle.ExecuteCleanups()
-	dm.winAPI.RemoveMinimizeBlock(win.HWND(dm.mainWindow.Handle()))
+	hwnd := dm.mainWindow.Handle()
+	dm.winAPI.RemoveMinimizeBlock(win.HWND(hwnd))
+	dm.winAPI.RemoveWinEventHook()
 	dm.winAPI.ShowDesktopIcons()
 	dm.winAPI.ShowTaskbar()
 	dm.mainWindow.Close()
