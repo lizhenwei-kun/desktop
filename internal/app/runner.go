@@ -74,8 +74,8 @@ func (r *Runner) detectMode() string {
 		return ModeDesktop
 	}
 
-	// 3. 默认窗口模式
-	return ModeWindow
+	// 3. 默认桌面模式（暂时）
+	return ModeDesktop
 }
 
 // Run 运行应用

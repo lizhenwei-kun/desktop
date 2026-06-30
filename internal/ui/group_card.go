@@ -6,9 +6,11 @@ import (
 	"time"
 
 	"github.com/lxn/walk"
+	"github.com/lxn/win"
 
 	"desktop_go/internal/config"
 	"desktop_go/internal/group"
+	"desktop_go/internal/logger"
 )
 
 // 卡片最小尺寸
@@ -45,9 +47,14 @@ type GroupCard struct {
 
 	// 拖拽状态
 	isDragging    bool
+	isPressed     bool // 鼠标是否按下（用于长按检测）
 	dragStartX    int
 	dragStartY    int
 	dragStartTime time.Time
+	dragScreenX   int // 按下时鼠标的屏幕绝对坐标
+	dragScreenY   int
+	dragCardX     int // 按下时卡片的屏幕绝对坐标
+	dragCardY     int
 
 	// 缩放状态
 	isResizing   bool
@@ -121,6 +128,10 @@ func NewGroupCard(parent walk.Container, grp config.Group, mgr *group.Manager, e
 		Height: pixelH,
 	})
 
+	parentHwnd := win.GetParent(gc.container.Handle())
+	logger.Debug("NewGroupCard: %q pos=(%d,%d) size=(%dx%d) containerHwnd=%v parentHwnd=%v",
+		grp.Name, pixelX, pixelY, pixelW, pixelH, gc.container.Handle(), parentHwnd)
+
 	// 使用自定义绘制作为背景
 	gc.bodyWidget, err = walk.NewCustomWidgetPixels(gc.container, 0, gc.paintBody)
 	if err != nil {
@@ -134,6 +145,9 @@ func NewGroupCard(parent walk.Container, grp config.Group, mgr *group.Manager, e
 		X: 0, Y: 0,
 		Width: pixelW, Height: pixelH,
 	})
+
+	logger.Debug("NewGroupCard: %q bodyWidget hwnd=%v, bounds=(0,0,%dx%d)",
+		grp.Name, gc.bodyWidget.Handle(), pixelW, pixelH)
 
 	// 鼠标事件用于拖拽和缩放
 	gc.setupMouseEvents()
@@ -150,6 +164,9 @@ func (gc *GroupCard) setupMouseEvents() {
 		if button != walk.LeftButton {
 			return
 		}
+
+		// 记录按下状态（用于长按检测）
+		gc.isPressed = true
 
 		// 缩放边缘检测
 		edge := gc.getResizeEdge(x, y)
@@ -178,9 +195,16 @@ func (gc *GroupCard) setupMouseEvents() {
 				return
 			}
 
-			// 标题栏拖拽
-			gc.dragStartX = x
-			gc.dragStartY = y
+			// 标题栏空白处长按3秒拖拽
+			// 记录按下时的屏幕绝对坐标和卡片位置，用于拖拽时精确跟随鼠标
+			var screenPt win.POINT
+			screenPt.X = int32(x)
+			screenPt.Y = int32(y)
+			win.ClientToScreen(gc.bodyWidget.Handle(), &screenPt)
+			gc.dragScreenX = int(screenPt.X)
+			gc.dragScreenY = int(screenPt.Y)
+			gc.dragCardX = gc.pixelX()
+			gc.dragCardY = gc.pixelY()
 			gc.dragStartTime = time.Now()
 			gc.isDragging = false
 			go gc.checkDragStart()
@@ -203,10 +227,16 @@ func (gc *GroupCard) setupMouseEvents() {
 	})
 
 	gc.bodyWidget.MouseUp().Attach(func(x, y int, button walk.MouseButton) {
+		isDragEnd := gc.isDragging
+		gc.isPressed = false
 		if gc.isResizing {
 			gc.endResize()
 		}
 		gc.isDragging = false
+		if isDragEnd {
+			// 拖拽结束后触发重绘，清除残留痕迹
+			gc.bodyWidget.Invalidate()
+		}
 	})
 
 	gc.bodyWidget.MouseMove().Attach(func(x, y int, button walk.MouseButton) {
@@ -223,7 +253,7 @@ func (gc *GroupCard) setupMouseEvents() {
 // checkDragStart 检查是否开始拖拽（长按3秒）
 func (gc *GroupCard) checkDragStart() {
 	time.Sleep(longPressDragDelay)
-	if gc.dragStartTime.Add(longPressDragDelay).Before(time.Now()) || gc.dragStartTime.Add(longPressDragDelay).Equal(time.Now()) {
+	if gc.isPressed {
 		gc.isDragging = true
 	}
 }
@@ -376,24 +406,31 @@ func (gc *GroupCard) handleDrag(x, y int) {
 		return
 	}
 
-	dx := x - gc.dragStartX
-	dy := y - gc.dragStartY
+	// 将当前鼠标位置转为屏幕绝对坐标，计算与按下时的偏移
+	var screenPt win.POINT
+	screenPt.X = int32(x)
+	screenPt.Y = int32(y)
+	win.ClientToScreen(gc.bodyWidget.Handle(), &screenPt)
+	dx := int(screenPt.X) - gc.dragScreenX
+	dy := int(screenPt.Y) - gc.dragScreenY
 
-	// 像素偏移转相对偏移
-	gc.position.X += float64(dx) / float64(gc.workW)
-	gc.position.Y += float64(dy) / float64(gc.workH)
+	if dx == 0 && dy == 0 {
+		return
+	}
 
-	pixX := gc.pixelX()
-	pixY := gc.pixelY()
+	// 根据屏幕偏移量计算卡片新位置
+	newCardX := gc.dragCardX + dx
+	newCardY := gc.dragCardY + dy
+
+	gc.position.X = float64(newCardX) / float64(gc.workW)
+	gc.position.Y = float64(newCardY) / float64(gc.workH)
+
 	pixW := gc.pixelW()
 	pixH := gc.pixelH()
 
+	// bodyWidget 是 container 的子控件，会跟随自动移动
 	gc.container.SetBoundsPixels(walk.Rectangle{
-		X: pixX, Y: pixY,
-		Width: pixW, Height: pixH,
-	})
-	gc.bodyWidget.SetBoundsPixels(walk.Rectangle{
-		X: 0, Y: 0,
+		X: newCardX, Y: newCardY,
 		Width: pixW, Height: pixH,
 	})
 
@@ -619,8 +656,8 @@ func (gc *GroupCard) paintIconTile(canvas *walk.Canvas, item group.GroupItem, x,
 		}
 	}
 
-	// 绘制名称
-	font, _ := walk.NewFont("Microsoft YaHei", desktopIconTextSize, walk.FontBold)
+	// 绘制名称（微软雅黑，不加粗，类似系统桌面）
+	font, _ := walk.NewFont("Microsoft YaHei UI", desktopIconTextSize, 0)
 	if font != nil {
 		defer font.Dispose()
 		displayName := TruncateText(item.Name, 8)
@@ -724,14 +761,25 @@ func (gc *GroupCard) SetSize(w, h float64) {
 func (gc *GroupCard) ReapplyBounds() {
 	w := gc.pixelW()
 	h := gc.pixelH()
+	x := gc.pixelX()
+	y := gc.pixelY()
 	gc.container.SetBoundsPixels(walk.Rectangle{
-		X:      gc.pixelX(),
-		Y:      gc.pixelY(),
-		Width:  w,
-		Height: h,
+		X: x, Y: y,
+		Width: w, Height: h,
 	})
 	gc.bodyWidget.SetBoundsPixels(walk.Rectangle{
 		X: 0, Y: 0,
 		Width: w, Height: h,
 	})
+	// 强制触发重绘，确保卡片内容可见
+	gc.bodyWidget.Invalidate()
+
+	// 验证实际 bounds
+	actualContainer := gc.container.BoundsPixels()
+	actualBody := gc.bodyWidget.BoundsPixels()
+	logger.Debug("ReapplyBounds: %q container=(%d,%d,%dx%d) body=(%d,%d,%dx%d) visible=%v",
+		gc.groupName,
+		actualContainer.X, actualContainer.Y, actualContainer.Width, actualContainer.Height,
+		actualBody.X, actualBody.Y, actualBody.Width, actualBody.Height,
+		gc.container.Visible())
 }

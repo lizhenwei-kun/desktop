@@ -7,33 +7,55 @@ import (
 	"image/png"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"syscall"
 	"unsafe"
+
+	"desktop_go/internal/logger"
 )
 
 var (
-	shell32          = syscall.NewLazyDLL("shell32.dll")
+	shell32            = syscall.NewLazyDLL("shell32.dll")
 	procSHGetFileInfoW = shell32.NewProc("SHGetFileInfoW")
+	procSHGetImageList = shell32.NewProc("SHGetImageList")
+	procExtractIconExW = shell32.NewProc("ExtractIconExW")
 
-	gdi32          = syscall.NewLazyDLL("gdi32.dll")
-	procGetDIBits  = gdi32.NewProc("GetDIBits")
-	procGetObject  = gdi32.NewProc("GetObjectW")
+	gdi32                  = syscall.NewLazyDLL("gdi32.dll")
+	procGetDIBits          = gdi32.NewProc("GetDIBits")
+	procGetObject          = gdi32.NewProc("GetObjectW")
 	procCreateCompatibleDC = gdi32.NewProc("CreateCompatibleDC")
-	procDeleteDC   = gdi32.NewProc("DeleteDC")
-	procDeleteObject = gdi32.NewProc("DeleteObject")
+	procDeleteDC           = gdi32.NewProc("DeleteDC")
+	procDeleteObject       = gdi32.NewProc("DeleteObject")
 
-	user32Icon         = syscall.NewLazyDLL("user32.dll")
-	procGetIconInfo    = user32Icon.NewProc("GetIconInfo")
-	procDestroyIcon    = user32Icon.NewProc("DestroyIcon")
+	user32Icon      = syscall.NewLazyDLL("user32.dll")
+	procGetIconInfo = user32Icon.NewProc("GetIconInfo")
+	procDestroyIcon = user32Icon.NewProc("DestroyIcon")
 )
 
 const (
-	SHGFI_ICON      = 0x000000100
-	SHGFI_LARGEICON = 0x000000000
-	SHGFI_SMALLICON = 0x000000001
+	SHGFI_ICON        = 0x000000100
+	SHGFI_LARGEICON   = 0x000000000
+	SHGFI_SMALLICON   = 0x000000001
+	SHGFI_SYSICONINDEX = 0x000004000
+
+	// SHGetImageList image list types
+	SHIL_LARGE      = 0 // 32x32
+	SHIL_SMALL      = 1 // 16x16
+	SHIL_EXTRALARGE = 2 // 48x48
+	SHIL_JUMBO      = 4 // 256x256
+
+	ILD_TRANSPARENT = 0x00000001
 )
+
+// IID_IImageList GUID
+var IID_IImageList = syscall.GUID{
+	Data1: 0x46EB5926,
+	Data2: 0x582E,
+	Data3: 0x4017,
+	Data4: [8]byte{0x9F, 0xDF, 0xE8, 0x99, 0x8D, 0xAA, 0x09, 0x50},
+}
 
 // SHFILEINFOW SHGetFileInfo 结构体
 type SHFILEINFOW struct {
@@ -71,11 +93,29 @@ type BITMAPINFOHEADER struct {
 // IconCache 图标缓存
 var iconCache sync.Map
 
+var iconCacheCleanOnce sync.Once
+
+var (
+	ole32    = syscall.NewLazyDLL("ole32.dll")
+	procCoInitializeEx = ole32.NewProc("CoInitializeEx")
+)
+
+// comInitThread 在当前线程初始化 COM（每个线程都需要独立初始化）
+func comInitThread() {
+	procCoInitializeEx.Call(0, 0x2) // COINIT_APARTMENTTHREADED; 重复调用是安全的
+}
+
 // IconExtractor 图标提取器
 type IconExtractor struct{}
 
 // NewIconExtractor 创建图标提取器
 func NewIconExtractor() *IconExtractor {
+	// 首次创建时清理旧的 PNG 缓存，确保使用新的高清图标
+	iconCacheCleanOnce.Do(func() {
+		home, _ := os.UserHomeDir()
+		cacheDir := filepath.Join(home, ".desktop_go", "icon_cache")
+		os.RemoveAll(cacheDir)
+	})
 	return &IconExtractor{}
 }
 
@@ -86,22 +126,33 @@ func (ie *IconExtractor) GetIconImage(filePath string) (image.Image, error) {
 		return cached.(image.Image), nil
 	}
 
-	// 解析实际图标路径
-	actualPath := ie.resolveIconPath(filePath)
-
-	// 使用 SHGetFileInfo 获取图标
-	img, err := ie.extractIcon(actualPath)
-	if err != nil {
-		// 使用回退图标
-		img = ie.getFallbackIcon(filePath)
+	// 直接用原始路径获取图标（SHGetFileInfo/SHGetImageList 能正确处理 .lnk/.url 等）
+	img, err := ie.extractIcon(filePath)
+	if img == nil {
+		logger.Debug("extractIcon failed for %q: %v", filePath, err)
+		// 尝试解析快捷方式目标路径后重试
+		actualPath := ie.resolveIconPath(filePath)
+		if actualPath != filePath {
+			img, err = ie.extractIcon(actualPath)
+			if img == nil {
+				logger.Debug("extractIcon(resolved=%q) also failed: %v", actualPath, err)
+			}
+		}
 	}
-
-	// 检查图标质量，必要时使用回退
-	if img != nil && ie.isLowQualityIcon(img) {
-		img = ie.getFallbackIcon(filePath)
+	if img == nil {
+		// 尝试 ExtractIconExW（对 exe/dll 有效）
+		img = ie.extractIconEx(filePath)
+	}
+	if img == nil {
+		// 最后尝试解析 lnk 目标后用 ExtractIconExW
+		actualPath := ie.resolveIconPath(filePath)
+		if actualPath != filePath {
+			img = ie.extractIconEx(actualPath)
+		}
 	}
 
 	if img == nil {
+		logger.Debug("all icon extraction failed for %q, using fallback", filePath)
 		img = ie.getFallbackIcon(filePath)
 	}
 
@@ -237,8 +288,15 @@ func (ie *IconExtractor) parseURLIconFile(urlPath string) string {
 	return ""
 }
 
-// extractIcon 使用 SHGetFileInfo 提取图标
+// extractIcon 使用 SHGetImageList 提取 48x48 高清图标
 func (ie *IconExtractor) extractIcon(filePath string) (image.Image, error) {
+	// 先尝试获取 48x48 extra large 图标
+	img, err := ie.extractIconExtraLarge(filePath)
+	if err == nil && img != nil {
+		return img, nil
+	}
+
+	// 回退到 SHGetFileInfo 获取 32x32 大图标
 	pathPtr, _ := syscall.UTF16PtrFromString(filePath)
 
 	var shfi SHFILEINFOW
@@ -256,6 +314,85 @@ func (ie *IconExtractor) extractIcon(filePath string) (image.Image, error) {
 	defer procDestroyIcon.Call(shfi.HIcon)
 
 	return ie.hIconToImage(shfi.HIcon)
+}
+
+// extractIconExtraLarge 使用 SHGetImageList 获取 48x48 图标
+func (ie *IconExtractor) extractIconExtraLarge(filePath string) (image.Image, error) {
+	// 锁定 goroutine 到 OS 线程，确保 COM 在当前线程正确初始化
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	comInitThread()
+
+	pathPtr, _ := syscall.UTF16PtrFromString(filePath)
+
+	// 获取文件在系统图标列表中的索引
+	var shfi SHFILEINFOW
+	ret, _, _ := procSHGetFileInfoW.Call(
+		uintptr(unsafe.Pointer(pathPtr)),
+		0,
+		uintptr(unsafe.Pointer(&shfi)),
+		unsafe.Sizeof(shfi),
+		SHGFI_SYSICONINDEX,
+	)
+	if ret == 0 {
+		logger.Debug("extractIconExtraLarge: SHGetFileInfoW SYSICONINDEX failed for %q", filePath)
+		return nil, os.ErrNotExist
+	}
+	iconIndex := shfi.IIcon
+
+	// 获取 Extra Large (48x48) 图标列表 — 返回 IImageList COM 接口
+	var pImageList uintptr
+	hr, _, _ := procSHGetImageList.Call(
+		SHIL_EXTRALARGE,
+		uintptr(unsafe.Pointer(&IID_IImageList)),
+		uintptr(unsafe.Pointer(&pImageList)),
+	)
+	if hr != 0 || pImageList == 0 {
+		logger.Debug("extractIconExtraLarge: SHGetImageList failed hr=0x%X for %q", hr, filePath)
+		return nil, os.ErrNotExist
+	}
+
+	// 通过 IImageList COM vtable 调用 GetIcon 方法
+	// IImageList vtable: QueryInterface(0), AddRef(1), Release(2), Add(3), ReplaceIcon(4),
+	// SetOverlayImage(5), Replace(6), AddMasked(7), Draw(8), Remove(9), GetIcon(10)
+	vtable := *(*[64]uintptr)(unsafe.Pointer(*(*uintptr)(unsafe.Pointer(pImageList))))
+	var hIcon uintptr
+	hr2, _, _ := syscall.SyscallN(vtable[10], // IImageList::GetIcon
+		pImageList,
+		uintptr(iconIndex),
+		ILD_TRANSPARENT,
+		uintptr(unsafe.Pointer(&hIcon)),
+	)
+	if hr2 != 0 || hIcon == 0 {
+		logger.Debug("extractIconExtraLarge: GetIcon failed hr=0x%X idx=%d for %q", hr2, iconIndex, filePath)
+		return nil, os.ErrNotExist
+	}
+	defer procDestroyIcon.Call(hIcon)
+
+	return ie.hIconToImage(hIcon)
+}
+
+// extractIconEx 使用 ExtractIconExW 提取图标（对 exe/dll/ico 文件有效）
+func (ie *IconExtractor) extractIconEx(filePath string) image.Image {
+	pathPtr, _ := syscall.UTF16PtrFromString(filePath)
+	var hIconLarge uintptr
+	ret, _, _ := procExtractIconExW.Call(
+		uintptr(unsafe.Pointer(pathPtr)),
+		0, // 第一个图标
+		uintptr(unsafe.Pointer(&hIconLarge)),
+		0, // 不需要小图标
+		1, // 提取1个图标
+	)
+	if ret == 0 || hIconLarge == 0 {
+		return nil
+	}
+	defer procDestroyIcon.Call(hIconLarge)
+
+	img, err := ie.hIconToImage(hIconLarge)
+	if err != nil {
+		return nil
+	}
+	return img
 }
 
 // hIconToImage 将 HICON 转换为 image.Image
@@ -323,21 +460,108 @@ func (ie *IconExtractor) hIconToImage(hIcon uintptr) (image.Image, error) {
 
 	// 转换为 image.RGBA (BGRA -> RGBA)
 	img := image.NewRGBA(image.Rect(0, 0, width, height))
+	hasAlpha := false
 	for y := 0; y < height; y++ {
 		for x := 0; x < width; x++ {
 			i := (y*width + x) * 4
 			if i+3 < len(pixels) {
+				a := pixels[i+3]
+				if a != 0 {
+					hasAlpha = true
+				}
 				img.SetRGBA(x, y, color.RGBA{
 					R: pixels[i+2],
 					G: pixels[i+1],
 					B: pixels[i+0],
-					A: pixels[i+3],
+					A: a,
 				})
 			}
 		}
 	}
 
+	// 如果 alpha 通道全为 0，使用 mask 来确定透明度
+	if !hasAlpha {
+		usedMask := false
+		if iconInfo.HbmMask != 0 {
+			maskBmi := BITMAPINFOHEADER{
+				BiSize:        uint32(unsafe.Sizeof(BITMAPINFOHEADER{})),
+				BiWidth:       int32(width),
+				BiHeight:      -int32(height),
+				BiPlanes:      1,
+				BiBitCount:    32,
+				BiCompression: 0,
+			}
+			maskPixels := make([]byte, width*height*4)
+			procGetDIBits.Call(
+				hdc,
+				iconInfo.HbmMask,
+				0, uintptr(height),
+				uintptr(unsafe.Pointer(&maskPixels[0])),
+				uintptr(unsafe.Pointer(&maskBmi)),
+				0,
+			)
+			for y := 0; y < height; y++ {
+				for x := 0; x < width; x++ {
+					i := (y*width + x) * 4
+					if i+3 < len(maskPixels) {
+						// mask=0 表示不透明, mask=白色表示透明
+						if maskPixels[i] == 0 && maskPixels[i+1] == 0 && maskPixels[i+2] == 0 {
+							c := img.RGBAAt(x, y)
+							c.A = 255
+							img.SetRGBA(x, y, c)
+							usedMask = true
+						}
+					}
+				}
+			}
+		}
+		// 如果 mask 也没有提供有效数据，将所有非全黑像素设为不透明
+		if !usedMask {
+			for y := 0; y < height; y++ {
+				for x := 0; x < width; x++ {
+					c := img.RGBAAt(x, y)
+					if c.R != 0 || c.G != 0 || c.B != 0 {
+						c.A = 255
+						img.SetRGBA(x, y, c)
+					}
+				}
+			}
+		}
+	}
+
+	// 检查图标是否完全空白（全透明），如果是则返回错误让上层尝试其他方法
+	allTransparent := true
+	for i := 3; i < len(img.Pix); i += 4 {
+		if img.Pix[i] != 0 {
+			allTransparent = false
+			break
+		}
+	}
+	if allTransparent {
+		return nil, os.ErrNotExist
+	}
+
+	// 预乘 alpha（AlphaBlend API 要求 premultiplied alpha 格式）
+	premultiplyAlpha(img)
+
 	return img, nil
+}
+
+// premultiplyAlpha 将 straight alpha 图像转换为 premultiplied alpha
+// Windows AlphaBlend API 要求源位图使用预乘 alpha 格式
+func premultiplyAlpha(img *image.RGBA) {
+	for i := 0; i < len(img.Pix); i += 4 {
+		a := uint32(img.Pix[i+3])
+		if a == 0 {
+			img.Pix[i+0] = 0
+			img.Pix[i+1] = 0
+			img.Pix[i+2] = 0
+		} else if a < 255 {
+			img.Pix[i+0] = byte(uint32(img.Pix[i+0]) * a / 255)
+			img.Pix[i+1] = byte(uint32(img.Pix[i+1]) * a / 255)
+			img.Pix[i+2] = byte(uint32(img.Pix[i+2]) * a / 255)
+		}
+	}
 }
 
 // isLowQualityIcon 判断图标是否质量过低

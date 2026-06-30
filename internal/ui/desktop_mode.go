@@ -228,17 +228,34 @@ func (dm *DesktopMode) delayedSetup() {
 			bodyBounds.X, bodyBounds.Y, bodyBounds.Width, bodyBounds.Height)
 
 		dm.lifecycle.MarkReady()
+
+		// 延迟再次确认卡片位置（防止异步布局覆盖）
+		go func() {
+			defer recoverGoroutine("postLayoutCardFix")
+			time.Sleep(200 * time.Millisecond)
+			dm.mainWindow.Synchronize(func() {
+				logger.Debug("postLayoutCardFix: reapply after 200ms delay, cards=%d", len(dm.cards))
+				dm.reapplyCardPositions()
+			})
+		}()
 	})
 }
 
 
-
-
-
-// reapplyCardPositions 重新应用所有卡片的绝对定位
+// reapplyCardPositions 重新应用所有卡片的绝对定位，并确保卡片 Z-order 在 bodyWidget 上方
 func (dm *DesktopMode) reapplyCardPositions() {
-	for _, card := range dm.cards {
+	for i, card := range dm.cards {
 		card.ReapplyBounds()
+		// 确保卡片在 Z-order 顶部（在 bodyWidget 上方）
+		win.SetWindowPos(card.Container().Handle(), win.HWND_TOP, 0, 0, 0, 0,
+			win.SWP_NOMOVE|win.SWP_NOSIZE|win.SWP_NOACTIVATE)
+		if i == 0 {
+			b := card.Container().BoundsPixels()
+			parentHwnd := win.GetParent(card.Container().Handle())
+			logger.Debug("reapplyCardPositions: card[0] bounds=(%d,%d,%dx%d), visible=%v, hwnd=%v, parent=%v, containerHwnd=%v",
+				b.X, b.Y, b.Width, b.Height, card.Container().Visible(),
+				card.Container().Handle(), parentHwnd, dm.container.Handle())
+		}
 	}
 }
 
@@ -425,13 +442,19 @@ func (dm *DesktopMode) addNewCard() {
 }
 
 // createGroupCards 创建所有分组卡片
+// 卡片创建在 mainWindow 中（与 container 同级），避免被 container 的 VBox 影响
 func (dm *DesktopMode) createGroupCards() {
 	groups := dm.manager.GetGroups()
-	for _, grp := range groups {
-		card, err := NewGroupCard(dm.container, grp, dm.manager, dm.executor, dm.mainWindow, dm.workW, dm.workH)
+	logger.Debug("createGroupCards: %d groups", len(groups))
+	for i, grp := range groups {
+		card, err := NewGroupCard(dm.mainWindow, grp, dm.manager, dm.executor, dm.mainWindow, dm.workW, dm.workH)
 		if err != nil {
+			logger.Debug("createGroupCards: card[%d] %q error: %v", i, grp.Name, err)
 			continue
 		}
+		b := card.Container().BoundsPixels()
+		logger.Debug("createGroupCards: card[%d] %q bounds=(%d,%d,%dx%d) visible=%v handle=%v",
+			i, grp.Name, b.X, b.Y, b.Width, b.Height, card.Container().Visible(), card.Container().Handle())
 		dm.setupCardActions(card, grp)
 		dm.cards = append(dm.cards, card)
 	}

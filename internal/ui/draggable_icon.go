@@ -20,7 +20,7 @@ const (
 	desktopIconTop        = 4
 	desktopIconLabelTop   = 56
 	desktopIconLineHeight = 17
-	desktopIconTextSize   = 13
+	desktopIconTextSize   = 9
 	longPressDragDelay    = 3 * time.Second
 )
 
@@ -164,10 +164,10 @@ func (di *DraggableIcon) drawIcon(canvas *walk.Canvas, bounds walk.Rectangle) {
 
 // drawLabel 绘制文字标签
 func (di *DraggableIcon) drawLabel(canvas *walk.Canvas, bounds walk.Rectangle) {
-	// 创建字体
-	font, err := walk.NewFont("Microsoft YaHei", desktopIconTextSize, walk.FontBold)
+	// 创建字体（微软雅黑，不加粗，类似系统桌面）
+	font, err := walk.NewFont("Microsoft YaHei UI", desktopIconTextSize, 0)
 	if err != nil {
-		font, _ = walk.NewFont("", desktopIconTextSize, walk.FontBold)
+		font, _ = walk.NewFont("Microsoft YaHei", desktopIconTextSize, 0)
 	}
 	if font == nil {
 		return
