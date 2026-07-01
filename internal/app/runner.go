@@ -43,6 +43,11 @@ func NewRunner() (*Runner, error) {
 		lifecycle: ui.NewLifecycleManager(),
 	}
 
+	// 初始化字体配置（从 config 读取）
+	cfg := r.manager.GetConfig()
+	ui.InitIconFont(cfg.IconFontName, cfg.IconFontSize)
+	ui.InitCardFont(cfg.CardFontName, cfg.CardFontSize)
+
 	// 检测运行模式
 	r.mode = r.detectMode()
 
@@ -276,7 +281,7 @@ func (r *Runner) paintWindowCard(canvas *walk.Canvas, grp config.Group, x, y, w,
 	}
 
 	// 标题
-	font, _ := walk.NewFont("Microsoft YaHei", 12, walk.FontBold)
+	font := ui.GetCardTitleFont()
 	if font != nil {
 		defer font.Dispose()
 		titleBounds := walk.Rectangle{X: x + 8, Y: y + 4, Width: w - 16, Height: 28}
@@ -292,13 +297,13 @@ func (r *Runner) paintWindowCard(canvas *walk.Canvas, grp config.Group, x, y, w,
 
 	// 绘制项目图标
 	items := r.manager.GetGroupItems(grp.Name)
-	colWidth := desktopIconItemWidth
+	colWidth := ui.TileWidth()
 	maxCols := (w - 8) / colWidth
 	if maxCols < 1 {
 		maxCols = 1
 	}
 
-	itemFont, _ := walk.NewFont("Microsoft YaHei", 11, 0)
+	itemFont := ui.GetIconFont()
 	if itemFont != nil {
 		defer itemFont.Dispose()
 	}
@@ -307,9 +312,9 @@ func (r *Runner) paintWindowCard(canvas *walk.Canvas, grp config.Group, x, y, w,
 		col := idx % maxCols
 		row := idx / maxCols
 		ix := x + 4 + col*colWidth
-		iy := y + 34 + row*desktopIconItemHeight
+		iy := y + 34 + row*ui.TileHeight()
 
-		if iy+desktopIconItemHeight > y+h {
+		if iy+ui.TileHeight() > y+h {
 			break
 		}
 
@@ -433,7 +438,3 @@ func createSolidImage(w, h int, c color.RGBA) *image.RGBA {
 	}
 	return img
 }
-
-// 桌面模式使用的常量
-const desktopIconItemWidth = 74
-const desktopIconItemHeight = 96

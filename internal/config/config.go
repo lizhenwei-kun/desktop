@@ -30,6 +30,10 @@ type Group struct {
 type Config struct {
 	Groups       []Group           `json:"groups"`
 	DesktopItems map[string]string `json:"desktop_items"` // 桌面项路径 -> 分组名
+	CardFontName string            `json:"card_font_name"`
+	CardFontSize int               `json:"card_font_size"`
+	IconFontName string            `json:"icon_font_name"`
+	IconFontSize int               `json:"icon_font_size"`
 }
 
 // DefaultGroups 返回默认分组配置（相对坐标，基于1920x1040工作区计算的比例）
@@ -59,6 +63,10 @@ func Load() *Config {
 	cfg := &Config{
 		Groups:       DefaultGroups(),
 		DesktopItems: make(map[string]string),
+		CardFontName: "宋体",
+		CardFontSize: 14,
+		IconFontName: "宋体",
+		IconFontSize: 11,
 	}
 
 	data, err := os.ReadFile(configPath())

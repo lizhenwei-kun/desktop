@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/lxn/walk"
 	"github.com/lxn/win"
@@ -14,13 +13,11 @@ import (
 
 // 图标磁贴规格常量
 const (
-	desktopIconItemWidth  = 74
-	desktopIconItemHeight = 96
 	desktopIconSize       = 48
-	desktopIconTop        = 4
-	desktopIconLabelTop   = 56
-	desktopIconLineHeight = 17
-	desktopIconTextSize   = 9
+	desktopIconTop        = 2
+	desktopIconLabelTop   = 52
+	desktopIconLineHeight = 24
+	desktopIconGap        = 8  // 图标磁贴间距
 	longPressDragDelay    = 3 * time.Second
 )
 
@@ -112,6 +109,15 @@ func (di *DraggableIcon) checkLongPress() {
 
 // paint 绘制图标磁贴
 func (di *DraggableIcon) paint(canvas *walk.Canvas, updateBounds walk.Rectangle) error {
+	// 首次绘制时用 canvas 精确测量磁贴尺寸
+	ensureTileSizeMeasured(canvas)
+
+	// 同步 widget 尺寸（确保与动态计算的磁贴尺寸一致）
+	di.widget.SetMinMaxSizePixels(
+		walk.Size{Width: desktopIconItemWidth, Height: desktopIconItemHeight},
+		walk.Size{Width: desktopIconItemWidth, Height: desktopIconItemHeight},
+	)
+
 	bounds := di.widget.ClientBoundsPixels()
 
 	// 绘制图标
@@ -164,40 +170,36 @@ func (di *DraggableIcon) drawIcon(canvas *walk.Canvas, bounds walk.Rectangle) {
 
 // drawLabel 绘制文字标签
 func (di *DraggableIcon) drawLabel(canvas *walk.Canvas, bounds walk.Rectangle) {
-	// 创建字体（微软雅黑，不加粗，类似系统桌面）
-	font, err := walk.NewFont("Microsoft YaHei UI", desktopIconTextSize, 0)
-	if err != nil {
-		font, _ = walk.NewFont("Microsoft YaHei", desktopIconTextSize, 0)
-	}
+	font := GetIconFont()
 	if font == nil {
 		return
 	}
 	defer font.Dispose()
 
 	text := di.displayName
-	// 最多显示2行，自动截断
-	lines := splitTextToLines(text, 8) // 约8个字一行
+	lines := splitTextToLines(text, 4)
 
 	textColor := color.RGBA{R: 0xFF, G: 0xFF, B: 0xFF, A: 0xFF}
 	shadowColor := color.RGBA{R: 0x00, G: 0x00, B: 0x00, A: 0xCC}
+
+	labelTop := bounds.Y + desktopIconLabelTop
 
 	for i, line := range lines {
 		if i >= 2 {
 			break
 		}
 		if i == 1 && len(lines) > 2 {
-			line = TruncateText(line, 7)
+			line = TruncateText(line, 3)
 		}
 
-		y := bounds.Y + desktopIconLabelTop + i*desktopIconLineHeight
+		y := labelTop + i*desktopIconLineHeight
 		textBounds := walk.Rectangle{
 			X:      bounds.X,
 			Y:      y,
-			Width:  bounds.Width,
+			Width:  desktopIconItemWidth,
 			Height: desktopIconLineHeight,
 		}
 
-		// 绘制阴影（偏移1像素）
 		shadowBounds := textBounds
 		shadowBounds.X++
 		shadowBounds.Y++
@@ -247,21 +249,46 @@ func getDisplayName(filePath string) string {
 	return strings.TrimSuffix(name, ext)
 }
 
-// splitTextToLines 将文本按指定宽度拆分为多行
-func splitTextToLines(text string, maxRunesPerLine int) []string {
+// splitTextToLines 将文本拆分为多行，优先在空格处换行，最大 maxRunes 个汉字/行
+func splitTextToLines(text string, maxCJK int) []string {
+	maxWidth := maxCJK * 2 // 全角2单位，半角1单位，最大宽度8（4中文/8英文）
 	runes := []rune(text)
-	if utf8.RuneCountInString(text) <= maxRunesPerLine {
-		return []string{text}
-	}
 
 	var lines []string
-	for len(runes) > 0 {
-		end := maxRunesPerLine
-		if end > len(runes) {
-			end = len(runes)
+	pos := 0
+	for pos < len(runes) {
+		width := 0
+		end := pos
+		lastSpace := -1
+
+		for end < len(runes) {
+			r := runes[end]
+			w := 2               // 默认全角
+			if r <= 0xFF {       // ASCII 及半角符号
+				w = 1
+			}
+			if width+w > maxWidth {
+				break
+			}
+			width += w
+			end++
+			if r == ' ' || r == '\t' {
+				lastSpace = end - 1
+			}
 		}
-		lines = append(lines, string(runes[:end]))
-		runes = runes[end:]
+
+		if end >= len(runes) {
+			lines = append(lines, string(runes[pos:]))
+			break
+		}
+
+		if lastSpace >= pos {
+			lines = append(lines, string(runes[pos:lastSpace]))
+			pos = lastSpace + 1 // 跳过分隔空格
+		} else {
+			lines = append(lines, string(runes[pos:end]))
+			pos = end
+		}
 	}
 	return lines
 }

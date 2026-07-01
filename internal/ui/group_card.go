@@ -485,7 +485,10 @@ func (gc *GroupCard) getItemIndexAt(x, y int) int {
 	bounds := gc.bodyWidget.ClientBoundsPixels()
 	startY := bounds.Y + cardHeaderHeight + 4
 	startX := bounds.X + 4
-	colWidth := desktopIconItemWidth
+	colWidth := desktopIconItemWidth + 8 + 8
+	if colWidth <= 0 {
+		return -1
+	}
 	maxCols := (bounds.Width - 8) / colWidth
 	if maxCols < 1 {
 		maxCols = 1
@@ -543,7 +546,7 @@ func (gc *GroupCard) paintBackground(canvas *walk.Canvas, bounds walk.Rectangle)
 func (gc *GroupCard) paintHeader(canvas *walk.Canvas, bounds walk.Rectangle) {
 	// 标题文字（预留按钮空间）
 	btnAreaW := (actionBtnWidth+actionBtnGap)*3 + 4
-	titleFont, _ := walk.NewFont("Microsoft YaHei", 12, walk.FontBold)
+	titleFont := GetCardTitleFont()
 	if titleFont != nil {
 		defer titleFont.Dispose()
 		headerBounds := walk.Rectangle{
@@ -553,8 +556,7 @@ func (gc *GroupCard) paintHeader(canvas *walk.Canvas, bounds walk.Rectangle) {
 		canvas.DrawTextPixels(gc.groupName, titleFont, walk.RGB(0xFF, 0xFF, 0xFF),
 			headerBounds, walk.TextSingleLine|walk.TextVCenter)
 	}
-
-	// 绘制操作按钮（白色半透明圆角小方块 + 符号文字）
+	// 操作按钮字体
 	btnFont, _ := walk.NewFont("Microsoft YaHei", 11, walk.FontBold)
 	if btnFont != nil {
 		defer btnFont.Dispose()
@@ -606,7 +608,10 @@ func (gc *GroupCard) paintHeader(canvas *walk.Canvas, bounds walk.Rectangle) {
 func (gc *GroupCard) paintIconGrid(canvas *walk.Canvas, bounds walk.Rectangle) {
 	startY := bounds.Y + cardHeaderHeight + 4
 	startX := bounds.X + 4
-	colWidth := desktopIconItemWidth
+	colWidth := desktopIconItemWidth + 8 + 8
+	if colWidth <= 0 {
+		return
+	}
 	maxCols := (bounds.Width - 8) / colWidth
 	if maxCols < 1 {
 		maxCols = 1
@@ -629,6 +634,9 @@ func (gc *GroupCard) paintIconGrid(canvas *walk.Canvas, bounds walk.Rectangle) {
 
 // paintIconTile 绘制单个图标磁贴
 func (gc *GroupCard) paintIconTile(canvas *walk.Canvas, item group.GroupItem, x, y int) {
+	// 首次绘制时用 canvas 精确测量磁贴尺寸
+	ensureTileSizeMeasured(canvas)
+
 	// 获取图标
 	extractor := NewIconExtractor()
 	iconImg, _ := extractor.GetIconImage(item.Path)
@@ -656,22 +664,35 @@ func (gc *GroupCard) paintIconTile(canvas *walk.Canvas, item group.GroupItem, x,
 		}
 	}
 
-	// 绘制名称（微软雅黑，不加粗，类似系统桌面）
-	font, _ := walk.NewFont("Microsoft YaHei UI", desktopIconTextSize, 0)
+	// 绘制名称（宋体，不加粗，自动换行）
+	font := GetIconFont()
 	if font != nil {
 		defer font.Dispose()
-		displayName := TruncateText(item.Name, 8)
-		textBounds := walk.Rectangle{
-			X: x, Y: y + desktopIconLabelTop,
-			Width: desktopIconItemWidth, Height: desktopIconLineHeight * 2,
-		}
+		displayName := item.Name
+		lines := splitTextToLines(displayName, 4)
 
-		// 阴影
-		shadowBounds := textBounds
-		shadowBounds.X++
-		shadowBounds.Y++
-		canvas.DrawTextPixels(displayName, font, walk.RGB(0, 0, 0), shadowBounds, walk.TextCenter|walk.TextSingleLine)
-		canvas.DrawTextPixels(displayName, font, walk.RGB(0xFF, 0xFF, 0xFF), textBounds, walk.TextCenter|walk.TextSingleLine)
+		labelTop := y + desktopIconLabelTop
+
+		for i, line := range lines {
+			if i >= 2 {
+				break
+			}
+			if i == 1 && len(lines) > 2 {
+				line = TruncateText(line, 3)
+			}
+
+			lineY := labelTop + i*desktopIconLineHeight
+			textBounds := walk.Rectangle{
+				X: x, Y: lineY,
+				Width: desktopIconItemWidth, Height: desktopIconLineHeight,
+			}
+
+			shadowBounds := textBounds
+			shadowBounds.X++
+			shadowBounds.Y++
+			canvas.DrawTextPixels(line, font, walk.RGB(0, 0, 0), shadowBounds, walk.TextCenter|walk.TextSingleLine)
+			canvas.DrawTextPixels(line, font, walk.RGB(0xFF, 0xFF, 0xFF), textBounds, walk.TextCenter|walk.TextSingleLine)
+		}
 	}
 }
 

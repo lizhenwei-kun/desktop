@@ -19,6 +19,7 @@
 | [spec-wallpaper.md](./spec-wallpaper.md) | 壁纸三级回退 | P1 |
 | [spec-lifecycle.md](./spec-lifecycle.md) | 三态生命周期 | P0 |
 | [spec-logger.md](./spec-logger.md) | 日志封装规范 | P1 |
+| [spec-tile-size-measurement.md](./spec-tile-size-measurement.md) | 磁贴尺寸测量重构经验总结 | - |
 
 ## 全局数据流
 
