@@ -49,6 +49,8 @@ type DesktopMode struct {
 	workW        int
 	workH        int
 	wallpaperBmp *walk.Bitmap // 缓存的壁纸 bitmap
+
+	hoveredFreeIdx int // 当前悬停的未分组图标索引
 }
 
 // NewDesktopMode 创建桌面模式
@@ -59,6 +61,7 @@ func NewDesktopMode(mw *walk.MainWindow, mgr *group.Manager, winAPI *desktop.Win
 		executor:   NewProgramExecutor(),
 		winAPI:     winAPI,
 		lifecycle:  lifecycle,
+		hoveredFreeIdx: -1,
 	}
 	dm.screenW, dm.screenH = winAPI.GetScreenSize()
 	left, top, right, bottom := winAPI.GetWorkAreaRect()
@@ -134,6 +137,27 @@ func (dm *DesktopMode) Setup() error {
 
 	// 鼠标双击事件（打开项目）
 	dm.bodyWidget.MouseDown().Attach(dm.handleMouseDown)
+
+	// 鼠标移动事件（检测自由图标悬停）
+	dm.bodyWidget.MouseMove().Attach(func(x, y int, button walk.MouseButton) {
+		bounds := dm.bodyWidget.ClientBoundsPixels()
+		items := dm.manager.GetUngroupedItems()
+		startX := bounds.Width - desktopIconItemWidth - 20
+		startY := 60
+		newIdx := -1
+		for i := range items {
+			iy := startY + i*desktopIconItemHeight
+			if x >= startX && x <= startX+desktopIconItemWidth &&
+				y >= iy && y <= iy+desktopIconItemHeight {
+				newIdx = i
+				break
+			}
+		}
+		if newIdx != dm.hoveredFreeIdx {
+			dm.hoveredFreeIdx = newIdx
+			dm.bodyWidget.Invalidate()
+		}
+	})
 
 	// 创建分组卡片（在 container 中，绝对定位）
 	dm.createGroupCards()
@@ -395,7 +419,7 @@ func (dm *DesktopMode) paintFreeItems(canvas *walk.Canvas, bounds walk.Rectangle
 			break
 		}
 		gc := &GroupCard{executor: dm.executor}
-		gc.paintIconTile(canvas, item, startX, y)
+		gc.paintIconTile(canvas, item, startX, y, i == dm.hoveredFreeIdx)
 	}
 }
 

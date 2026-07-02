@@ -75,6 +75,9 @@ type GroupCard struct {
 	// 双击检测状态
 	lastClickTime time.Time
 	lastClickIdx  int // 上次点击的图标索引
+
+	// 悬停检测状态
+	hoveredItemIdx int // 当前悬停的图标索引，-1 表示无
 }
 
 // ResizeEdge 缩放方向
@@ -104,6 +107,7 @@ func NewGroupCard(parent walk.Container, grp config.Group, mgr *group.Manager, e
 		owner:      owner,
 		workW:      workW,
 		workH:      workH,
+		hoveredItemIdx: -1,
 	}
 
 	var err error
@@ -246,6 +250,11 @@ func (gc *GroupCard) setupMouseEvents() {
 			gc.handleDrag(x, y)
 		} else {
 			gc.updateCursor(x, y)
+			idx := gc.getItemIndexAt(x, y)
+			if idx != gc.hoveredItemIdx {
+				gc.hoveredItemIdx = idx
+				gc.bodyWidget.Invalidate()
+			}
 		}
 	})
 }
@@ -628,14 +637,21 @@ func (gc *GroupCard) paintIconGrid(canvas *walk.Canvas, bounds walk.Rectangle) {
 			break
 		}
 
-		gc.paintIconTile(canvas, item, x, y)
+		gc.paintIconTile(canvas, item, x, y, i == gc.hoveredItemIdx)
 	}
 }
 
 // paintIconTile 绘制单个图标磁贴
-func (gc *GroupCard) paintIconTile(canvas *walk.Canvas, item group.GroupItem, x, y int) {
+func (gc *GroupCard) paintIconTile(canvas *walk.Canvas, item group.GroupItem, x, y int, hovered bool) {
 	// 首次绘制时用 canvas 精确测量磁贴尺寸
 	ensureTileSizeMeasured(canvas)
+
+	if hovered {
+		drawHoverRect(canvas, walk.Rectangle{
+			X: x, Y: y,
+			Width: desktopIconItemWidth, Height: desktopIconItemHeight,
+		})
+	}
 
 	// 获取图标
 	extractor := NewIconExtractor()

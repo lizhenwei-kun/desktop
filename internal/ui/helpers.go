@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"image"
 	"image/color"
 	"strconv"
 	"strings"
@@ -25,7 +26,7 @@ func TileWidth() int { return desktopIconItemWidth }
 // TileHeight 返回图标磁贴像素高度（动态计算）
 func TileHeight() int { return desktopIconItemHeight }
 
-// ensureTileSizeMeasured 使用 Win32 GetTextExtentPoint32 真实测量文本尺寸，
+// end用 Win32 GetTextExtentPoint32 真实测量文本尺寸，
 // 确保磁贴宽度能容纳 4 个汉字或 9 个西文字符（取较大值）。
 func ensureTileSizeMeasured(_ *walk.Canvas) {
 	tileSizeOnce.Do(func() {
@@ -123,13 +124,13 @@ func ensureTileSizeMeasured(_ *walk.Canvas) {
 }
 
 var (
-	iconFontName     = "宋体"
-	iconFontSize     = 11
-	iconFontMu       sync.RWMutex
+	iconFontName = "宋体"
+	iconFontSize = 11
+	iconFontMu   sync.RWMutex
 
-	cardFontName     = "宋体"
-	cardFontSize     = 14
-	cardFontMu       sync.RWMutex
+	cardFontName = "宋体"
+	cardFontSize = 14
+	cardFontMu   sync.RWMutex
 )
 
 // InitIconFont 初始化图标标签字体配置（应用启动时调用）
@@ -237,4 +238,25 @@ func TruncateText(text string, maxRunes int) string {
 		return text
 	}
 	return string(runes[:maxRunes-1]) + "…"
+}
+
+func drawHoverRect(canvas *walk.Canvas, bounds walk.Rectangle) {
+	fillColor := color.RGBA{R: 0xE8, G: 0xF4, B: 0xFF, A: 0x0D}
+	borderColor := color.RGBA{R: 0x4A, G: 0xA0, B: 0xFF, A: 0x0D}
+
+	img := image.NewRGBA(image.Rect(0, 0, bounds.Width, bounds.Height))
+	for y := 0; y < bounds.Height; y++ {
+		for x := 0; x < bounds.Width; x++ {
+			if x == 0 || x == bounds.Width-1 || y == 0 || y == bounds.Height-1 {
+				img.SetRGBA(x, y, borderColor)
+			} else {
+				img.SetRGBA(x, y, fillColor)
+			}
+		}
+	}
+	bmp, err := walk.NewBitmapFromImage(img)
+	if err == nil {
+		defer bmp.Dispose()
+		canvas.DrawBitmapWithOpacityPixels(bmp, bounds, 255)
+	}
 }
