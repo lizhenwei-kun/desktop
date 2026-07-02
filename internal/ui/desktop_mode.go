@@ -682,15 +682,8 @@ func (dm *DesktopMode) getOccupiedCells(exceptPath string) map[[2]int]bool {
 func (dm *DesktopMode) getFreeItemPixelPos(path string, fallbackIdx int) (int, int) {
 	pos := dm.manager.GetFreeItemPosition(path)
 	if pos.X < 0 || pos.Y < 0 {
-		// 待分配：从默认区域开始找空闲网格
-		bounds := dm.bodyWidget.ClientBoundsPixels()
-		// 从右上角开始
-		startCol := (bounds.Width - freeGridLeft) / freeCellW()
-		if startCol < 0 {
-			startCol = 0
-		}
-		startRow := fallbackIdx
-		col, row := dm.findFreeGridCell("", startCol, startRow)
+		// 待分配：从左上角(0,0)开始，从上向下再从左到右找第一个空位
+		col, row := dm.findFreeGridCell("", 0, fallbackIdx)
 		// 保存分配的位置
 		relPos := dm.gridToRel(col, row)
 		dm.manager.SetFreeItemPosition(path, relPos)
@@ -700,7 +693,7 @@ func (dm *DesktopMode) getFreeItemPixelPos(path string, fallbackIdx int) (int, i
 	return gridToPixel(col, row)
 }
 
-// findFreeGridCell 查找空闲网格，从 wantCol,wantRow 开始，遇占用往右/下偏移
+// findFreeGridCell 查找空闲网格，从 wantCol,wantRow 开始，遇占用先向下再向右偏移
 func (dm *DesktopMode) findFreeGridCell(exceptPath string, wantCol, wantRow int) (int, int) {
 	occupied := dm.getOccupiedCells(exceptPath)
 	bounds := dm.bodyWidget.ClientBoundsPixels()
@@ -709,20 +702,23 @@ func (dm *DesktopMode) findFreeGridCell(exceptPath string, wantCol, wantRow int)
 		maxCol = 1
 	}
 	maxRow := bounds.Height / freeCellH()
+	if maxRow < 1 {
+		maxRow = 1
+	}
 
 	for attempt := 0; attempt < 500; attempt++ {
 		cell := [2]int{wantCol, wantRow}
 		if !occupied[cell] {
 			return wantCol, wantRow
 		}
-		// 往右偏移
-		wantCol++
-		if wantCol >= maxCol {
-			wantCol = 0
-			wantRow++
-		}
+		// 先向下（同一列中的下一行）
+		wantRow++
 		if wantRow >= maxRow {
 			wantRow = 0
+			wantCol++ // 然后向右（下一列）
+		}
+		if wantCol >= maxCol {
+			wantCol = 0
 		}
 	}
 	return wantCol, wantRow
