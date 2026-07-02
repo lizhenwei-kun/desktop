@@ -862,6 +862,14 @@ func (dm *DesktopMode) onCardIconDragStart(card *GroupCard, idx int, item group.
 	dm.iconDragItem = item
 	dm.iconDragSourceGroup = card.groupName
 	dm.loadDragGhostBmp(item.Path)
+	// 同步 ghost 屏幕位置（拖拽开始时等于点击位置）
+	var cardPt win.POINT
+	cardPt.X = int32(card.iconDragStartX)
+	cardPt.Y = int32(card.iconDragStartY)
+	win.ClientToScreen(card.bodyWidget.Handle(), &cardPt)
+	dm.iconDragScreenX = int(cardPt.X)
+	dm.iconDragScreenY = int(cardPt.Y)
+	dm.bodyWidget.Invalidate()
 }
 
 // onCardIconDragMove 卡片内图标拖拽移动
