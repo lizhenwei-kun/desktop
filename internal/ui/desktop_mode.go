@@ -51,6 +51,28 @@ type DesktopMode struct {
 	wallpaperBmp *walk.Bitmap // 缓存的壁纸 bitmap
 
 	hoveredFreeIdx int // 当前悬停的未分组图标索引
+
+	// 图标拖拽协调（跨卡片拖放）
+	iconDragActive      bool
+	iconDragSourceCard  *GroupCard
+	iconDragItem        group.GroupItem
+	iconDragSourceGroup string
+	iconDragScreenX     int
+	iconDragScreenY     int
+	dropTargetCard      *GroupCard
+	dropInsertIdx       int
+	dropToDesktop       bool
+
+	// 未分组图标拖拽状态
+	freeItemDragActive    bool
+	freeItemDragIdx       int
+	freeItemDragItem      group.GroupItem
+	freeItemDragPressed   bool
+	freeItemDragStartTime time.Time
+	freeItemDragStartX    int
+	freeItemDragStartY    int
+	freeItemDragMouseX    int
+	freeItemDragMouseY    int
 }
 
 // NewDesktopMode 创建桌面模式
@@ -135,28 +157,48 @@ func (dm *DesktopMode) Setup() error {
 	// 设置键盘快捷键 Alt+F6 退出全屏
 	dm.setupHotkeys()
 
-	// 鼠标双击事件（打开项目）
-	dm.bodyWidget.MouseDown().Attach(dm.handleMouseDown)
+	// 鼠标事件
+	dm.bodyWidget.MouseDown().Attach(dm.handleDesktopMouseDown)
 
-	// 鼠标移动事件（检测自由图标悬停）
 	dm.bodyWidget.MouseMove().Attach(func(x, y int, button walk.MouseButton) {
-		bounds := dm.bodyWidget.ClientBoundsPixels()
-		items := dm.manager.GetUngroupedItems()
-		startX := bounds.Width - desktopIconItemWidth - 20
-		startY := 60
-		newIdx := -1
-		for i := range items {
-			iy := startY + i*desktopIconItemHeight
-			if x >= startX && x <= startX+desktopIconItemWidth &&
-				y >= iy && y <= iy+desktopIconItemHeight {
-				newIdx = i
-				break
-			}
+		// 未分组图标拖拽中
+		if dm.freeItemDragActive {
+			dm.freeItemDragMouseX = x
+			dm.freeItemDragMouseY = y
+			dm.bodyWidget.Invalidate()
+
+			var screenPt win.POINT
+			screenPt.X = int32(x)
+			screenPt.Y = int32(y)
+			win.ClientToScreen(dm.bodyWidget.Handle(), &screenPt)
+			dm.updateDropTarget(int(screenPt.X), int(screenPt.Y))
+			return
 		}
-		if newIdx != dm.hoveredFreeIdx {
-			dm.hoveredFreeIdx = newIdx
+
+		// 普通悬停检测（未分组图标）
+		if dm.checkFreeItemHover(x, y) {
 			dm.bodyWidget.Invalidate()
 		}
+	})
+
+	dm.bodyWidget.MouseUp().Attach(func(x, y int, button walk.MouseButton) {
+		// 清除未分组图标长按状态（防止快速点击后误触发）
+		if dm.freeItemDragPressed && !dm.freeItemDragActive {
+			dm.freeItemDragPressed = false
+			return
+		}
+		if !dm.freeItemDragActive {
+			return
+		}
+		dm.freeItemDragActive = false
+		dm.freeItemDragPressed = false
+		win.ReleaseCapture()
+
+		var screenPt win.POINT
+		screenPt.X = int32(x)
+		screenPt.Y = int32(y)
+		win.ClientToScreen(dm.bodyWidget.Handle(), &screenPt)
+		dm.handleFreeItemDrop(int(screenPt.X), int(screenPt.Y))
 	})
 
 	// 创建分组卡片（在 container 中，绝对定位）
@@ -306,7 +348,100 @@ func (dm *DesktopMode) paintDesktop(canvas *walk.Canvas, updateBounds walk.Recta
 	// 4. 绘制未分组的桌面图标
 	dm.paintFreeItems(canvas, bounds)
 
+	// 5. 未分组区域拖放高亮
+	if dm.dropToDesktop {
+		dm.paintDesktopDropHighlight(canvas, bounds)
+	}
+
+	// 6. 未分组图标拖拽 ghost
+	if dm.freeItemDragActive {
+		dm.paintFreeItemDragGhost(canvas, bounds)
+	}
+
 	return nil
+}
+
+// paintDesktopDropHighlight 绘制桌面（未分组区域）拖放高亮
+func (dm *DesktopMode) paintDesktopDropHighlight(canvas *walk.Canvas, bounds walk.Rectangle) {
+	startX := bounds.Width - desktopIconItemWidth - 24
+	startY := 56
+	w := desktopIconItemWidth + 8
+	items := dm.manager.GetUngroupedItems()
+	h := len(items)*desktopIconItemHeight + 8
+	if h < 60 {
+		h = desktopIconItemHeight + 8
+	}
+
+	rect := walk.Rectangle{
+		X: startX, Y: startY,
+		Width: w, Height: h,
+	}
+
+	// 绘制实线高亮框
+	pen, err := walk.NewCosmeticPen(walk.PenSolid, walk.RGB(0x4A, 0xA0, 0xFF))
+	if err != nil {
+		return
+	}
+	defer pen.Dispose()
+
+	canvas.DrawLinePixels(pen, walk.Point{X: rect.X, Y: rect.Y}, walk.Point{X: rect.X + rect.Width, Y: rect.Y})
+	canvas.DrawLinePixels(pen, walk.Point{X: rect.X, Y: rect.Y + rect.Height}, walk.Point{X: rect.X + rect.Width, Y: rect.Y + rect.Height})
+	canvas.DrawLinePixels(pen, walk.Point{X: rect.X, Y: rect.Y}, walk.Point{X: rect.X, Y: rect.Y + rect.Height})
+	canvas.DrawLinePixels(pen, walk.Point{X: rect.X + rect.Width, Y: rect.Y}, walk.Point{X: rect.X + rect.Width, Y: rect.Y + rect.Height})
+}
+
+// paintFreeItemDragGhost 绘制未分组图标拖拽 ghost
+func (dm *DesktopMode) paintFreeItemDragGhost(canvas *walk.Canvas, _ walk.Rectangle) {
+	ghostX := dm.freeItemDragMouseX - desktopIconItemWidth/2
+	ghostY := dm.freeItemDragMouseY - desktopIconItemHeight/2
+
+	extractor := NewIconExtractor()
+	iconImg, _ := extractor.GetIconImage(dm.freeItemDragItem.Path)
+	if iconImg != nil {
+		rgbaImg, ok := iconImg.(*image.RGBA)
+		if !ok {
+			b := iconImg.Bounds()
+			rgbaImg = image.NewRGBA(b)
+			for iy := b.Min.Y; iy < b.Max.Y; iy++ {
+				for ix := b.Min.X; ix < b.Max.X; ix++ {
+					rgbaImg.Set(ix, iy, iconImg.At(ix, iy))
+				}
+			}
+		}
+		bmp, err := walk.NewBitmapFromImage(rgbaImg)
+		if err == nil {
+			defer bmp.Dispose()
+			iconX := ghostX + (desktopIconItemWidth-desktopIconSize)/2
+			iconY := ghostY + desktopIconTop
+			canvas.DrawBitmapWithOpacityPixels(bmp, walk.Rectangle{
+				X: iconX, Y: iconY, Width: desktopIconSize, Height: desktopIconSize,
+			}, 128)
+		}
+	}
+
+	// 名称文字（半透明）
+	font := GetIconFont()
+	if font != nil {
+		defer font.Dispose()
+		displayName := dm.freeItemDragItem.Name
+		lines := splitTextToLines(displayName, 4)
+		labelTop := ghostY + desktopIconLabelTop
+		for i, line := range lines {
+			if i >= 2 {
+				break
+			}
+			if i == 1 && len(lines) > 2 {
+				line = TruncateText(line, 3)
+			}
+			lineY := labelTop + i*desktopIconLineHeight
+			textBounds := walk.Rectangle{
+				X: ghostX, Y: lineY,
+				Width: desktopIconItemWidth, Height: desktopIconLineHeight,
+			}
+			canvas.DrawTextPixels(line, font, walk.RGB(0xFF, 0xFF, 0xFF), textBounds,
+				walk.TextCenter|walk.TextSingleLine)
+		}
+	}
 }
 
 // paintBackground 绘制深色背景
@@ -423,8 +558,8 @@ func (dm *DesktopMode) paintFreeItems(canvas *walk.Canvas, bounds walk.Rectangle
 	}
 }
 
-// handleMouseDown 处理鼠标按下事件
-func (dm *DesktopMode) handleMouseDown(x, y int, button walk.MouseButton) {
+// handleDesktopMouseDown 处理桌面鼠标按下事件
+func (dm *DesktopMode) handleDesktopMouseDown(x, y int, button walk.MouseButton) {
 	if button != walk.LeftButton {
 		return
 	}
@@ -441,7 +576,7 @@ func (dm *DesktopMode) handleMouseDown(x, y int, button walk.MouseButton) {
 		return
 	}
 
-	// 检查双击打开项目（未分组项）
+	// 检查点击未分组图标（启动长按拖拽）
 	items := dm.manager.GetUngroupedItems()
 	startX := bounds.Width - desktopIconItemWidth - 20
 	startY := 60
@@ -449,10 +584,213 @@ func (dm *DesktopMode) handleMouseDown(x, y int, button walk.MouseButton) {
 		iy := startY + i*desktopIconItemHeight
 		if x >= startX && x <= startX+desktopIconItemWidth &&
 			y >= iy && y <= iy+desktopIconItemHeight {
-			dm.executor.Execute(item.Path)
+			dm.freeItemDragPressed = true
+			dm.freeItemDragIdx = i
+			dm.freeItemDragItem = item
+			dm.freeItemDragStartX = x
+			dm.freeItemDragStartY = y
+			dm.freeItemDragStartTime = time.Now()
+			go dm.checkFreeItemDragStart()
 			return
 		}
 	}
+}
+
+// checkFreeItemDragStart 检测未分组图标长按开始拖拽
+func (dm *DesktopMode) checkFreeItemDragStart() {
+	defer recoverGoroutine("checkFreeItemDragStart")
+	time.Sleep(longPressDragDelay)
+	dm.bodyWidget.Synchronize(func() {
+		if !dm.freeItemDragPressed || dm.freeItemDragActive {
+			return
+		}
+		dm.freeItemDragActive = true
+		dm.freeItemDragMouseX = dm.freeItemDragStartX
+		dm.freeItemDragMouseY = dm.freeItemDragStartY
+
+		win.SetCapture(dm.bodyWidget.Handle())
+
+		dm.iconDragActive = true
+		dm.iconDragItem = dm.freeItemDragItem
+		dm.iconDragSourceGroup = ""
+
+		var screenPt win.POINT
+		screenPt.X = int32(dm.freeItemDragStartX)
+		screenPt.Y = int32(dm.freeItemDragStartY)
+		win.ClientToScreen(dm.bodyWidget.Handle(), &screenPt)
+		dm.iconDragScreenX = int(screenPt.X)
+		dm.iconDragScreenY = int(screenPt.Y)
+	})
+}
+
+// handleFreeItemDrop 处理未分组图标拖放
+func (dm *DesktopMode) handleFreeItemDrop(screenX, screenY int) {
+	dm.iconDragActive = false
+	defer dm.bodyWidget.Invalidate()
+
+	// 查找目标卡片
+	targetCard := dm.findCardAtPoint(screenX, screenY)
+	if targetCard != nil {
+		// 拖入卡片
+		dm.manager.MoveItemToGroup(dm.freeItemDragItem.Path, targetCard.groupName)
+		targetCard.Refresh()
+	} // 其他位置：保持不变
+	dm.clearDropState()
+}
+
+// checkFreeItemHover 检测未分组图标悬停，返回 true 表示 hover 状态变化
+func (dm *DesktopMode) checkFreeItemHover(x, y int) bool {
+	bounds := dm.bodyWidget.ClientBoundsPixels()
+	items := dm.manager.GetUngroupedItems()
+	startX := bounds.Width - desktopIconItemWidth - 20
+	startY := 60
+	newIdx := -1
+	for i := range items {
+		iy := startY + i*desktopIconItemHeight
+		if x >= startX && x <= startX+desktopIconItemWidth &&
+			y >= iy && y <= iy+desktopIconItemHeight {
+			newIdx = i
+			break
+		}
+	}
+	if newIdx != dm.hoveredFreeIdx {
+		dm.hoveredFreeIdx = newIdx
+		return true
+	}
+	return false
+}
+
+// ==================== 图标拖拽协调（跨卡片） ====================
+
+// onCardIconDragStart 卡片内图标拖拽开始
+func (dm *DesktopMode) onCardIconDragStart(card *GroupCard, idx int, item group.GroupItem) {
+	dm.iconDragActive = true
+	dm.iconDragSourceCard = card
+	dm.iconDragItem = item
+	dm.iconDragSourceGroup = card.groupName
+}
+
+// onCardIconDragMove 卡片内图标拖拽移动
+func (dm *DesktopMode) onCardIconDragMove(card *GroupCard, screenX, screenY int) {
+	dm.iconDragScreenX = screenX
+	dm.iconDragScreenY = screenY
+	dm.updateDropTarget(screenX, screenY)
+}
+
+// onCardIconDragEnd 卡片内图标拖拽结束
+func (dm *DesktopMode) onCardIconDragEnd(card *GroupCard, screenX, screenY int) {
+	dm.iconDragActive = false
+	dm.bodyWidget.Invalidate()
+
+	// 查找目标卡片
+	targetCard := dm.findCardAtPoint(screenX, screenY)
+	sourceGroup := card.groupName
+
+	if dm.isPointInUngroupedArea(screenX, screenY) {
+		// 拖到未分组区域
+		dm.manager.MoveItemToDesktop(card.iconDragItem.Path)
+		card.refreshItems()
+	} else if targetCard != nil && targetCard != card {
+		// 拖到其他卡片
+		dm.manager.MoveItemToGroup(card.iconDragItem.Path, targetCard.groupName)
+		card.refreshItems()
+		targetCard.Refresh()
+	} else if targetCard == card {
+		// 同卡片内拖拽排序
+		insertIdx := card.GetDropIndexAt(card.iconDragMouseX, card.iconDragMouseY)
+		if insertIdx >= 0 && insertIdx <= len(card.items) {
+			// 仅在位置确实变化时执行
+			// 简单实现：移出再移入以触发排序更新
+			dm.manager.MoveItemWithinGroup(sourceGroup, card.iconDragItem.Path, insertIdx)
+		}
+		card.refreshItems()
+	} else {
+		// 无效位置，保持不变
+		card.refreshItems()
+	}
+
+	dm.clearDropState()
+}
+
+// updateDropTarget 更新当前拖放目标
+func (dm *DesktopMode) updateDropTarget(screenX, screenY int) {
+	// 清除旧目标的高亮
+	if dm.dropTargetCard != nil {
+		dm.dropTargetCard.SetIsDropTarget(false)
+	}
+
+	dm.dropTargetCard = nil
+	dm.dropToDesktop = false
+
+	// 检查是否在某张卡片上
+	for _, c := range dm.cards {
+		if dm.isPointInCard(c, screenX, screenY) {
+			dm.dropTargetCard = c
+			c.SetIsDropTarget(true)
+			break
+		}
+	}
+
+	// 检查是否在未分组区域
+	if dm.dropTargetCard == nil && dm.isPointInUngroupedArea(screenX, screenY) {
+		dm.dropToDesktop = true
+	}
+
+	dm.bodyWidget.Invalidate()
+}
+
+// clearDropState 清除拖放状态
+func (dm *DesktopMode) clearDropState() {
+	if dm.dropTargetCard != nil {
+		dm.dropTargetCard.SetIsDropTarget(false)
+	}
+	dm.dropTargetCard = nil
+	dm.dropToDesktop = false
+	dm.iconDragSourceCard = nil
+	dm.iconDragSourceGroup = ""
+}
+
+// findCardAtPoint 查找屏幕坐标点所在的卡片
+func (dm *DesktopMode) findCardAtPoint(screenX, screenY int) *GroupCard {
+	for _, c := range dm.cards {
+		if dm.isPointInCard(c, screenX, screenY) {
+			return c
+		}
+	}
+	return nil
+}
+
+// isPointInCard 判断屏幕坐标点是否在卡片内
+func (dm *DesktopMode) isPointInCard(card *GroupCard, screenX, screenY int) bool {
+	sb := card.ScreenBounds()
+	return screenX >= sb.X && screenX <= sb.X+sb.Width &&
+		screenY >= sb.Y && screenY <= sb.Y+sb.Height
+}
+
+// isPointInUngroupedArea 判断屏幕坐标点是否在未分组图标区域
+func (dm *DesktopMode) isPointInUngroupedArea(screenX, screenY int) bool {
+	// 转成 bodyWidget 客户区坐标
+	var pt win.POINT
+	pt.X = int32(screenX)
+	pt.Y = int32(screenY)
+	win.ScreenToClient(dm.bodyWidget.Handle(), &pt)
+
+	cx := int(pt.X)
+	cy := int(pt.Y)
+
+	bounds := dm.bodyWidget.ClientBoundsPixels()
+	startX := bounds.Width - desktopIconItemWidth - 20
+	startY := 60
+
+	items := dm.manager.GetUngroupedItems()
+	for i := range items {
+		iy := startY + i*desktopIconItemHeight
+		if cx >= startX && cx <= startX+desktopIconItemWidth &&
+			cy >= iy && cy <= iy+desktopIconItemHeight {
+			return true
+		}
+	}
+	return false
 }
 
 // addNewCard 添加新卡片
@@ -484,7 +822,7 @@ func (dm *DesktopMode) createGroupCards() {
 	}
 }
 
-// setupCardActions 设置卡片操作按钮回调
+// setupCardActions 设置卡片操作按钮和拖拽回调
 func (dm *DesktopMode) setupCardActions(card *GroupCard, grp config.Group) {
 	card.SetOnPositionChanged(func(name string, x, y float64) {
 		dm.manager.UpdateGroupPosition(name, x, y)
@@ -492,6 +830,11 @@ func (dm *DesktopMode) setupCardActions(card *GroupCard, grp config.Group) {
 	card.SetOnSizeChanged(func(name string, w, h float64) {
 		dm.manager.UpdateGroupSize(name, w, h)
 	})
+
+	// 图标拖拽回调
+	card.SetOnIconDragStart(dm.onCardIconDragStart)
+	card.SetOnIconDragMove(dm.onCardIconDragMove)
+	card.SetOnIconDragEnd(dm.onCardIconDragEnd)
 	card.SetOnRename(func(name string) {
 		newName, ok := ShowInputDialog(dm.mainWindow, "重命名分组", "请输入新名称：", name)
 		if ok && newName != "" && newName != name {

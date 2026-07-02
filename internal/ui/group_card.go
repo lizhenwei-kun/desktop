@@ -78,6 +78,25 @@ type GroupCard struct {
 
 	// 悬停检测状态
 	hoveredItemIdx int // 当前悬停的图标索引，-1 表示无
+
+	// 拖放目标指示
+	isDropTarget bool
+
+	// 图标拖拽状态（卡片内图标拖动）
+	iconDragActive    bool
+	iconDragIdx       int
+	iconDragItem      group.GroupItem
+	iconDragPressed   bool          // 鼠标在图标上按下
+	iconDragStartTime time.Time     // 按下时间（用于长按检测）
+	iconDragStartX    int           // 按下时鼠标 X（bodyWidget 客户区坐标）
+	iconDragStartY    int           // 按下时鼠标 Y
+	iconDragMouseX    int           // 当前鼠标 X（绘制 ghost 用）
+	iconDragMouseY    int           // 当前鼠标 Y
+
+	// 图标拖拽回调（由 DesktopMode 设置）
+	onIconDragStart func(card *GroupCard, idx int, item group.GroupItem)
+	onIconDragMove  func(card *GroupCard, screenX, screenY int)
+	onIconDragEnd   func(card *GroupCard, screenX, screenY int)
 }
 
 // ResizeEdge 缩放方向
@@ -215,7 +234,7 @@ func (gc *GroupCard) setupMouseEvents() {
 			return
 		}
 
-		// 图标区域：检测双击
+		// 图标区域：检测双击和长按拖拽
 		idx := gc.getItemIndexAt(x, y)
 		if idx >= 0 && idx < len(gc.items) {
 			now := time.Now()
@@ -227,10 +246,39 @@ func (gc *GroupCard) setupMouseEvents() {
 			}
 			gc.lastClickTime = now
 			gc.lastClickIdx = idx
+
+			// 长按拖拽检测
+			gc.iconDragPressed = true
+			gc.iconDragIdx = idx
+			gc.iconDragItem = gc.items[idx]
+			gc.iconDragStartX = x
+			gc.iconDragStartY = y
+			gc.iconDragStartTime = time.Now()
+			go gc.checkIconDragStart()
 		}
 	})
 
 	gc.bodyWidget.MouseUp().Attach(func(x, y int, button walk.MouseButton) {
+		if gc.iconDragActive {
+			gc.iconDragActive = false
+			gc.iconDragPressed = false
+			win.ReleaseCapture()
+
+			var screenPt win.POINT
+			screenPt.X = int32(x)
+			screenPt.Y = int32(y)
+			win.ClientToScreen(gc.bodyWidget.Handle(), &screenPt)
+
+			if gc.onIconDragEnd != nil {
+				gc.onIconDragEnd(gc, int(screenPt.X), int(screenPt.Y))
+			}
+			gc.bodyWidget.Invalidate()
+			return
+		}
+
+		// 清除图标长按状态（防止快速点击后误触发拖拽）
+		gc.iconDragPressed = false
+
 		isDragEnd := gc.isDragging
 		gc.isPressed = false
 		if gc.isResizing {
@@ -244,6 +292,20 @@ func (gc *GroupCard) setupMouseEvents() {
 	})
 
 	gc.bodyWidget.MouseMove().Attach(func(x, y int, button walk.MouseButton) {
+		if gc.iconDragActive {
+			gc.iconDragMouseX = x
+			gc.iconDragMouseY = y
+			gc.bodyWidget.Invalidate()
+
+			if gc.onIconDragMove != nil {
+				var screenPt win.POINT
+				screenPt.X = int32(x)
+				screenPt.Y = int32(y)
+				win.ClientToScreen(gc.bodyWidget.Handle(), &screenPt)
+				gc.onIconDragMove(gc, int(screenPt.X), int(screenPt.Y))
+			}
+			return
+		}
 		if gc.isResizing {
 			gc.handleResize(x, y)
 		} else if gc.isDragging {
@@ -265,6 +327,31 @@ func (gc *GroupCard) checkDragStart() {
 	if gc.isPressed {
 		gc.isDragging = true
 	}
+}
+
+// checkIconDragStart 检查是否开始图标拖拽（长按3秒）
+func (gc *GroupCard) checkIconDragStart() {
+	time.Sleep(longPressDragDelay)
+	gc.bodyWidget.Synchronize(func() {
+		if !gc.iconDragPressed || gc.isResizing || gc.isDragging || gc.iconDragActive {
+			return
+		}
+		gc.iconDragActive = true
+		gc.iconDragMouseX = gc.iconDragStartX
+		gc.iconDragMouseY = gc.iconDragStartY
+
+		// 捕获鼠标，确保移出卡片后仍能收到事件
+		win.SetCapture(gc.bodyWidget.Handle())
+
+		// 通知 DesktopMode
+		if gc.onIconDragStart != nil {
+			var screenPt win.POINT
+			screenPt.X = int32(gc.iconDragStartX)
+			screenPt.Y = int32(gc.iconDragStartY)
+			win.ClientToScreen(gc.bodyWidget.Handle(), &screenPt)
+			gc.onIconDragStart(gc, gc.iconDragIdx, gc.iconDragItem)
+		}
+	})
 }
 
 // getResizeEdge 获取鼠标位置对应的缩放方向
@@ -526,6 +613,72 @@ func (gc *GroupCard) getItemIndexAt(x, y int) int {
 	return idx
 }
 
+// getIconTileBounds 获取指定索引图标在 bodyWidget 中的左上角像素位置
+func (gc *GroupCard) getIconTileBounds(idx int) (x, y int) {
+	bounds := gc.bodyWidget.ClientBoundsPixels()
+	startY := cardHeaderHeight + 4
+	startX := 4
+	colWidth := desktopIconItemWidth + 8 + 8
+	if colWidth <= 0 {
+		return 0, 0
+	}
+	maxCols := (bounds.Width - 8) / colWidth
+	if maxCols < 1 {
+		maxCols = 1
+	}
+	col := idx % maxCols
+	row := idx / maxCols
+	return startX + col*colWidth, startY + row*desktopIconItemHeight
+}
+
+// GetDropIndexAt 获取指定像素位置对应的图标插入索引（用于拖放排序）
+func (gc *GroupCard) GetDropIndexAt(x, y int) int {
+	bounds := gc.bodyWidget.ClientBoundsPixels()
+	startY := cardHeaderHeight + 4
+	startX := 4
+	colWidth := desktopIconItemWidth + 8 + 8
+	if colWidth <= 0 {
+		return 0
+	}
+	maxCols := (bounds.Width - 8) / colWidth
+	if maxCols < 1 {
+		maxCols = 1
+	}
+
+	row := (y - startY + desktopIconItemHeight/2) / desktopIconItemHeight
+	if row < 0 {
+		row = 0
+	}
+	col := (x - startX + colWidth/2) / colWidth
+	if col < 0 {
+		col = 0
+	}
+	if col >= maxCols {
+		col = maxCols - 1
+	}
+
+	idx := row*maxCols + col
+	if idx < 0 {
+		idx = 0
+	}
+	if idx > len(gc.items) {
+		idx = len(gc.items)
+	}
+	return idx
+}
+
+// ScreenBounds 返回卡片容器的屏幕坐标矩形
+func (gc *GroupCard) ScreenBounds() walk.Rectangle {
+	var rect win.RECT
+	win.GetWindowRect(gc.container.Handle(), &rect)
+	return walk.Rectangle{
+		X:      int(rect.Left),
+		Y:      int(rect.Top),
+		Width:  int(rect.Right - rect.Left),
+		Height: int(rect.Bottom - rect.Top),
+	}
+}
+
 // paintBody 绘制卡片主体
 func (gc *GroupCard) paintBody(canvas *walk.Canvas, updateBounds walk.Rectangle) error {
 	bounds := gc.bodyWidget.ClientBoundsPixels()
@@ -539,7 +692,84 @@ func (gc *GroupCard) paintBody(canvas *walk.Canvas, updateBounds walk.Rectangle)
 	// 绘制图标网格
 	gc.paintIconGrid(canvas, bounds)
 
+	// 绘制拖放目标高亮边框
+	if gc.isDropTarget {
+		pen, err := walk.NewCosmeticPen(walk.PenSolid, walk.RGB(0x4A, 0xA0, 0xFF))
+		if err == nil {
+			defer pen.Dispose()
+			// 2px 宽边框
+			canvas.DrawLinePixels(pen, walk.Point{X: 0, Y: 0}, walk.Point{X: bounds.Width, Y: 0})
+			canvas.DrawLinePixels(pen, walk.Point{X: 0, Y: bounds.Height - 1}, walk.Point{X: bounds.Width, Y: bounds.Height - 1})
+			canvas.DrawLinePixels(pen, walk.Point{X: 0, Y: 0}, walk.Point{X: 0, Y: bounds.Height})
+			canvas.DrawLinePixels(pen, walk.Point{X: bounds.Width - 1, Y: 0}, walk.Point{X: bounds.Width - 1, Y: bounds.Height})
+		}
+	}
+
+	// 绘制拖拽ghost（半透明跟随鼠标）
+	if gc.iconDragActive {
+		gc.paintDragGhost(canvas, bounds)
+	}
+
 	return nil
+}
+
+// paintDragGhost 绘制拖拽ghost（半透明跟随鼠标）
+func (gc *GroupCard) paintDragGhost(canvas *walk.Canvas, _ walk.Rectangle) {
+	ghostX := gc.iconDragMouseX - desktopIconItemWidth/2
+	ghostY := gc.iconDragMouseY - desktopIconItemHeight/2
+
+	// 用半透明方式绘制图标
+	extractor := NewIconExtractor()
+	iconImg, _ := extractor.GetIconImage(gc.iconDragItem.Path)
+
+	if iconImg != nil {
+		rgbaImg, ok := iconImg.(*image.RGBA)
+		if !ok {
+			b := iconImg.Bounds()
+			rgbaImg = image.NewRGBA(b)
+			for iy := b.Min.Y; iy < b.Max.Y; iy++ {
+				for ix := b.Min.X; ix < b.Max.X; ix++ {
+					rgbaImg.Set(ix, iy, iconImg.At(ix, iy))
+				}
+			}
+		}
+		bmp, err := walk.NewBitmapFromImage(rgbaImg)
+		if err == nil {
+			defer bmp.Dispose()
+			iconX := ghostX + (desktopIconItemWidth-desktopIconSize)/2
+			iconY := ghostY + desktopIconTop
+			// 50% 透明度
+			canvas.DrawBitmapWithOpacityPixels(bmp, walk.Rectangle{
+				X: iconX, Y: iconY, Width: desktopIconSize, Height: desktopIconSize,
+			}, 128)
+		}
+	}
+
+	// 绘制ghost文字标签（半透明灰底）
+	font := GetIconFont()
+	if font != nil {
+		defer font.Dispose()
+		displayName := gc.iconDragItem.Name
+		lines := splitTextToLines(displayName, 4)
+
+		labelTop := ghostY + desktopIconLabelTop
+		for i, line := range lines {
+			if i >= 2 {
+				break
+			}
+			if i == 1 && len(lines) > 2 {
+				line = TruncateText(line, 3)
+			}
+			lineY := labelTop + i*desktopIconLineHeight
+			textBounds := walk.Rectangle{
+				X: ghostX, Y: lineY,
+				Width: desktopIconItemWidth, Height: desktopIconLineHeight,
+			}
+			// ghost 文字半透明
+			canvas.DrawTextPixels(line, font, walk.RGB(0xFF, 0xFF, 0xFF), textBounds,
+				walk.TextCenter|walk.TextSingleLine)
+		}
+	}
 }
 
 // paintBackground 绘制卡片背景（半透明颜色）
@@ -819,4 +1049,27 @@ func (gc *GroupCard) ReapplyBounds() {
 		actualContainer.X, actualContainer.Y, actualContainer.Width, actualContainer.Height,
 		actualBody.X, actualBody.Y, actualBody.Width, actualBody.Height,
 		gc.container.Visible())
+}
+
+// SetIsDropTarget 设置是否为当前拖放目标（绘制高亮边框）
+func (gc *GroupCard) SetIsDropTarget(v bool) {
+	if gc.isDropTarget != v {
+		gc.isDropTarget = v
+		gc.bodyWidget.Invalidate()
+	}
+}
+
+// SetOnIconDragStart 设置图标拖拽开始回调
+func (gc *GroupCard) SetOnIconDragStart(fn func(card *GroupCard, idx int, item group.GroupItem)) {
+	gc.onIconDragStart = fn
+}
+
+// SetOnIconDragMove 设置图标拖拽移动回调
+func (gc *GroupCard) SetOnIconDragMove(fn func(card *GroupCard, screenX, screenY int)) {
+	gc.onIconDragMove = fn
+}
+
+// SetOnIconDragEnd 设置图标拖拽结束回调
+func (gc *GroupCard) SetOnIconDragEnd(fn func(card *GroupCard, screenX, screenY int)) {
+	gc.onIconDragEnd = fn
 }

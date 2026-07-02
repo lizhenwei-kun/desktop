@@ -12,16 +12,18 @@ import (
 
 // Manager 分组数据管理器
 type Manager struct {
-	cfg      *config.Config
-	mu       sync.RWMutex
-	onChange func()
+	cfg        *config.Config
+	mu         sync.RWMutex
+	onChange   func()
+	itemOrder  map[string][]string // groupName -> ordered path list (in-memory, for drag reorder)
 }
 
 // NewManager 创建分组管理器
 func NewManager() *Manager {
 	cfg := config.Load()
 	return &Manager{
-		cfg: cfg,
+		cfg:       cfg,
+		itemOrder: make(map[string][]string),
 	}
 }
 
@@ -65,6 +67,35 @@ func (m *Manager) GetGroupItems(groupName string) []GroupItem {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
+	// Build map: path -> name
+	itemMap := make(map[string]string)
+	for path, gName := range m.cfg.DesktopItems {
+		if gName == groupName {
+			name := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+			itemMap[path] = name
+		}
+	}
+
+	// Use itemOrder if available
+	if order, ok := m.itemOrder[groupName]; ok && len(order) > 0 {
+		var items []GroupItem
+		added := make(map[string]bool, len(order))
+		for _, path := range order {
+			if name, ok := itemMap[path]; ok {
+				items = append(items, GroupItem{Path: path, Name: name})
+				added[path] = true
+			}
+		}
+		// Append items not yet in order
+		for path, name := range itemMap {
+			if !added[path] {
+				items = append(items, GroupItem{Path: path, Name: name})
+			}
+		}
+		return items
+	}
+
+	// Fallback: sorted by name
 	var items []GroupItem
 	for path, gName := range m.cfg.DesktopItems {
 		if gName == groupName {
@@ -72,8 +103,6 @@ func (m *Manager) GetGroupItems(groupName string) []GroupItem {
 			items = append(items, GroupItem{Path: path, Name: name})
 		}
 	}
-
-	// 按名称排序
 	sort.Slice(items, func(i, j int) bool {
 		return items[i].Name < items[j].Name
 	})
@@ -148,6 +177,8 @@ func (m *Manager) DeleteGroup(name string) {
 		}
 	}
 
+	delete(m.itemOrder, name)
+
 	m.save()
 	m.notifyChange()
 }
@@ -181,6 +212,8 @@ func (m *Manager) AddItemToGroup(groupName, itemPath, itemName string) {
 	defer m.mu.Unlock()
 
 	m.cfg.DesktopItems[itemPath] = groupName
+	// 追加到 order 末尾
+	m.itemOrder[groupName] = append(m.itemOrder[groupName], itemPath)
 	m.save()
 	m.notifyChange()
 }
@@ -193,6 +226,15 @@ func (m *Manager) RemoveItemFromGroup(groupName, itemPath string) {
 	if m.cfg.DesktopItems[itemPath] == groupName {
 		m.cfg.DesktopItems[itemPath] = ""
 	}
+	// 从 order 中移除
+	if order, ok := m.itemOrder[groupName]; ok {
+		for i, p := range order {
+			if p == itemPath {
+				m.itemOrder[groupName] = append(order[:i], order[i+1:]...)
+				break
+			}
+		}
+	}
 	m.save()
 	m.notifyChange()
 }
@@ -202,7 +244,21 @@ func (m *Manager) MoveItemToGroup(itemPath, groupName string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	// 从旧分组的 order 移除
+	oldGroup := m.cfg.DesktopItems[itemPath]
+	if order, ok := m.itemOrder[oldGroup]; ok {
+		for i, p := range order {
+			if p == itemPath {
+				m.itemOrder[oldGroup] = append(order[:i], order[i+1:]...)
+				break
+			}
+		}
+	}
+
 	m.cfg.DesktopItems[itemPath] = groupName
+	// 追加到新分组 order
+	m.itemOrder[groupName] = append(m.itemOrder[groupName], itemPath)
+
 	m.save()
 	m.notifyChange()
 }
@@ -212,8 +268,46 @@ func (m *Manager) MoveItemToDesktop(itemPath string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	oldGroup := m.cfg.DesktopItems[itemPath]
+	if order, ok := m.itemOrder[oldGroup]; ok {
+		for i, p := range order {
+			if p == itemPath {
+				m.itemOrder[oldGroup] = append(order[:i], order[i+1:]...)
+				break
+			}
+		}
+	}
+
 	m.cfg.DesktopItems[itemPath] = ""
 	m.save()
+	m.notifyChange()
+}
+
+// MoveItemWithinGroup 在分组内移动项目到新位置（拖拽排序）
+func (m *Manager) MoveItemWithinGroup(groupName, itemPath string, newIndex int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	order := m.itemOrder[groupName]
+	// 移除当前
+	var newOrder []string
+	for _, p := range order {
+		if p != itemPath {
+			newOrder = append(newOrder, p)
+		}
+	}
+	// 插入到新位置
+	if newIndex < 0 {
+		newIndex = 0
+	}
+	if newIndex > len(newOrder) {
+		newOrder = append(newOrder, itemPath)
+	} else {
+		newOrder = append(newOrder, "")
+		copy(newOrder[newIndex+1:], newOrder[newIndex:])
+		newOrder[newIndex] = itemPath
+	}
+	m.itemOrder[groupName] = newOrder
 	m.notifyChange()
 }
 
