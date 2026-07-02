@@ -289,7 +289,16 @@ func (m *Manager) MoveItemWithinGroup(groupName, itemPath string, newIndex int) 
 	defer m.mu.Unlock()
 
 	order := m.itemOrder[groupName]
-	// 移除当前
+	// 如果 order 为空（首次拖拽），从所有分组项目构建初始排序
+	if len(order) == 0 {
+		for path, gName := range m.cfg.DesktopItems {
+			if gName == groupName {
+				order = append(order, path)
+			}
+		}
+	}
+
+	// 移除当前项目
 	var newOrder []string
 	for _, p := range order {
 		if p != itemPath {
@@ -300,7 +309,7 @@ func (m *Manager) MoveItemWithinGroup(groupName, itemPath string, newIndex int) 
 	if newIndex < 0 {
 		newIndex = 0
 	}
-	if newIndex > len(newOrder) {
+	if newIndex >= len(newOrder) {
 		newOrder = append(newOrder, itemPath)
 	} else {
 		newOrder = append(newOrder, "")
