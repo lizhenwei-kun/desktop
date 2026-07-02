@@ -92,6 +92,7 @@ type GroupCard struct {
 	iconDragStartY    int           // 按下时鼠标 Y
 	iconDragMouseX    int           // 当前鼠标 X（绘制 ghost 用）
 	iconDragMouseY    int           // 当前鼠标 Y
+	ghostBmp          *walk.Bitmap  // 缓存的 ghost 图标 bitmap（避免每次重绘重新提取）
 
 	// 图标拖拽回调（由 DesktopMode 设置）
 	onIconDragStart func(card *GroupCard, idx int, item group.GroupItem)
@@ -262,6 +263,7 @@ func (gc *GroupCard) setupMouseEvents() {
 		if gc.iconDragActive {
 			gc.iconDragActive = false
 			gc.iconDragPressed = false
+			gc.disposeGhostBitmap()
 			win.ReleaseCapture()
 
 			var screenPt win.POINT
@@ -339,6 +341,8 @@ func (gc *GroupCard) checkIconDragStart() {
 		gc.iconDragActive = true
 		gc.iconDragMouseX = gc.iconDragStartX
 		gc.iconDragMouseY = gc.iconDragStartY
+		// 预加载 ghost 图标 bitmap（避免每次重绘重新提取）
+		gc.loadGhostBitmap()
 		gc.bodyWidget.Invalidate()
 
 		// 捕获鼠标，确保移出卡片后仍能收到事件
@@ -716,37 +720,21 @@ func (gc *GroupCard) paintBody(canvas *walk.Canvas, updateBounds walk.Rectangle)
 
 // paintDragGhost 绘制拖拽ghost（半透明跟随鼠标）
 func (gc *GroupCard) paintDragGhost(canvas *walk.Canvas, _ walk.Rectangle) {
+	if gc.ghostBmp == nil {
+		return
+	}
+
 	ghostX := gc.iconDragMouseX - desktopIconItemWidth/2
 	ghostY := gc.iconDragMouseY - desktopIconItemHeight/2
 
-	// 用半透明方式绘制图标
-	extractor := NewIconExtractor()
-	iconImg, _ := extractor.GetIconImage(gc.iconDragItem.Path)
+	// 缓存 bitmap 50% 透明度绘制
+	iconX := ghostX + (desktopIconItemWidth-desktopIconSize)/2
+	iconY := ghostY + desktopIconTop
+	canvas.DrawBitmapWithOpacityPixels(gc.ghostBmp, walk.Rectangle{
+		X: iconX, Y: iconY, Width: desktopIconSize, Height: desktopIconSize,
+	}, 128)
 
-	if iconImg != nil {
-		rgbaImg, ok := iconImg.(*image.RGBA)
-		if !ok {
-			b := iconImg.Bounds()
-			rgbaImg = image.NewRGBA(b)
-			for iy := b.Min.Y; iy < b.Max.Y; iy++ {
-				for ix := b.Min.X; ix < b.Max.X; ix++ {
-					rgbaImg.Set(ix, iy, iconImg.At(ix, iy))
-				}
-			}
-		}
-		bmp, err := walk.NewBitmapFromImage(rgbaImg)
-		if err == nil {
-			defer bmp.Dispose()
-			iconX := ghostX + (desktopIconItemWidth-desktopIconSize)/2
-			iconY := ghostY + desktopIconTop
-			// 50% 透明度
-			canvas.DrawBitmapWithOpacityPixels(bmp, walk.Rectangle{
-				X: iconX, Y: iconY, Width: desktopIconSize, Height: desktopIconSize,
-			}, 128)
-		}
-	}
-
-	// 绘制ghost文字标签（半透明灰底）
+	// 绘制ghost文字标签
 	font := GetIconFont()
 	if font != nil {
 		defer font.Dispose()
@@ -766,10 +754,45 @@ func (gc *GroupCard) paintDragGhost(canvas *walk.Canvas, _ walk.Rectangle) {
 				X: ghostX, Y: lineY,
 				Width: desktopIconItemWidth, Height: desktopIconLineHeight,
 			}
-			// ghost 文字半透明
 			canvas.DrawTextPixels(line, font, walk.RGB(0xFF, 0xFF, 0xFF), textBounds,
 				walk.TextCenter|walk.TextSingleLine)
 		}
+	}
+}
+
+// loadGhostBitmap 预加载 ghost 图标 bitmap（避免每次重绘重新提取）
+func (gc *GroupCard) loadGhostBitmap() {
+	if gc.ghostBmp != nil {
+		gc.ghostBmp.Dispose()
+		gc.ghostBmp = nil
+	}
+	extractor := NewIconExtractor()
+	iconImg, _ := extractor.GetIconImage(gc.iconDragItem.Path)
+	if iconImg == nil {
+		return
+	}
+	rgbaImg, ok := iconImg.(*image.RGBA)
+	if !ok {
+		b := iconImg.Bounds()
+		rgbaImg = image.NewRGBA(b)
+		for iy := b.Min.Y; iy < b.Max.Y; iy++ {
+			for ix := b.Min.X; ix < b.Max.X; ix++ {
+				rgbaImg.Set(ix, iy, iconImg.At(ix, iy))
+			}
+		}
+	}
+	bmp, err := walk.NewBitmapFromImage(rgbaImg)
+	if err != nil {
+		return
+	}
+	gc.ghostBmp = bmp
+}
+
+// disposeGhostBitmap 释放 ghost 图标 bitmap
+func (gc *GroupCard) disposeGhostBitmap() {
+	if gc.ghostBmp != nil {
+		gc.ghostBmp.Dispose()
+		gc.ghostBmp = nil
 	}
 }
 
