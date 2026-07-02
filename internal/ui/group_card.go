@@ -762,32 +762,13 @@ func (gc *GroupCard) paintDragGhost(canvas *walk.Canvas, _ walk.Rectangle) {
 	}
 }
 
-// loadGhostBitmap 预加载 ghost 图标 bitmap（避免每次重绘重新提取）
+// loadGhostBitmap 预加载 ghost 图标 bitmap（从全局缓存取，零文件 I/O）
 func (gc *GroupCard) loadGhostBitmap() {
 	if gc.ghostBmp != nil {
 		gc.ghostBmp.Dispose()
 		gc.ghostBmp = nil
 	}
-	extractor := NewIconExtractor()
-	iconImg, _ := extractor.GetIconImage(gc.iconDragItem.Path)
-	if iconImg == nil {
-		return
-	}
-	rgbaImg, ok := iconImg.(*image.RGBA)
-	if !ok {
-		b := iconImg.Bounds()
-		rgbaImg = image.NewRGBA(b)
-		for iy := b.Min.Y; iy < b.Max.Y; iy++ {
-			for ix := b.Min.X; ix < b.Max.X; ix++ {
-				rgbaImg.Set(ix, iy, iconImg.At(ix, iy))
-			}
-		}
-	}
-	bmp, err := walk.NewBitmapFromImage(rgbaImg)
-	if err != nil {
-		return
-	}
-	gc.ghostBmp = bmp
+	gc.ghostBmp = globalIconBmpCache.GetOrLoad(gc.iconDragItem.Path)
 }
 
 // disposeGhostBitmap 释放 ghost 图标 bitmap

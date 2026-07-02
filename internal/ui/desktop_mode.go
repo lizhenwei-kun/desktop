@@ -495,26 +495,7 @@ func (dm *DesktopMode) loadDragGhostBmp(filePath string) {
 		dm.ghostBmp.Dispose()
 		dm.ghostBmp = nil
 	}
-	extractor := NewIconExtractor()
-	iconImg, _ := extractor.GetIconImage(filePath)
-	if iconImg == nil {
-		return
-	}
-	rgbaImg, ok := iconImg.(*image.RGBA)
-	if !ok {
-		b := iconImg.Bounds()
-		rgbaImg = image.NewRGBA(b)
-		for iy := b.Min.Y; iy < b.Max.Y; iy++ {
-			for ix := b.Min.X; ix < b.Max.X; ix++ {
-				rgbaImg.Set(ix, iy, iconImg.At(ix, iy))
-			}
-		}
-	}
-	bmp, err := walk.NewBitmapFromImage(rgbaImg)
-	if err != nil {
-		return
-	}
-	dm.ghostBmp = bmp
+	dm.ghostBmp = globalIconBmpCache.GetOrLoad(filePath)
 }
 
 // disposeDragGhostBmp 释放拖拽 ghost bitmap
