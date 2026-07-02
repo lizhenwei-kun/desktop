@@ -28,12 +28,13 @@ type Group struct {
 
 // Config 表示应用配置
 type Config struct {
-	Groups       []Group           `json:"groups"`
-	DesktopItems map[string]string `json:"desktop_items"` // 桌面项路径 -> 分组名
-	CardFontName string            `json:"card_font_name"`
-	CardFontSize int               `json:"card_font_size"`
-	IconFontName string            `json:"icon_font_name"`
-	IconFontSize int               `json:"icon_font_size"`
+	Groups             []Group           `json:"groups"`
+	DesktopItems       map[string]string `json:"desktop_items"`        // 桌面项路径 -> 分组名
+	UngroupedPositions map[string]Position `json:"ungrouped_positions"` // 未分组项路径 -> 相对位置
+	CardFontName       string            `json:"card_font_name"`
+	CardFontSize       int               `json:"card_font_size"`
+	IconFontName       string            `json:"icon_font_name"`
+	IconFontSize       int               `json:"icon_font_size"`
 }
 
 // DefaultGroups 返回默认分组配置（相对坐标，基于1920x1040工作区计算的比例）
@@ -61,12 +62,13 @@ func configPath() string {
 // Load 加载配置，不存在则使用默认值
 func Load() *Config {
 	cfg := &Config{
-		Groups:       DefaultGroups(),
-		DesktopItems: make(map[string]string),
-		CardFontName: "宋体",
-		CardFontSize: 14,
-		IconFontName: "宋体",
-		IconFontSize: 11,
+		Groups:             DefaultGroups(),
+		DesktopItems:       make(map[string]string),
+		UngroupedPositions: make(map[string]Position),
+		CardFontName:       "宋体",
+		CardFontSize:       14,
+		IconFontName:       "宋体",
+		IconFontSize:       11,
 	}
 
 	data, err := os.ReadFile(configPath())
@@ -85,6 +87,9 @@ func Load() *Config {
 	}
 	if loaded.DesktopItems == nil {
 		loaded.DesktopItems = make(map[string]string)
+	}
+	if loaded.UngroupedPositions == nil {
+		loaded.UngroupedPositions = make(map[string]Position)
 	}
 
 	// 识别旧版默认配置并升级

@@ -610,24 +610,83 @@ func (dm *DesktopMode) paintToolbar(canvas *walk.Canvas, bounds walk.Rectangle) 
 		toolbarBounds, walk.TextCenter|walk.TextVCenter|walk.TextSingleLine)
 }
 
-// paintFreeItems 绘制未分组的桌面图标
+// paintFreeItems 绘制未分组的桌面图标（使用保存的相对位置）
 func (dm *DesktopMode) paintFreeItems(canvas *walk.Canvas, bounds walk.Rectangle) {
 	items := dm.manager.GetUngroupedItems()
 	if len(items) == 0 {
 		return
 	}
 
-	startX := bounds.Width - desktopIconItemWidth - 20
-	startY := 60
-
-	for i, item := range items {
-		y := startY + i*desktopIconItemHeight
-		if y+desktopIconItemHeight > bounds.Height {
-			break
+	for idx, item := range items {
+		px, py := dm.getFreeItemPixelPos(item.Path, idx)
+		if py+desktopIconItemHeight > bounds.Height {
+			continue
 		}
 		gc := &GroupCard{executor: dm.executor}
-		gc.paintIconTile(canvas, item, startX, y, i == dm.hoveredFreeIdx)
+		gc.paintIconTile(canvas, item, px, py, idx == dm.hoveredFreeIdx)
 	}
+}
+
+// getFreeItemPixelPos 获取未分组项的像素位置（返回保存的位置或默认位置）
+func (dm *DesktopMode) getFreeItemPixelPos(path string, fallbackIdx int) (int, int) {
+	pos := dm.manager.GetFreeItemPosition(path)
+	if pos.X < 0 || pos.Y < 0 {
+		// 待分配：使用默认右上角排列
+		bounds := dm.bodyWidget.ClientBoundsPixels()
+		startX := bounds.Width - desktopIconItemWidth - 20
+		startY := 60
+		px := startX
+		py := startY + fallbackIdx*desktopIconItemHeight
+
+		// 检查是否与其他项重叠，若重叠则找空位
+		px, py = dm.findNonOverlappingPos("", px, py)
+		// 保存分配的位置
+		relX := float64(px) / float64(dm.workW)
+		relY := float64(py) / float64(dm.workH)
+		dm.manager.SetFreeItemPosition(path, config.Position{X: relX, Y: relY})
+		return px, py
+	}
+	px := int(pos.X * float64(dm.workW))
+	py := int(pos.Y * float64(dm.workH))
+	return px, py
+}
+
+// findNonOverlappingPos 查找不与其他未分组项重叠的位置
+func (dm *DesktopMode) findNonOverlappingPos(exceptPath string, wantX, wantY int) (int, int) {
+	items := dm.manager.GetUngroupedItems()
+	const maxAttempts = 100
+
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		overlap := false
+		for _, item := range items {
+			if item.Path == exceptPath {
+				continue
+			}
+			// 获取该项的像素位置
+			px := int(dm.manager.GetFreeItemPosition(item.Path).X * float64(dm.workW))
+			py := int(dm.manager.GetFreeItemPosition(item.Path).Y * float64(dm.workH))
+			if px == 0 && py == 0 {
+				continue // 尚未保存位置，跳过
+			}
+
+			// 碰撞检测：矩形重叠
+			if wantX+desktopIconItemWidth > px && wantX < px+desktopIconItemWidth &&
+				wantY+desktopIconItemHeight > py && wantY < py+desktopIconItemHeight {
+				overlap = true
+				// 向右或向下偏移
+				wantX += desktopIconItemWidth + desktopIconGap
+				if wantX+desktopIconItemWidth > dm.workW {
+					wantX = desktopIconGap
+					wantY += desktopIconItemHeight + desktopIconGap
+				}
+				break
+			}
+		}
+		if !overlap {
+			return wantX, wantY
+		}
+	}
+	return wantX, wantY
 }
 
 // handleDesktopMouseDown 处理桌面鼠标按下事件
@@ -648,13 +707,11 @@ func (dm *DesktopMode) handleDesktopMouseDown(x, y int, button walk.MouseButton)
 		return
 	}
 
-	// 检查点击未分组图标（启动长按拖拽）
+	// 检查点击未分组图标（使用保存的位置，启动长按拖拽）
 	items := dm.manager.GetUngroupedItems()
-	startX := bounds.Width - desktopIconItemWidth - 20
-	startY := 60
 	for i, item := range items {
-		iy := startY + i*desktopIconItemHeight
-		if x >= startX && x <= startX+desktopIconItemWidth &&
+		ix, iy := dm.getFreeItemPixelPos(item.Path, i)
+		if x >= ix && x <= ix+desktopIconItemWidth &&
 			y >= iy && y <= iy+desktopIconItemHeight {
 			dm.freeItemDragPressed = true
 			dm.freeItemDragIdx = i
@@ -709,20 +766,29 @@ func (dm *DesktopMode) handleFreeItemDrop(screenX, screenY int) {
 		// 拖入卡片
 		dm.manager.MoveItemToGroup(dm.freeItemDragItem.Path, targetCard.groupName)
 		targetCard.Refresh()
-	} // 其他位置（拖到空白桌面）：保持未分组不变
+	} else {
+		// 拖到空白桌面：保存位置（碰撞避免）
+		var pt win.POINT
+		pt.X = int32(screenX)
+		pt.Y = int32(screenY)
+		win.ScreenToClient(dm.bodyWidget.Handle(), &pt)
+		px := int(pt.X) - desktopIconItemWidth/2
+		py := int(pt.Y) - desktopIconItemHeight/2
+		nx, ny := dm.findNonOverlappingPos(dm.freeItemDragItem.Path, px, py)
+		relX := float64(nx) / float64(dm.workW)
+		relY := float64(ny) / float64(dm.workH)
+		dm.manager.SetFreeItemPosition(dm.freeItemDragItem.Path, config.Position{X: relX, Y: relY})
+	}
 	dm.clearDropState()
 }
 
 // checkFreeItemHover 检测未分组图标悬停，返回 true 表示 hover 状态变化
 func (dm *DesktopMode) checkFreeItemHover(x, y int) bool {
-	bounds := dm.bodyWidget.ClientBoundsPixels()
 	items := dm.manager.GetUngroupedItems()
-	startX := bounds.Width - desktopIconItemWidth - 20
-	startY := 60
 	newIdx := -1
 	for i := range items {
-		iy := startY + i*desktopIconItemHeight
-		if x >= startX && x <= startX+desktopIconItemWidth &&
+		ix, iy := dm.getFreeItemPixelPos(items[i].Path, i)
+		if x >= ix && x <= ix+desktopIconItemWidth &&
 			y >= iy && y <= iy+desktopIconItemHeight {
 			newIdx = i
 			break
@@ -854,14 +920,10 @@ func (dm *DesktopMode) isPointInUngroupedArea(screenX, screenY int) bool {
 	cx := int(pt.X)
 	cy := int(pt.Y)
 
-	bounds := dm.bodyWidget.ClientBoundsPixels()
-	startX := bounds.Width - desktopIconItemWidth - 20
-	startY := 60
-
 	items := dm.manager.GetUngroupedItems()
-	for i := range items {
-		iy := startY + i*desktopIconItemHeight
-		if cx >= startX && cx <= startX+desktopIconItemWidth &&
+	for i, item := range items {
+		ix, iy := dm.getFreeItemPixelPos(item.Path, i)
+		if cx >= ix && cx <= ix+desktopIconItemWidth &&
 			cy >= iy && cy <= iy+desktopIconItemHeight {
 			return true
 		}
