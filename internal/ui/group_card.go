@@ -82,6 +82,9 @@ type GroupCard struct {
 	// 拖放目标指示
 	isDropTarget bool
 
+	// 图标 bitmap 缓存（避免每次重绘重新提取）
+	iconBmpCache map[string]*walk.Bitmap
+
 	// 图标拖拽状态（卡片内图标拖动）
 	iconDragActive    bool
 	iconDragIdx       int
@@ -118,16 +121,17 @@ const (
 // NewGroupCard 创建分组卡片
 func NewGroupCard(parent walk.Container, grp config.Group, mgr *group.Manager, executor *ProgramExecutor, owner walk.Form, workW, workH int) (*GroupCard, error) {
 	gc := &GroupCard{
-		groupName:  grp.Name,
-		groupColor: ParseHexColor(grp.Color),
-		position:   grp.Position,
-		size:       grp.Size,
-		manager:    mgr,
-		executor:   executor,
-		owner:      owner,
-		workW:      workW,
-		workH:      workH,
+		groupName:     grp.Name,
+		groupColor:    ParseHexColor(grp.Color),
+		position:      grp.Position,
+		size:          grp.Size,
+		manager:       mgr,
+		executor:      executor,
+		owner:         owner,
+		workW:         workW,
+		workH:         workH,
 		hoveredItemIdx: -1,
+		iconBmpCache:  make(map[string]*walk.Bitmap),
 	}
 
 	var err error
@@ -895,7 +899,7 @@ func (gc *GroupCard) paintIconGrid(canvas *walk.Canvas, bounds walk.Rectangle) {
 	}
 }
 
-// paintIconTile 绘制单个图标磁贴
+// paintIconTile 绘制单个图标磁贴（使用缓存 bitmap）
 func (gc *GroupCard) paintIconTile(canvas *walk.Canvas, item group.GroupItem, x, y int, hovered bool) {
 	// 首次绘制时用 canvas 精确测量磁贴尺寸
 	ensureTileSizeMeasured(canvas)
@@ -907,34 +911,39 @@ func (gc *GroupCard) paintIconTile(canvas *walk.Canvas, item group.GroupItem, x,
 		})
 	}
 
-	// 获取图标
-	extractor := NewIconExtractor()
-	iconImg, _ := extractor.GetIconImage(item.Path)
-
-	if iconImg != nil {
-		rgbaImg, ok := iconImg.(*image.RGBA)
-		if !ok {
-			b := iconImg.Bounds()
-			rgbaImg = image.NewRGBA(b)
-			for iy := b.Min.Y; iy < b.Max.Y; iy++ {
-				for ix := b.Min.X; ix < b.Max.X; ix++ {
-					rgbaImg.Set(ix, iy, iconImg.At(ix, iy))
+	// 使用缓存 bitmap（如果有），否则临时提取
+	var bmp *walk.Bitmap
+	var ok bool
+	if bmp, ok = gc.iconBmpCache[item.Path]; !ok {
+		// 临时提取（用于未分组图标的临时 GroupCard）
+		extractor := NewIconExtractor()
+		iconImg, _ := extractor.GetIconImage(item.Path)
+		if iconImg != nil {
+			rgbaImg, iconOk := iconImg.(*image.RGBA)
+			if !iconOk {
+				b := iconImg.Bounds()
+				rgbaImg = image.NewRGBA(b)
+				for iy := b.Min.Y; iy < b.Max.Y; iy++ {
+					for ix := b.Min.X; ix < b.Max.X; ix++ {
+						rgbaImg.Set(ix, iy, iconImg.At(ix, iy))
+					}
 				}
 			}
-		}
-
-		bmp, err := walk.NewBitmapFromImage(rgbaImg)
-		if err == nil {
-			defer bmp.Dispose()
-			iconX := x + (desktopIconItemWidth-desktopIconSize)/2
-			iconY := y + desktopIconTop
-			canvas.DrawBitmapWithOpacityPixels(bmp, walk.Rectangle{
-				X: iconX, Y: iconY, Width: desktopIconSize, Height: desktopIconSize,
-			}, 255)
+			bmp, _ = walk.NewBitmapFromImage(rgbaImg)
+			if bmp != nil {
+				defer bmp.Dispose()
+			}
 		}
 	}
+	if bmp != nil {
+		iconX := x + (desktopIconItemWidth-desktopIconSize)/2
+		iconY := y + desktopIconTop
+		canvas.DrawBitmapWithOpacityPixels(bmp, walk.Rectangle{
+			X: iconX, Y: iconY, Width: desktopIconSize, Height: desktopIconSize,
+		}, 255)
+	}
 
-	// 绘制名称（宋体，不加粗，自动换行）
+	// 绘制名称
 	font := GetIconFont()
 	if font != nil {
 		defer font.Dispose()
@@ -981,11 +990,44 @@ func (gc *GroupCard) createColorBitmap(w, h int, c color.RGBA) *walk.Bitmap {
 	return bmp
 }
 
-// refreshItems 刷新分组项目
+// refreshItems 刷新分组项目并重建图标缓存
 func (gc *GroupCard) refreshItems() {
 	gc.items = gc.manager.GetGroupItems(gc.groupName)
+	gc.rebuildIconCache()
 	if gc.bodyWidget != nil {
 		gc.bodyWidget.Invalidate()
+	}
+}
+
+// rebuildIconCache 重建图标 bitmap 缓存
+func (gc *GroupCard) rebuildIconCache() {
+	// 清理旧缓存
+	for _, bmp := range gc.iconBmpCache {
+		bmp.Dispose()
+	}
+	gc.iconBmpCache = make(map[string]*walk.Bitmap, len(gc.items))
+
+	extractor := NewIconExtractor()
+	for _, item := range gc.items {
+		iconImg, _ := extractor.GetIconImage(item.Path)
+		if iconImg == nil {
+			continue
+		}
+		rgbaImg, ok := iconImg.(*image.RGBA)
+		if !ok {
+			b := iconImg.Bounds()
+			rgbaImg = image.NewRGBA(b)
+			for iy := b.Min.Y; iy < b.Max.Y; iy++ {
+				for ix := b.Min.X; ix < b.Max.X; ix++ {
+					rgbaImg.Set(ix, iy, iconImg.At(ix, iy))
+				}
+			}
+		}
+		bmp, err := walk.NewBitmapFromImage(rgbaImg)
+		if err != nil {
+			continue
+		}
+		gc.iconBmpCache[item.Path] = bmp
 	}
 }
 
@@ -1081,6 +1123,14 @@ func (gc *GroupCard) SetIsDropTarget(v bool) {
 		gc.isDropTarget = v
 		gc.bodyWidget.Invalidate()
 	}
+}
+
+// Cleanup 清理资源（释放图标缓存等）
+func (gc *GroupCard) Cleanup() {
+	for _, bmp := range gc.iconBmpCache {
+		bmp.Dispose()
+	}
+	gc.iconBmpCache = make(map[string]*walk.Bitmap)
 }
 
 // SetOnIconDragStart 设置图标拖拽开始回调

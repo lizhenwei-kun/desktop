@@ -1059,6 +1059,7 @@ func (dm *DesktopMode) setupCardActions(card *GroupCard, grp config.Group) {
 func (dm *DesktopMode) refreshCards() {
 	// 移除旧卡片
 	for _, card := range dm.cards {
+		card.Cleanup()
 		card.Container().Dispose()
 	}
 	dm.cards = nil
