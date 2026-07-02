@@ -339,6 +339,7 @@ func (gc *GroupCard) checkIconDragStart() {
 		gc.iconDragActive = true
 		gc.iconDragMouseX = gc.iconDragStartX
 		gc.iconDragMouseY = gc.iconDragStartY
+		gc.bodyWidget.Invalidate()
 
 		// 捕获鼠标，确保移出卡片后仍能收到事件
 		win.SetCapture(gc.bodyWidget.Handle())

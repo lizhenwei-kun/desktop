@@ -358,6 +358,11 @@ func (dm *DesktopMode) paintDesktop(canvas *walk.Canvas, updateBounds walk.Recta
 		dm.paintFreeItemDragGhost(canvas, bounds)
 	}
 
+	// 7. 卡片图标拖拽 ghost（在桌面区域也可见）
+	if dm.iconDragActive && dm.iconDragSourceCard != nil && !dm.freeItemDragActive {
+		dm.paintCardItemDragGhost(canvas, bounds)
+	}
+
 	return nil
 }
 
@@ -424,6 +429,65 @@ func (dm *DesktopMode) paintFreeItemDragGhost(canvas *walk.Canvas, _ walk.Rectan
 	if font != nil {
 		defer font.Dispose()
 		displayName := dm.freeItemDragItem.Name
+		lines := splitTextToLines(displayName, 4)
+		labelTop := ghostY + desktopIconLabelTop
+		for i, line := range lines {
+			if i >= 2 {
+				break
+			}
+			if i == 1 && len(lines) > 2 {
+				line = TruncateText(line, 3)
+			}
+			lineY := labelTop + i*desktopIconLineHeight
+			textBounds := walk.Rectangle{
+				X: ghostX, Y: lineY,
+				Width: desktopIconItemWidth, Height: desktopIconLineHeight,
+			}
+			canvas.DrawTextPixels(line, font, walk.RGB(0xFF, 0xFF, 0xFF), textBounds,
+				walk.TextCenter|walk.TextSingleLine)
+		}
+	}
+}
+
+// paintCardItemDragGhost 绘制卡片图标拖拽 ghost（桌面区域可见）
+func (dm *DesktopMode) paintCardItemDragGhost(canvas *walk.Canvas, bounds walk.Rectangle) {
+	// 屏幕坐标转 bodyWidget 客户区坐标
+	var pt win.POINT
+	pt.X = int32(dm.iconDragScreenX)
+	pt.Y = int32(dm.iconDragScreenY)
+	win.ScreenToClient(dm.bodyWidget.Handle(), &pt)
+
+	ghostX := int(pt.X) - desktopIconItemWidth/2
+	ghostY := int(pt.Y) - desktopIconItemHeight/2
+
+	extractor := NewIconExtractor()
+	iconImg, _ := extractor.GetIconImage(dm.iconDragItem.Path)
+	if iconImg != nil {
+		rgbaImg, ok := iconImg.(*image.RGBA)
+		if !ok {
+			b := iconImg.Bounds()
+			rgbaImg = image.NewRGBA(b)
+			for iy := b.Min.Y; iy < b.Max.Y; iy++ {
+				for ix := b.Min.X; ix < b.Max.X; ix++ {
+					rgbaImg.Set(ix, iy, iconImg.At(ix, iy))
+				}
+			}
+		}
+		bmp, err := walk.NewBitmapFromImage(rgbaImg)
+		if err == nil {
+			defer bmp.Dispose()
+			iconX := ghostX + (desktopIconItemWidth-desktopIconSize)/2
+			iconY := ghostY + desktopIconTop
+			canvas.DrawBitmapWithOpacityPixels(bmp, walk.Rectangle{
+				X: iconX, Y: iconY, Width: desktopIconSize, Height: desktopIconSize,
+			}, 128)
+		}
+	}
+
+	font := GetIconFont()
+	if font != nil {
+		defer font.Dispose()
+		displayName := dm.iconDragItem.Name
 		lines := splitTextToLines(displayName, 4)
 		labelTop := ghostY + desktopIconLabelTop
 		for i, line := range lines {
@@ -607,6 +671,7 @@ func (dm *DesktopMode) checkFreeItemDragStart() {
 		dm.freeItemDragActive = true
 		dm.freeItemDragMouseX = dm.freeItemDragStartX
 		dm.freeItemDragMouseY = dm.freeItemDragStartY
+		dm.bodyWidget.Invalidate()
 
 		win.SetCapture(dm.bodyWidget.Handle())
 
