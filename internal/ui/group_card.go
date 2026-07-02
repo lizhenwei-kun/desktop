@@ -764,19 +764,13 @@ func (gc *GroupCard) paintDragGhost(canvas *walk.Canvas, _ walk.Rectangle) {
 
 // loadGhostBitmap 预加载 ghost 图标 bitmap（从全局缓存取，零文件 I/O）
 func (gc *GroupCard) loadGhostBitmap() {
-	if gc.ghostBmp != nil {
-		gc.ghostBmp.Dispose()
-		gc.ghostBmp = nil
-	}
+	gc.disposeGhostBitmap()
 	gc.ghostBmp = globalIconBmpCache.GetOrLoad(gc.iconDragItem.Path)
 }
 
-// disposeGhostBitmap 释放 ghost 图标 bitmap
+// disposeGhostBitmap 释放 ghost 图标 bitmap 引用（bitmap 由全局缓存管理，不 Dispose）
 func (gc *GroupCard) disposeGhostBitmap() {
-	if gc.ghostBmp != nil {
-		gc.ghostBmp.Dispose()
-		gc.ghostBmp = nil
-	}
+	gc.ghostBmp = nil
 }
 
 // paintBackground 绘制卡片背景（半透明颜色）

@@ -491,19 +491,13 @@ func (dm *DesktopMode) paintCardItemDragGhost(canvas *walk.Canvas, _ walk.Rectan
 
 // loadDragGhostBmp 预加载拖拽 ghost bitmap（避免每次重绘重新提取图标）
 func (dm *DesktopMode) loadDragGhostBmp(filePath string) {
-	if dm.ghostBmp != nil {
-		dm.ghostBmp.Dispose()
-		dm.ghostBmp = nil
-	}
+	dm.disposeDragGhostBmp()
 	dm.ghostBmp = globalIconBmpCache.GetOrLoad(filePath)
 }
 
-// disposeDragGhostBmp 释放拖拽 ghost bitmap
+// disposeDragGhostBmp 释放拖拽 ghost bitmap 引用（bitmap 由全局缓存管理，不 Dispose）
 func (dm *DesktopMode) disposeDragGhostBmp() {
-	if dm.ghostBmp != nil {
-		dm.ghostBmp.Dispose()
-		dm.ghostBmp = nil
-	}
+	dm.ghostBmp = nil
 }
 
 // paintBackground 绘制深色背景
