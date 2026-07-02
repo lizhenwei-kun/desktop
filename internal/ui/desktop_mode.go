@@ -207,6 +207,15 @@ func (dm *DesktopMode) Setup() error {
 	// 创建分组卡片（在 container 中，绝对定位）
 	dm.createGroupCards()
 
+	// 预加载未分组图标的 bitmap 缓存
+	freePaths := make([]string, 0)
+	for _, item := range dm.manager.GetUngroupedItems() {
+		freePaths = append(freePaths, item.Path)
+	}
+	if len(freePaths) > 0 {
+		globalIconBmpCache.LoadAll(freePaths)
+	}
+
 	// 延迟去边框：等消息循环启动后再去边框
 	go dm.delayedSetup()
 

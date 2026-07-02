@@ -82,8 +82,7 @@ type GroupCard struct {
 	// 拖放目标指示
 	isDropTarget bool
 
-	// 图标 bitmap 缓存（避免每次重绘重新提取）
-	iconBmpCache map[string]*walk.Bitmap
+	// (图标 bitmap 由全局 globalIconBmpCache 管理)
 
 	// 图标拖拽状态（卡片内图标拖动）
 	iconDragActive    bool
@@ -131,7 +130,6 @@ func NewGroupCard(parent walk.Container, grp config.Group, mgr *group.Manager, e
 		workW:         workW,
 		workH:         workH,
 		hoveredItemIdx: -1,
-		iconBmpCache:  make(map[string]*walk.Bitmap),
 	}
 
 	var err error
@@ -911,30 +909,8 @@ func (gc *GroupCard) paintIconTile(canvas *walk.Canvas, item group.GroupItem, x,
 		})
 	}
 
-	// 使用缓存 bitmap（如果有），否则临时提取
-	var bmp *walk.Bitmap
-	var ok bool
-	if bmp, ok = gc.iconBmpCache[item.Path]; !ok {
-		// 临时提取（用于未分组图标的临时 GroupCard）
-		extractor := NewIconExtractor()
-		iconImg, _ := extractor.GetIconImage(item.Path)
-		if iconImg != nil {
-			rgbaImg, iconOk := iconImg.(*image.RGBA)
-			if !iconOk {
-				b := iconImg.Bounds()
-				rgbaImg = image.NewRGBA(b)
-				for iy := b.Min.Y; iy < b.Max.Y; iy++ {
-					for ix := b.Min.X; ix < b.Max.X; ix++ {
-						rgbaImg.Set(ix, iy, iconImg.At(ix, iy))
-					}
-				}
-			}
-			bmp, _ = walk.NewBitmapFromImage(rgbaImg)
-			if bmp != nil {
-				defer bmp.Dispose()
-			}
-		}
-	}
+	// 使用全局图标缓存，避免每次重绘文件 I/O
+	bmp := globalIconBmpCache.GetOrLoad(item.Path)
 	if bmp != nil {
 		iconX := x + (desktopIconItemWidth-desktopIconSize)/2
 		iconY := y + desktopIconTop
@@ -999,36 +975,13 @@ func (gc *GroupCard) refreshItems() {
 	}
 }
 
-// rebuildIconCache 重建图标 bitmap 缓存
+// rebuildIconCache 预加载当前分组所有图标到全局缓存
 func (gc *GroupCard) rebuildIconCache() {
-	// 清理旧缓存
-	for _, bmp := range gc.iconBmpCache {
-		bmp.Dispose()
+	paths := make([]string, len(gc.items))
+	for i, item := range gc.items {
+		paths[i] = item.Path
 	}
-	gc.iconBmpCache = make(map[string]*walk.Bitmap, len(gc.items))
-
-	extractor := NewIconExtractor()
-	for _, item := range gc.items {
-		iconImg, _ := extractor.GetIconImage(item.Path)
-		if iconImg == nil {
-			continue
-		}
-		rgbaImg, ok := iconImg.(*image.RGBA)
-		if !ok {
-			b := iconImg.Bounds()
-			rgbaImg = image.NewRGBA(b)
-			for iy := b.Min.Y; iy < b.Max.Y; iy++ {
-				for ix := b.Min.X; ix < b.Max.X; ix++ {
-					rgbaImg.Set(ix, iy, iconImg.At(ix, iy))
-				}
-			}
-		}
-		bmp, err := walk.NewBitmapFromImage(rgbaImg)
-		if err != nil {
-			continue
-		}
-		gc.iconBmpCache[item.Path] = bmp
-	}
+	globalIconBmpCache.LoadAll(paths)
 }
 
 // Container 返回卡片容器
@@ -1125,12 +1078,9 @@ func (gc *GroupCard) SetIsDropTarget(v bool) {
 	}
 }
 
-// Cleanup 清理资源（释放图标缓存等）
+// Cleanup 清理卡片资源
 func (gc *GroupCard) Cleanup() {
-	for _, bmp := range gc.iconBmpCache {
-		bmp.Dispose()
-	}
-	gc.iconBmpCache = make(map[string]*walk.Bitmap)
+	// 全局缓存由所有卡片共享，此处不做清理
 }
 
 // SetOnIconDragStart 设置图标拖拽开始回调
