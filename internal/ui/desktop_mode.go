@@ -610,7 +610,125 @@ func (dm *DesktopMode) paintToolbar(canvas *walk.Canvas, bounds walk.Rectangle) 
 		toolbarBounds, walk.TextCenter|walk.TextVCenter|walk.TextSingleLine)
 }
 
-// paintFreeItems 绘制未分组的桌面图标（使用保存的相对位置）
+// ==================== 未分组图标网格布局 ====================
+
+const (
+	freeGridLeft = 20  // 网格左边距（像素）
+	freeGridTop  = 60  // 网格上边距（像素）
+)
+
+// freeCellW 未分组图标网格单元格宽度（像素）
+func freeCellW() int { return desktopIconItemWidth + desktopIconGap }
+
+// freeCellH 未分组图标网格单元格高度（像素）
+func freeCellH() int { return desktopIconItemHeight + desktopIconGap }
+
+// gridToPixel 将网格坐标转为像素坐标
+func gridToPixel(col, row int) (int, int) {
+	return freeGridLeft + col*freeCellW(), freeGridTop + row*freeCellH()
+}
+
+// pixelToGrid 将像素坐标转为最近的网格坐标
+func pixelToGrid(px, py int) (int, int) {
+	col := (px - freeGridLeft + freeCellW()/2) / freeCellW()
+	row := (py - freeGridTop + freeCellH()/2) / freeCellH()
+	if col < 0 {
+		col = 0
+	}
+	if row < 0 {
+		row = 0
+	}
+	return col, row
+}
+
+// posToGrid 将相对坐标转为网格坐标
+func (dm *DesktopMode) posToGrid(pos config.Position) (int, int) {
+	px := int(pos.X * float64(dm.workW))
+	py := int(pos.Y * float64(dm.workH))
+	return pixelToGrid(px, py)
+}
+
+// gridToRel 将网格坐标转为相对坐标
+func (dm *DesktopMode) gridToRel(col, row int) config.Position {
+	px, py := gridToPixel(col, row)
+	return config.Position{
+		X: float64(px) / float64(dm.workW),
+		Y: float64(py) / float64(dm.workH),
+	}
+}
+
+// getOccupiedCells 获取所有已占用的网格单元格（不含 exceptPath）
+func (dm *DesktopMode) getOccupiedCells(exceptPath string) map[[2]int]bool {
+	items := dm.manager.GetUngroupedItems()
+	cells := make(map[[2]int]bool)
+	for _, item := range items {
+		if item.Path == exceptPath {
+			continue
+		}
+		pos := dm.manager.GetFreeItemPosition(item.Path)
+		col, row := dm.posToGrid(pos)
+		if col < 0 || row < 0 {
+			continue
+		}
+		cell := [2]int{col, row}
+		if !cells[cell] {
+			cells[cell] = true
+		}
+	}
+	return cells
+}
+
+// getFreeItemPixelPos 获取未分组项的像素位置（基于网格，吸附对齐）
+func (dm *DesktopMode) getFreeItemPixelPos(path string, fallbackIdx int) (int, int) {
+	pos := dm.manager.GetFreeItemPosition(path)
+	if pos.X < 0 || pos.Y < 0 {
+		// 待分配：从默认区域开始找空闲网格
+		bounds := dm.bodyWidget.ClientBoundsPixels()
+		// 从右上角开始
+		startCol := (bounds.Width - freeGridLeft) / freeCellW()
+		if startCol < 0 {
+			startCol = 0
+		}
+		startRow := fallbackIdx
+		col, row := dm.findFreeGridCell("", startCol, startRow)
+		// 保存分配的位置
+		relPos := dm.gridToRel(col, row)
+		dm.manager.SetFreeItemPosition(path, relPos)
+		return gridToPixel(col, row)
+	}
+	col, row := dm.posToGrid(pos)
+	return gridToPixel(col, row)
+}
+
+// findFreeGridCell 查找空闲网格，从 wantCol,wantRow 开始，遇占用往右/下偏移
+func (dm *DesktopMode) findFreeGridCell(exceptPath string, wantCol, wantRow int) (int, int) {
+	occupied := dm.getOccupiedCells(exceptPath)
+	bounds := dm.bodyWidget.ClientBoundsPixels()
+	maxCol := bounds.Width / freeCellW()
+	if maxCol < 1 {
+		maxCol = 1
+	}
+	maxRow := bounds.Height / freeCellH()
+
+	for attempt := 0; attempt < 500; attempt++ {
+		cell := [2]int{wantCol, wantRow}
+		if !occupied[cell] {
+			return wantCol, wantRow
+		}
+		// 往右偏移
+		wantCol++
+		if wantCol >= maxCol {
+			wantCol = 0
+			wantRow++
+		}
+		if wantRow >= maxRow {
+			wantRow = 0
+		}
+	}
+	return wantCol, wantRow
+}
+
+// paintFreeItems 绘制未分组的桌面图标（网格对齐）
 func (dm *DesktopMode) paintFreeItems(canvas *walk.Canvas, bounds walk.Rectangle) {
 	items := dm.manager.GetUngroupedItems()
 	if len(items) == 0 {
@@ -625,68 +743,6 @@ func (dm *DesktopMode) paintFreeItems(canvas *walk.Canvas, bounds walk.Rectangle
 		gc := &GroupCard{executor: dm.executor}
 		gc.paintIconTile(canvas, item, px, py, idx == dm.hoveredFreeIdx)
 	}
-}
-
-// getFreeItemPixelPos 获取未分组项的像素位置（返回保存的位置或默认位置）
-func (dm *DesktopMode) getFreeItemPixelPos(path string, fallbackIdx int) (int, int) {
-	pos := dm.manager.GetFreeItemPosition(path)
-	if pos.X < 0 || pos.Y < 0 {
-		// 待分配：使用默认右上角排列
-		bounds := dm.bodyWidget.ClientBoundsPixels()
-		startX := bounds.Width - desktopIconItemWidth - 20
-		startY := 60
-		px := startX
-		py := startY + fallbackIdx*desktopIconItemHeight
-
-		// 检查是否与其他项重叠，若重叠则找空位
-		px, py = dm.findNonOverlappingPos("", px, py)
-		// 保存分配的位置
-		relX := float64(px) / float64(dm.workW)
-		relY := float64(py) / float64(dm.workH)
-		dm.manager.SetFreeItemPosition(path, config.Position{X: relX, Y: relY})
-		return px, py
-	}
-	px := int(pos.X * float64(dm.workW))
-	py := int(pos.Y * float64(dm.workH))
-	return px, py
-}
-
-// findNonOverlappingPos 查找不与其他未分组项重叠的位置
-func (dm *DesktopMode) findNonOverlappingPos(exceptPath string, wantX, wantY int) (int, int) {
-	items := dm.manager.GetUngroupedItems()
-	const maxAttempts = 100
-
-	for attempt := 0; attempt < maxAttempts; attempt++ {
-		overlap := false
-		for _, item := range items {
-			if item.Path == exceptPath {
-				continue
-			}
-			// 获取该项的像素位置
-			px := int(dm.manager.GetFreeItemPosition(item.Path).X * float64(dm.workW))
-			py := int(dm.manager.GetFreeItemPosition(item.Path).Y * float64(dm.workH))
-			if px == 0 && py == 0 {
-				continue // 尚未保存位置，跳过
-			}
-
-			// 碰撞检测：矩形重叠
-			if wantX+desktopIconItemWidth > px && wantX < px+desktopIconItemWidth &&
-				wantY+desktopIconItemHeight > py && wantY < py+desktopIconItemHeight {
-				overlap = true
-				// 向右或向下偏移
-				wantX += desktopIconItemWidth + desktopIconGap
-				if wantX+desktopIconItemWidth > dm.workW {
-					wantX = desktopIconGap
-					wantY += desktopIconItemHeight + desktopIconGap
-				}
-				break
-			}
-		}
-		if !overlap {
-			return wantX, wantY
-		}
-	}
-	return wantX, wantY
 }
 
 // handleDesktopMouseDown 处理桌面鼠标按下事件
@@ -754,7 +810,7 @@ func (dm *DesktopMode) checkFreeItemDragStart() {
 	})
 }
 
-// handleFreeItemDrop 处理未分组图标拖放
+// handleFreeItemDrop 处理未分组图标拖放（吸附到网格）
 func (dm *DesktopMode) handleFreeItemDrop(screenX, screenY int) {
 	dm.iconDragActive = false
 	dm.disposeDragGhostBmp()
@@ -767,17 +823,17 @@ func (dm *DesktopMode) handleFreeItemDrop(screenX, screenY int) {
 		dm.manager.MoveItemToGroup(dm.freeItemDragItem.Path, targetCard.groupName)
 		targetCard.Refresh()
 	} else {
-		// 拖到空白桌面：保存位置（碰撞避免）
+		// 拖到空白桌面：吸附到最近的网格格子
 		var pt win.POINT
 		pt.X = int32(screenX)
 		pt.Y = int32(screenY)
 		win.ScreenToClient(dm.bodyWidget.Handle(), &pt)
 		px := int(pt.X) - desktopIconItemWidth/2
 		py := int(pt.Y) - desktopIconItemHeight/2
-		nx, ny := dm.findNonOverlappingPos(dm.freeItemDragItem.Path, px, py)
-		relX := float64(nx) / float64(dm.workW)
-		relY := float64(ny) / float64(dm.workH)
-		dm.manager.SetFreeItemPosition(dm.freeItemDragItem.Path, config.Position{X: relX, Y: relY})
+		wantCol, wantRow := pixelToGrid(px, py)
+		col, row := dm.findFreeGridCell(dm.freeItemDragItem.Path, wantCol, wantRow)
+		relPos := dm.gridToRel(col, row)
+		dm.manager.SetFreeItemPosition(dm.freeItemDragItem.Path, relPos)
 	}
 	dm.clearDropState()
 }
