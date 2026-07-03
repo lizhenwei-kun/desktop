@@ -764,7 +764,7 @@ func (dm *DesktopMode) handleDesktopMouseDown(x, y int, button walk.MouseButton)
 // checkFreeItemDragStart 检测未分组图标长按开始拖拽
 func (dm *DesktopMode) checkFreeItemDragStart() {
 	defer recoverGoroutine("checkFreeItemDragStart")
-	time.Sleep(longPressDragDelay)
+	time.Sleep(iconDragDelay)
 	dm.bodyWidget.Synchronize(func() {
 		if !dm.freeItemDragPressed || dm.freeItemDragActive {
 			return

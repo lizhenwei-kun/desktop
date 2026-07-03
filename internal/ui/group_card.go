@@ -336,9 +336,9 @@ func (gc *GroupCard) checkDragStart() {
 	}
 }
 
-// checkIconDragStart 检查是否开始图标拖拽（长按3秒）
+// checkIconDragStart 检查是否开始图标拖拽（长按1秒）
 func (gc *GroupCard) checkIconDragStart() {
-	time.Sleep(longPressDragDelay)
+	time.Sleep(iconDragDelay)
 	gc.bodyWidget.Synchronize(func() {
 		if !gc.iconDragPressed || gc.isResizing || gc.isDragging || gc.iconDragActive {
 			return
