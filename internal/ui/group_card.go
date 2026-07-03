@@ -100,6 +100,9 @@ type GroupCard struct {
 	onIconDragStart func(card *GroupCard, idx int, item group.GroupItem)
 	onIconDragMove  func(card *GroupCard, screenX, screenY int)
 	onIconDragEnd   func(card *GroupCard, screenX, screenY int)
+
+	// 当此卡片收到 MouseMove 时通知 DesktopMode（用于清除其它卡片悬停）
+	onMouseMove func()
 }
 
 // ResizeEdge 缩放方向
@@ -319,6 +322,9 @@ func (gc *GroupCard) setupMouseEvents() {
 			gc.handleDrag(x, y)
 		} else {
 			gc.updateCursor(x, y)
+			if gc.onMouseMove != nil {
+				gc.onMouseMove()
+			}
 			idx := gc.getItemIndexAt(x, y)
 			if idx != gc.hoveredItemIdx {
 				gc.hoveredItemIdx = idx
@@ -1048,6 +1054,14 @@ func (gc *GroupCard) ReapplyBounds() {
 		gc.container.Visible())
 }
 
+// ClearHover 清除悬停状态（鼠标离开卡片时调用）
+func (gc *GroupCard) ClearHover() {
+	if gc.hoveredItemIdx != -1 {
+		gc.hoveredItemIdx = -1
+		gc.bodyWidget.Invalidate()
+	}
+}
+
 // SetIsDropTarget 设置是否为当前拖放目标（绘制高亮边框）
 func (gc *GroupCard) SetIsDropTarget(v bool) {
 	if gc.isDropTarget != v {
@@ -1074,4 +1088,9 @@ func (gc *GroupCard) SetOnIconDragMove(fn func(card *GroupCard, screenX, screenY
 // SetOnIconDragEnd 设置图标拖拽结束回调
 func (gc *GroupCard) SetOnIconDragEnd(fn func(card *GroupCard, screenX, screenY int)) {
 	gc.onIconDragEnd = fn
+}
+
+// SetOnMouseMove 设置鼠标移动通知回调（用于清除其它卡片悬停）
+func (gc *GroupCard) SetOnMouseMove(fn func()) {
+	gc.onMouseMove = fn
 }

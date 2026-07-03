@@ -164,6 +164,10 @@ func (dm *DesktopMode) Setup() error {
 	dm.bodyWidget.MouseDown().Attach(dm.handleDesktopMouseDown)
 
 	dm.bodyWidget.MouseMove().Attach(func(x, y int, button walk.MouseButton) {
+		// 光标在桌面上，清除所有卡片的悬停状态
+		for _, c := range dm.cards {
+			c.ClearHover()
+		}
 		// 未分组图标拖拽中
 		if dm.freeItemDragActive {
 			dm.freeItemDragMouseX = x
@@ -1015,6 +1019,15 @@ func (dm *DesktopMode) setupCardActions(card *GroupCard, grp config.Group) {
 	card.SetOnIconDragStart(dm.onCardIconDragStart)
 	card.SetOnIconDragMove(dm.onCardIconDragMove)
 	card.SetOnIconDragEnd(dm.onCardIconDragEnd)
+
+	// 鼠标悬停回调：此卡片收到 MouseMove 时清除其它卡片的悬停
+	card.SetOnMouseMove(func() {
+		for _, c := range dm.cards {
+			if c != card {
+				c.ClearHover()
+			}
+		}
+	})
 	card.SetOnRename(func(name string) {
 		newName, ok := ShowInputDialog(dm.mainWindow, "重命名分组", "请输入新名称：", name)
 		if ok && newName != "" && newName != name {
