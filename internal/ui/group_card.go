@@ -700,6 +700,12 @@ func (gc *GroupCard) ScreenBounds() walk.Rectangle {
 func (gc *GroupCard) paintBody(canvas *walk.Canvas, updateBounds walk.Rectangle) error {
 	bounds := gc.bodyWidget.ClientBoundsPixels()
 
+	// 拖拽中只画虚框，不画实际内容
+	if gc.isDragging {
+		gc.paintDragOutline(canvas, bounds)
+		return nil
+	}
+
 	// 绘制半透明背景
 	gc.paintBackground(canvas, bounds)
 
@@ -728,6 +734,21 @@ func (gc *GroupCard) paintBody(canvas *walk.Canvas, updateBounds walk.Rectangle)
 	}
 
 	return nil
+}
+
+// paintDragOutline 绘制卡片拖拽虚框（拖动时不渲染实际内容）
+func (gc *GroupCard) paintDragOutline(canvas *walk.Canvas, bounds walk.Rectangle) {
+	// 2px 白色虚线边框
+	pen, err := walk.NewCosmeticPen(walk.PenDash, walk.RGB(0xFF, 0xFF, 0xFF))
+	if err != nil {
+		return
+	}
+	defer pen.Dispose()
+
+	canvas.DrawLinePixels(pen, walk.Point{X: 0, Y: 0}, walk.Point{X: bounds.Width, Y: 0})
+	canvas.DrawLinePixels(pen, walk.Point{X: 0, Y: bounds.Height - 1}, walk.Point{X: bounds.Width, Y: bounds.Height - 1})
+	canvas.DrawLinePixels(pen, walk.Point{X: 0, Y: 0}, walk.Point{X: 0, Y: bounds.Height})
+	canvas.DrawLinePixels(pen, walk.Point{X: bounds.Width - 1, Y: 0}, walk.Point{X: bounds.Width - 1, Y: bounds.Height})
 }
 
 // paintDragGhost 绘制拖拽ghost（半透明跟随鼠标）
