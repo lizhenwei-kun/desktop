@@ -344,21 +344,21 @@ func (gc *GroupCard) checkIconDragStart() {
 			return
 		}
 		gc.iconDragActive = true
-		gc.iconDragMouseX = gc.iconDragStartX
-		gc.iconDragMouseY = gc.iconDragStartY
-		// 预加载 ghost 图标 bitmap（避免每次重绘重新提取）
+		// 使用当前光标实时位置（而非 3 秒前 MouseDown 的坐标）
+		var curPt win.POINT
+		win.GetCursorPos(&curPt)
+		win.ScreenToClient(gc.bodyWidget.Handle(), &curPt)
+		gc.iconDragMouseX = int(curPt.X)
+		gc.iconDragMouseY = int(curPt.Y)
+		// 预加载 ghost 图标 bitmap
 		gc.loadGhostBitmap()
 		gc.bodyWidget.Invalidate()
 
 		// 捕获鼠标，确保移出卡片后仍能收到事件
 		win.SetCapture(gc.bodyWidget.Handle())
 
-		// 通知 DesktopMode
+		// 通知 DesktopMode（传入实时屏幕坐标）
 		if gc.onIconDragStart != nil {
-			var screenPt win.POINT
-			screenPt.X = int32(gc.iconDragStartX)
-			screenPt.Y = int32(gc.iconDragStartY)
-			win.ClientToScreen(gc.bodyWidget.Handle(), &screenPt)
 			gc.onIconDragStart(gc, gc.iconDragIdx, gc.iconDragItem)
 		}
 	})

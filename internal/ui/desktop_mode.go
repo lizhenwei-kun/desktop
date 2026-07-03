@@ -770,8 +770,13 @@ func (dm *DesktopMode) checkFreeItemDragStart() {
 			return
 		}
 		dm.freeItemDragActive = true
-		dm.freeItemDragMouseX = dm.freeItemDragStartX
-		dm.freeItemDragMouseY = dm.freeItemDragStartY
+		// 使用当前光标实时位置
+		var screenPt, clientPt win.POINT
+		win.GetCursorPos(&screenPt)
+		clientPt = screenPt
+		win.ScreenToClient(dm.bodyWidget.Handle(), &clientPt)
+		dm.freeItemDragMouseX = int(clientPt.X)
+		dm.freeItemDragMouseY = int(clientPt.Y)
 		dm.loadDragGhostBmp(dm.freeItemDragItem.Path)
 		dm.bodyWidget.Invalidate()
 
@@ -780,11 +785,6 @@ func (dm *DesktopMode) checkFreeItemDragStart() {
 		dm.iconDragActive = true
 		dm.iconDragItem = dm.freeItemDragItem
 		dm.iconDragSourceGroup = ""
-
-		var screenPt win.POINT
-		screenPt.X = int32(dm.freeItemDragStartX)
-		screenPt.Y = int32(dm.freeItemDragStartY)
-		win.ClientToScreen(dm.bodyWidget.Handle(), &screenPt)
 		dm.iconDragScreenX = int(screenPt.X)
 		dm.iconDragScreenY = int(screenPt.Y)
 	})
@@ -846,13 +846,11 @@ func (dm *DesktopMode) onCardIconDragStart(card *GroupCard, idx int, item group.
 	dm.iconDragItem = item
 	dm.iconDragSourceGroup = card.groupName
 	dm.loadDragGhostBmp(item.Path)
-	// 同步 ghost 屏幕位置（拖拽开始时等于点击位置）
-	var cardPt win.POINT
-	cardPt.X = int32(card.iconDragStartX)
-	cardPt.Y = int32(card.iconDragStartY)
-	win.ClientToScreen(card.bodyWidget.Handle(), &cardPt)
-	dm.iconDragScreenX = int(cardPt.X)
-	dm.iconDragScreenY = int(cardPt.Y)
+	// 用当前光标实时位置（而非 3 秒前 MouseDown 的坐标）
+	var curPt win.POINT
+	win.GetCursorPos(&curPt)
+	dm.iconDragScreenX = int(curPt.X)
+	dm.iconDragScreenY = int(curPt.Y)
 	dm.bodyWidget.Invalidate()
 }
 
