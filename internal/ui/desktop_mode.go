@@ -956,7 +956,6 @@ func (dm *DesktopMode) onCardDragOutline(card *GroupCard, newX, newY int) {
 
 // onCardDragOutlineEnd 卡片拖拽结束虚框清除
 func (dm *DesktopMode) onCardDragOutlineEnd(card *GroupCard) {
-	card.SetOnCardDragOutline(nil)
 	dm.dragOutlineCard = nil
 	dm.bodyWidget.Invalidate()
 }
