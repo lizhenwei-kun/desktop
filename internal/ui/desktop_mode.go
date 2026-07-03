@@ -79,6 +79,13 @@ type DesktopMode struct {
 
 	// 拖拽重绘节流（避免每秒几十次完整重绘）
 	lastDragMoveTime time.Time
+
+	// 卡片拖拽虚框（DesktopMode 在桌面层绘制，不移动容器）
+	dragOutlineX       int
+	dragOutlineY       int
+	dragOutlineCard    *GroupCard
+	dragOutlineW       int
+	dragOutlineH       int
 }
 
 // NewDesktopMode 创建桌面模式
@@ -381,6 +388,11 @@ func (dm *DesktopMode) paintDesktop(canvas *walk.Canvas, updateBounds walk.Recta
 		dm.paintCardItemDragGhost(canvas, bounds)
 	}
 
+	// 8. 卡片拖拽虚框（不移动容器，在桌面层绘制）
+	if dm.dragOutlineCard != nil {
+		dm.paintCardDragOutline(canvas, bounds)
+	}
+
 	return nil
 }
 
@@ -493,6 +505,33 @@ func (dm *DesktopMode) paintCardItemDragGhost(canvas *walk.Canvas, _ walk.Rectan
 				walk.TextCenter|walk.TextSingleLine)
 		}
 	}
+}
+
+// paintCardDragOutline 绘制卡片拖拽虚框（白色虚线边框）
+func (dm *DesktopMode) paintCardDragOutline(canvas *walk.Canvas, bounds walk.Rectangle) {
+	var tl, br win.POINT
+	tl.X = int32(dm.dragOutlineX)
+	tl.Y = int32(dm.dragOutlineY)
+	br.X = int32(dm.dragOutlineX + dm.dragOutlineW)
+	br.Y = int32(dm.dragOutlineY + dm.dragOutlineH)
+	win.ScreenToClient(dm.bodyWidget.Handle(), &tl)
+	win.ScreenToClient(dm.bodyWidget.Handle(), &br)
+
+	rect := walk.Rectangle{
+		X: int(tl.X), Y: int(tl.Y),
+		Width: int(br.X - tl.X), Height: int(br.Y - tl.Y),
+	}
+
+	pen, err := walk.NewCosmeticPen(walk.PenDash, walk.RGB(0xFF, 0xFF, 0xFF))
+	if err != nil {
+		return
+	}
+	defer pen.Dispose()
+
+	canvas.DrawLinePixels(pen, walk.Point{X: rect.X, Y: rect.Y}, walk.Point{X: rect.X + rect.Width, Y: rect.Y})
+	canvas.DrawLinePixels(pen, walk.Point{X: rect.X, Y: rect.Y + rect.Height}, walk.Point{X: rect.X + rect.Width, Y: rect.Y + rect.Height})
+	canvas.DrawLinePixels(pen, walk.Point{X: rect.X, Y: rect.Y}, walk.Point{X: rect.X, Y: rect.Y + rect.Height})
+	canvas.DrawLinePixels(pen, walk.Point{X: rect.X + rect.Width, Y: rect.Y}, walk.Point{X: rect.X + rect.Width, Y: rect.Y + rect.Height})
 }
 
 // loadDragGhostBmp 预加载拖拽 ghost bitmap（避免每次重绘重新提取图标）
@@ -905,6 +944,23 @@ func (dm *DesktopMode) onCardIconDragEnd(card *GroupCard, screenX, screenY int) 
 	dm.clearDropState()
 }
 
+// onCardDragOutline 卡片拖拽虚框位置更新
+func (dm *DesktopMode) onCardDragOutline(card *GroupCard, newX, newY int) {
+	dm.dragOutlineCard = card
+	dm.dragOutlineX = newX
+	dm.dragOutlineY = newY
+	dm.dragOutlineW = card.pixelW()
+	dm.dragOutlineH = card.pixelH()
+	dm.dragThrottleInvalidate()
+}
+
+// onCardDragOutlineEnd 卡片拖拽结束虚框清除
+func (dm *DesktopMode) onCardDragOutlineEnd(card *GroupCard) {
+	card.SetOnCardDragOutline(nil)
+	dm.dragOutlineCard = nil
+	dm.bodyWidget.Invalidate()
+}
+
 // dragThrottleInvalidate 拖拽期间节流重绘（最多 ~33fps），避免连续完整重绘
 func (dm *DesktopMode) dragThrottleInvalidate() {
 	if time.Since(dm.lastDragMoveTime) < 30*time.Millisecond {
@@ -950,6 +1006,7 @@ func (dm *DesktopMode) clearDropState() {
 	dm.dropToDesktop = false
 	dm.iconDragSourceCard = nil
 	dm.iconDragSourceGroup = ""
+	dm.dragOutlineCard = nil
 }
 
 // findCardAtPoint 查找屏幕坐标点所在的卡片
@@ -1042,6 +1099,10 @@ func (dm *DesktopMode) setupCardActions(card *GroupCard, grp config.Group) {
 			}
 		}
 	})
+
+	// 卡片拖拽虚框回调
+	card.SetOnCardDragOutline(dm.onCardDragOutline)
+	card.SetOnCardDragOutlineEnd(dm.onCardDragOutlineEnd)
 	card.SetOnRename(func(name string) {
 		newName, ok := ShowInputDialog(dm.mainWindow, "重命名分组", "请输入新名称：", name)
 		if ok && newName != "" && newName != name {

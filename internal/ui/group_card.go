@@ -55,6 +55,8 @@ type GroupCard struct {
 	dragScreenY   int
 	dragCardX     int // 按下时卡片的屏幕绝对坐标
 	dragCardY     int
+	dragNewX      int // 拖拽中新位置（不移动容器，给 DesktopMode 画虚框用）
+	dragNewY      int
 
 	// 缩放状态
 	isResizing   bool
@@ -103,6 +105,9 @@ type GroupCard struct {
 
 	// 当此卡片收到 MouseMove 时通知 DesktopMode（用于清除其它卡片悬停）
 	onMouseMove func()
+	// 卡片拖拽虚框位置更新回调（DesktopMode 在桌面层画虚框）
+	onCardDragOutline     func(card *GroupCard, newX, newY int)
+	onCardDragOutlineEnd  func(card *GroupCard)
 }
 
 // ResizeEdge 缩放方向
@@ -293,7 +298,23 @@ func (gc *GroupCard) setupMouseEvents() {
 		}
 		gc.isDragging = false
 		if isDragEnd {
-			// 拖拽结束后触发重绘，清除残留痕迹
+			// 通知 DesktopMode 清除虚框
+			if gc.onCardDragOutlineEnd != nil {
+				gc.onCardDragOutlineEnd(gc)
+			}
+			// 应用拖拽新位置到容器
+			gc.position.X = float64(gc.dragNewX) / float64(gc.workW)
+			gc.position.Y = float64(gc.dragNewY) / float64(gc.workH)
+			pixW := gc.pixelW()
+			pixH := gc.pixelH()
+			gc.container.SetBoundsPixels(walk.Rectangle{
+				X: gc.dragNewX, Y: gc.dragNewY,
+				Width: pixW, Height: pixH,
+			})
+			gc.bodyWidget.SetBoundsPixels(walk.Rectangle{
+				X: 0, Y: 0, Width: pixW, Height: pixH,
+			})
+			gc.manager.UpdateGroupPosition(gc.groupName, gc.position.X, gc.position.Y)
 			gc.bodyWidget.Invalidate()
 		}
 	})
@@ -513,7 +534,7 @@ func (gc *GroupCard) pixelH() int {
 	return int(gc.size.Height * float64(gc.workH))
 }
 
-// handleDrag 处理拖拽
+// handleDrag 处理拖拽（不移动容器，只更新虚框位置）
 func (gc *GroupCard) handleDrag(x, y int) {
 	if !gc.isDragging {
 		return
@@ -531,23 +552,13 @@ func (gc *GroupCard) handleDrag(x, y int) {
 		return
 	}
 
-	// 根据屏幕偏移量计算卡片新位置
-	newCardX := gc.dragCardX + dx
-	newCardY := gc.dragCardY + dy
+	// 计算新位置但不移动容器
+	gc.dragNewX = gc.dragCardX + dx
+	gc.dragNewY = gc.dragCardY + dy
 
-	gc.position.X = float64(newCardX) / float64(gc.workW)
-	gc.position.Y = float64(newCardY) / float64(gc.workH)
-
-	pixW := gc.pixelW()
-	pixH := gc.pixelH()
-
-	// bodyWidget 是 container 的子控件，会跟随自动移动
-	gc.container.SetBoundsPixels(walk.Rectangle{
-		X: newCardX, Y: newCardY,
-		Width: pixW, Height: pixH,
-	})
-
-	gc.manager.UpdateGroupPosition(gc.groupName, gc.position.X, gc.position.Y)
+	if gc.onCardDragOutline != nil {
+		gc.onCardDragOutline(gc, gc.dragNewX, gc.dragNewY)
+	}
 }
 
 // updateCursor 根据位置更新光标
@@ -1115,4 +1126,14 @@ func (gc *GroupCard) SetOnIconDragEnd(fn func(card *GroupCard, screenX, screenY 
 // SetOnMouseMove 设置鼠标移动通知回调（用于清除其它卡片悬停）
 func (gc *GroupCard) SetOnMouseMove(fn func()) {
 	gc.onMouseMove = fn
+}
+
+// SetOnCardDragOutline 设置卡片拖拽虚框回调
+func (gc *GroupCard) SetOnCardDragOutline(fn func(card *GroupCard, newX, newY int)) {
+	gc.onCardDragOutline = fn
+}
+
+// SetOnCardDragOutlineEnd 设置卡片拖拽结束回调
+func (gc *GroupCard) SetOnCardDragOutlineEnd(fn func(card *GroupCard)) {
+	gc.onCardDragOutlineEnd = fn
 }
