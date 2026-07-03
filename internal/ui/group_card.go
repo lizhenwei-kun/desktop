@@ -305,7 +305,8 @@ func (gc *GroupCard) setupMouseEvents() {
 			}
 			gc.iconDragMouseX = x
 			gc.iconDragMouseY = y
-			gc.bodyWidget.Invalidate()
+			// 拖拽中不重绘卡片（卡面内容不变，ghost 由 DesktopMode 绘制）
+			// 这让拖拽非常流畅——底层窗口完全不重绘
 
 			if gc.onIconDragMove != nil {
 				var screenPt win.POINT

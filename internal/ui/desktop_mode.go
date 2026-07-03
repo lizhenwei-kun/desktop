@@ -76,6 +76,9 @@ type DesktopMode struct {
 
 	// 拖拽 ghost 缓存（避免每次重绘重新提取图标）
 	ghostBmp *walk.Bitmap
+
+	// 拖拽重绘节流（避免每秒几十次完整重绘）
+	lastDragMoveTime time.Time
 }
 
 // NewDesktopMode 创建桌面模式
@@ -172,7 +175,6 @@ func (dm *DesktopMode) Setup() error {
 		if dm.freeItemDragActive {
 			dm.freeItemDragMouseX = x
 			dm.freeItemDragMouseY = y
-			dm.bodyWidget.Invalidate()
 
 			var screenPt win.POINT
 			screenPt.X = int32(x)
@@ -782,6 +784,7 @@ func (dm *DesktopMode) checkFreeItemDragStart() {
 		dm.freeItemDragMouseX = int(clientPt.X)
 		dm.freeItemDragMouseY = int(clientPt.Y)
 		dm.loadDragGhostBmp(dm.freeItemDragItem.Path)
+		dm.lastDragMoveTime = time.Now()
 		dm.bodyWidget.Invalidate()
 
 		win.SetCapture(dm.bodyWidget.Handle())
@@ -850,11 +853,13 @@ func (dm *DesktopMode) onCardIconDragStart(card *GroupCard, idx int, item group.
 	dm.iconDragItem = item
 	dm.iconDragSourceGroup = card.groupName
 	dm.loadDragGhostBmp(item.Path)
-	// 用当前光标实时位置（而非 3 秒前 MouseDown 的坐标）
+	// 用当前光标实时位置
 	var curPt win.POINT
 	win.GetCursorPos(&curPt)
 	dm.iconDragScreenX = int(curPt.X)
 	dm.iconDragScreenY = int(curPt.Y)
+	// 首次显示 ghost 无需节流
+	dm.lastDragMoveTime = time.Now()
 	dm.bodyWidget.Invalidate()
 }
 
@@ -900,6 +905,15 @@ func (dm *DesktopMode) onCardIconDragEnd(card *GroupCard, screenX, screenY int) 
 	dm.clearDropState()
 }
 
+// dragThrottleInvalidate 拖拽期间节流重绘（最多 ~33fps），避免连续完整重绘
+func (dm *DesktopMode) dragThrottleInvalidate() {
+	if time.Since(dm.lastDragMoveTime) < 30*time.Millisecond {
+		return
+	}
+	dm.lastDragMoveTime = time.Now()
+	dm.bodyWidget.Invalidate()
+}
+
 // updateDropTarget 更新当前拖放目标
 func (dm *DesktopMode) updateDropTarget(screenX, screenY int) {
 	// 清除旧目标的高亮
@@ -924,7 +938,7 @@ func (dm *DesktopMode) updateDropTarget(screenX, screenY int) {
 		dm.dropToDesktop = true
 	}
 
-	dm.bodyWidget.Invalidate()
+	dm.dragThrottleInvalidate()
 }
 
 // clearDropState 清除拖放状态
