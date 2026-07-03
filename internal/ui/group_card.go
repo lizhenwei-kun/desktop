@@ -361,6 +361,9 @@ func (gc *GroupCard) checkDragStart() {
 	time.Sleep(longPressDragDelay)
 	if gc.isPressed {
 		gc.isDragging = true
+		// 初始化虚框位置为当前位置（防止未移动直接释放时位置为0）
+		gc.dragNewX = gc.pixelX()
+		gc.dragNewY = gc.pixelY()
 	}
 }
 
