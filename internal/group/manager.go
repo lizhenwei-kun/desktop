@@ -42,14 +42,14 @@ func (m *Manager) SetFreeItemPosition(path string, pos config.Position) {
 	config.Save(m.cfg)
 }
 
-// GetFreeItemPosition 获取未分组项的相对位置，不存在则使用默认值
+// GetFreeItemPosition 获取未分组项的相对位置，不存在则返回 {-1,-1} 表示待分配
 func (m *Manager) GetFreeItemPosition(path string) config.Position {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if pos, ok := m.cfg.UngroupedPositions[path]; ok {
 		return pos
 	}
-	return config.Position{}
+	return config.Position{X: -1, Y: -1}
 }
 
 // RemoveFreeItemPosition 删除未分组项的位置记录（移入分组时调用）
@@ -136,13 +136,21 @@ func (m *Manager) GetGroupItems(groupName string) []GroupItem {
 }
 
 // GetUngroupedItems 获取未分组的项目
+// 包括：gName 为空的项目，以及 gName 对应的 Group 卡片不存在的项目（孤儿项）
 func (m *Manager) GetUngroupedItems() []GroupItem {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
+	// 构建现有分组名集合
+	existingGroups := make(map[string]bool, len(m.cfg.Groups))
+	for _, g := range m.cfg.Groups {
+		existingGroups[g.Name] = true
+	}
+
 	var items []GroupItem
 	for path, gName := range m.cfg.DesktopItems {
-		if gName == "" {
+		// 未分组 或 分组卡片不存在的项目
+		if gName == "" || !existingGroups[gName] {
 			name := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 			items = append(items, GroupItem{Path: path, Name: name})
 		}
@@ -385,6 +393,9 @@ func (m *Manager) UpdateGroupSize(name string, w, h float64) {
 }
 
 // UpdateGroupColor 更新分组颜色并持久化
+// 注意：不调用 notifyChange，因为调用方（onColor 回调）之后会调用 refreshCards() 完成完整 UI 刷新。
+// 避免 notifyChange 通过 Synchronize 投递 dm.Refresh() 到消息队列后，
+// 与 refreshCards() 产生时序冲突（桌面背景覆盖新卡片）。
 func (m *Manager) UpdateGroupColor(name, color string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -396,7 +407,6 @@ func (m *Manager) UpdateGroupColor(name, color string) {
 		}
 	}
 	m.save()
-	m.notifyChange()
 }
 
 // ReloadDesktopItems 从 Windows 桌面目录重新同步内容

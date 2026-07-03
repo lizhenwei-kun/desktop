@@ -29,6 +29,11 @@ func TileHeight() int { return desktopIconItemHeight }
 // end用 Win32 GetTextExtentPoint32 真实测量文本尺寸，
 // 确保磁贴宽度能容纳 4 个汉字或 9 个西文字符（取较大值）。
 func ensureTileSizeMeasured(_ *walk.Canvas) {
+	// 检查是否需要强制重新测量（图标大小变更后）
+	if isTileRemeasureNeeded() {
+		// 重置 sync.Once，允许重新测量
+		tileSizeOnce = sync.Once{}
+	}
 	tileSizeOnce.Do(func() {
 		font := GetIconFont()
 		if font == nil {

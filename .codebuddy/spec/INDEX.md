@@ -20,6 +20,7 @@
 | [spec-lifecycle.md](./spec-lifecycle.md) | 三态生命周期 | P0 |
 | [spec-logger.md](./spec-logger.md) | 日志封装规范 | P1 |
 | [spec-tile-size-measurement.md](./spec-tile-size-measurement.md) | 磁贴尺寸测量重构经验总结 | - |
+| [spec-context-menu.md](./spec-context-menu.md) | 桌面右键菜单 / 注册表 Shell 集成 | P0 |
 
 ## 全局数据流
 

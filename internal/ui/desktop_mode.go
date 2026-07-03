@@ -6,6 +6,7 @@ import (
 	"image/color"
 	"os"
 	"runtime/debug"
+	"syscall"
 	"time"
 
 	"github.com/lxn/walk"
@@ -86,6 +87,21 @@ type DesktopMode struct {
 	dragOutlineCard    *GroupCard
 	dragOutlineW       int
 	dragOutlineH       int
+
+	// 右键菜单状态
+	isAutoArrange      bool
+	isAlignToGrid      bool
+	isShowDesktopIcons bool
+	sortBy             int
+
+	// 注册表菜单缓存（供命令处理用）
+	cachedDesktopRegItems    []registryShellItem
+	cachedDesktopRegCmdStart int
+	cachedFileRegItems       []registryShellItem
+	cachedFileRegCmdStart    int
+
+	// 右键窗口子类化回调地址（用于卸载）
+	rClickCB uintptr
 }
 
 // NewDesktopMode 创建桌面模式
@@ -172,6 +188,10 @@ func (dm *DesktopMode) Setup() error {
 
 	// 鼠标事件
 	dm.bodyWidget.MouseDown().Attach(dm.handleDesktopMouseDown)
+
+	// 安装窗口子类化，拦截 WM_RBUTTONDOWN 处理右键菜单
+	// （walk 的 MouseDown 事件对右击返回的 button=0，无法正确区分）
+	dm.installRightClickHandler()
 
 	dm.bodyWidget.MouseMove().Attach(func(x, y int, button walk.MouseButton) {
 		// 光标在桌面上，清除所有卡片的悬停状态
@@ -307,6 +327,9 @@ func (dm *DesktopMode) delayedSetup() {
 		// 强制重新应用卡片的绝对定位
 		dm.reapplyCardPositions()
 
+		// 重新加载壁纸（窗口尺寸已最终确定，确保壁纸按正确尺寸加载）
+		dm.loadWallpaper()
+
 		// 手动触发一次完整重绘
 		dm.bodyWidget.Invalidate()
 
@@ -320,13 +343,17 @@ func (dm *DesktopMode) delayedSetup() {
 
 		dm.lifecycle.MarkReady()
 
-		// 延迟再次确认卡片位置（防止异步布局覆盖）
+		// 延迟再次确认卡片位置并刷新桌面（防止异步布局覆盖，确保未分组图标正确显示）
 		go func() {
 			defer recoverGoroutine("postLayoutCardFix")
 			time.Sleep(200 * time.Millisecond)
 			dm.mainWindow.Synchronize(func() {
 				logger.Debug("postLayoutCardFix: reapply after 200ms delay, cards=%d", len(dm.cards))
 				dm.reapplyCardPositions()
+				// 重新加载壁纸和桌面项（与右键刷新效果一致），确保初始显示完整
+				dm.loadWallpaper()
+				dm.manager.ReloadDesktopItems()
+				dm.bodyWidget.Invalidate()
 			})
 		}()
 	})
@@ -570,6 +597,12 @@ func (dm *DesktopMode) loadWallpaper() {
 		return
 	}
 
+	// 释放旧 bitmap，避免 GDI 资源泄漏
+	if dm.wallpaperBmp != nil {
+		dm.wallpaperBmp.Dispose()
+		dm.wallpaperBmp = nil
+	}
+
 	// 使用 Go 标准库加载壁纸，按 Fill 模式裁剪到工作区尺寸
 	img := LoadWallpaperImage(dm.workW, dm.workH)
 	if img == nil {
@@ -711,7 +744,19 @@ func (dm *DesktopMode) getOccupiedCells(exceptPath string) map[[2]int]bool {
 func (dm *DesktopMode) getFreeItemPixelPos(path string, fallbackIdx int) (int, int) {
 	pos := dm.manager.GetFreeItemPosition(path)
 	if pos.X < 0 || pos.Y < 0 {
-		// 待分配：从左上角(0,0)开始，从上向下再从左到右找第一个空位
+		// 待分配：需要 bodyWidget 有有效尺寸才能正确分配
+		bounds := dm.bodyWidget.ClientBoundsPixels()
+		if bounds.Width < 100 || bounds.Height < 100 {
+			// bodyWidget 尚未布局完成，使用 fallbackIdx 临时计算位置，不保存
+			maxRow := dm.workH / freeCellH()
+			if maxRow < 1 {
+				maxRow = 1
+			}
+			col := fallbackIdx / maxRow
+			row := fallbackIdx % maxRow
+			return gridToPixel(col, row)
+		}
+		// 从左上角(0,0)开始，从上向下再从左到右找第一个空位
 		col, row := dm.findFreeGridCell("", 0, fallbackIdx)
 		// 保存分配的位置
 		relPos := dm.gridToRel(col, row)
@@ -760,9 +805,15 @@ func (dm *DesktopMode) paintFreeItems(canvas *walk.Canvas, bounds walk.Rectangle
 		return
 	}
 
+	// 如果 bounds 无效（布局未完成），使用 workH 作为有效高度
+	effectiveH := bounds.Height
+	if effectiveH < 100 {
+		effectiveH = dm.workH
+	}
+
 	for idx, item := range items {
 		px, py := dm.getFreeItemPixelPos(item.Path, idx)
-		if py+desktopIconItemHeight > bounds.Height {
+		if py+desktopIconItemHeight > effectiveH {
 			continue
 		}
 		gc := &GroupCard{executor: dm.executor}
@@ -770,7 +821,7 @@ func (dm *DesktopMode) paintFreeItems(canvas *walk.Canvas, bounds walk.Rectangle
 	}
 }
 
-// handleDesktopMouseDown 处理桌面鼠标按下事件
+// handleDesktopMouseDown 处理桌面鼠标左键按下事件
 func (dm *DesktopMode) handleDesktopMouseDown(x, y int, button walk.MouseButton) {
 	if button != walk.LeftButton {
 		return
@@ -804,6 +855,81 @@ func (dm *DesktopMode) handleDesktopMouseDown(x, y int, button walk.MouseButton)
 			return
 		}
 	}
+}
+
+// ==================== 右键菜单：窗口子类化 ====================
+
+// rclickSubclassID 用于右键子类化的唯一ID
+const rclickSubclassID = 2
+
+// installRightClickHandler 安装右键点击处理器
+// 通过窗口子类化拦截 WM_RBUTTONDOWN，避免 walk MouseDown 事件的 button 值错误
+func (dm *DesktopMode) installRightClickHandler() {
+	hwnd := dm.bodyWidget.Handle()
+	if hwnd == 0 {
+		return
+	}
+
+	// 创建子类化回调，通过闭包捕获 dm
+	dm.rClickCB = syscall.NewCallback(func(hwnd uintptr, msg uint32, wParam, lParam, uIDSubclass, dwRefData uintptr) uintptr {
+		if msg == win.WM_RBUTTONDOWN {
+			// 获取点击坐标（lParam 包含 x,y）
+			x := int(win.GET_X_LPARAM(lParam))
+			y := int(win.GET_Y_LPARAM(lParam))
+
+			// 转屏幕坐标
+			var pt win.POINT
+			pt.X = int32(x)
+			pt.Y = int32(y)
+			win.ClientToScreen(win.HWND(hwnd), &pt)
+			screenX := int(pt.X)
+			screenY := int(pt.Y)
+
+			// 检查是否点击了未分组图标
+			items := dm.manager.GetUngroupedItems()
+			hitIcon := false
+			for i, item := range items {
+				ix, iy := dm.getFreeItemPixelPos(item.Path, i)
+				if x >= ix && x <= ix+desktopIconItemWidth &&
+					y >= iy && y <= iy+desktopIconItemHeight {
+					hitIcon = true
+					dm.ShowIconContextMenu(dm.mainWindow.Handle(), dm.manager, dm.executor, item, screenX, screenY)
+					break
+				}
+			}
+
+			if !hitIcon {
+				dm.ShowDesktopContextMenu(dm.mainWindow.Handle(), screenX, screenY)
+			}
+			return 0 // 已处理，不再传递
+		}
+		// 其他消息交给默认处理
+		ret, _, _ := procDefSubclassProc.Call(hwnd, uintptr(msg), wParam, lParam)
+		return ret
+	})
+
+	procSetWindowSubclass.Call(
+		uintptr(hwnd),
+		dm.rClickCB,
+		rclickSubclassID,
+		0,
+	)
+}
+
+// uninstallRightClickHandler 卸载右键点击处理器
+func (dm *DesktopMode) uninstallRightClickHandler() {
+	if dm.rClickCB == 0 {
+		return
+	}
+	hwnd := dm.bodyWidget.Handle()
+	if hwnd == 0 {
+		return
+	}
+	procRemoveWindowSubclass.Call(
+		uintptr(hwnd),
+		dm.rClickCB,
+		rclickSubclassID,
+	)
 }
 
 // checkFreeItemDragStart 检测未分组图标长按开始拖拽
@@ -1110,16 +1236,28 @@ func (dm *DesktopMode) setupCardActions(card *GroupCard, grp config.Group) {
 		}
 	})
 	card.SetOnColor(func(name string) {
-		color, ok := ShowColorDialog(dm.mainWindow, "修改颜色", PresetColors)
-		if ok && color != "" {
-			dm.manager.UpdateGroupColor(name, color)
-			dm.refreshCards()
+		colorStr, ok := ShowColorDialog(dm.mainWindow, "修改颜色", PresetColors)
+		if ok && colorStr != "" {
+			dm.manager.UpdateGroupColor(name, colorStr)
+			// 直接更新卡片颜色，避免 refreshCards 销毁重建导致 Z-order 问题
+			card.SetGroupColor(colorStr)
+			dm.bodyWidget.Invalidate()
 		}
 	})
 	card.SetOnDelete(func(name string) {
 		if ShowConfirmDialog(dm.mainWindow, "删除分组", "确定要删除分组「"+name+"」吗？\n分组内的项目将移回桌面。") {
 			dm.manager.DeleteGroup(name)
-			dm.refreshCards()
+			// 只移除被删除的卡片，其他卡片不动（避免 refreshCards 销毁重建的 Z-order 问题）
+			for i, c := range dm.cards {
+				if c.groupName == name {
+					c.Cleanup()
+					c.Container().Dispose()
+					dm.cards = append(dm.cards[:i], dm.cards[i+1:]...)
+					break
+				}
+			}
+			// 重绘桌面，被释放的图标会由 getFreeItemPixelPos 自动分配网格位置显示
+			dm.bodyWidget.Invalidate()
 		}
 	})
 }

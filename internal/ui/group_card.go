@@ -58,13 +58,17 @@ type GroupCard struct {
 	dragNewX      int // 拖拽中新位置（不移动容器，给 DesktopMode 画虚框用）
 	dragNewY      int
 
-	// 缩放状态
+	// 缩放状态（拖拽中只画边框，结束时才应用）
 	isResizing   bool
 	resizeEdge   ResizeEdge
 	resizeStartX int
 	resizeStartY int
 	resizeStartW int
 	resizeStartH int
+	resizeNewX   int // 拖拽中计算的新的左上角 X（结束时应用）
+	resizeNewY   int // 拖拽中计算的新的左上角 Y
+	resizeNewW   int // 拖拽中计算的新宽度
+	resizeNewH   int // 拖拽中计算的新高度
 
 	// 回调
 	onPositionChanged func(name string, x, y float64)
@@ -440,9 +444,14 @@ func (gc *GroupCard) startResize(x, y int, edge ResizeEdge) {
 	gc.resizeStartY = y
 	gc.resizeStartW = int(gc.size.Width * float64(gc.workW))
 	gc.resizeStartH = int(gc.size.Height * float64(gc.workH))
+	// 初始化新值为当前值（防止未移动直接释放时位置为0）
+	gc.resizeNewX = int(gc.position.X * float64(gc.workW))
+	gc.resizeNewY = int(gc.position.Y * float64(gc.workH))
+	gc.resizeNewW = gc.resizeStartW
+	gc.resizeNewH = gc.resizeStartH
 }
 
-// handleResize 处理缩放
+// handleResize 处理缩放（仅更新边框位置，不实际改变容器/body尺寸）
 func (gc *GroupCard) handleResize(x, y int) {
 	dx := x - gc.resizeStartX
 	dy := y - gc.resizeStartY
@@ -489,18 +498,34 @@ func (gc *GroupCard) handleResize(x, y int) {
 	newW = ClampInt(newW, cardMinWidth, 2000)
 	newH = ClampInt(newH, cardMinHeight, 2000)
 
-	// 转回相对坐标
-	gc.size.Width = float64(newW) / float64(gc.workW)
-	gc.size.Height = float64(newH) / float64(gc.workH)
-	gc.position.X = float64(newX) / float64(gc.workW)
-	gc.position.Y = float64(newY) / float64(gc.workH)
+	// 仅保存计算结果（不改变容器/body尺寸），触发重绘显示边框
+	gc.resizeNewX = newX
+	gc.resizeNewY = newY
+	gc.resizeNewW = newW
+	gc.resizeNewH = newH
+
+	gc.bodyWidget.Invalidate()
+}
+
+// endResize 结束缩放：实际应用容器/body尺寸
+func (gc *GroupCard) endResize() {
+	gc.isResizing = false
+
+	// 将拖拽中累积的新尺寸应用到实际容器
+	gc.size.Width = float64(gc.resizeNewW) / float64(gc.workW)
+	gc.size.Height = float64(gc.resizeNewH) / float64(gc.workH)
+	gc.position.X = float64(gc.resizeNewX) / float64(gc.workW)
+	gc.position.Y = float64(gc.resizeNewY) / float64(gc.workH)
 
 	gc.container.SetBoundsPixels(walk.Rectangle{
-		X: newX, Y: newY, Width: newW, Height: newH,
+		X: gc.resizeNewX, Y: gc.resizeNewY, Width: gc.resizeNewW, Height: gc.resizeNewH,
 	})
 	gc.bodyWidget.SetBoundsPixels(walk.Rectangle{
-		X: 0, Y: 0, Width: newW, Height: newH,
+		X: 0, Y: 0, Width: gc.resizeNewW, Height: gc.resizeNewH,
 	})
+
+	gc.manager.UpdateGroupSize(gc.groupName, gc.size.Width, gc.size.Height)
+	gc.manager.UpdateGroupPosition(gc.groupName, gc.position.X, gc.position.Y)
 
 	if gc.onSizeChanged != nil {
 		gc.onSizeChanged(gc.groupName, gc.size.Width, gc.size.Height)
@@ -508,13 +533,8 @@ func (gc *GroupCard) handleResize(x, y int) {
 	if gc.onPositionChanged != nil {
 		gc.onPositionChanged(gc.groupName, gc.position.X, gc.position.Y)
 	}
-}
 
-// endResize 结束缩放
-func (gc *GroupCard) endResize() {
-	gc.isResizing = false
-	gc.manager.UpdateGroupSize(gc.groupName, gc.size.Width, gc.size.Height)
-	gc.manager.UpdateGroupPosition(gc.groupName, gc.position.X, gc.position.Y)
+	gc.bodyWidget.Invalidate()
 }
 
 // pixelX 获取当前像素X坐标
@@ -720,6 +740,12 @@ func (gc *GroupCard) paintBody(canvas *walk.Canvas, updateBounds walk.Rectangle)
 		return nil
 	}
 
+	// 缩放拖拽中只画边框，不画实际内容
+	if gc.isResizing {
+		gc.paintResizeOutline(canvas, bounds)
+		return nil
+	}
+
 	// 绘制半透明背景
 	gc.paintBackground(canvas, bounds)
 
@@ -763,6 +789,35 @@ func (gc *GroupCard) paintDragOutline(canvas *walk.Canvas, bounds walk.Rectangle
 	canvas.DrawLinePixels(pen, walk.Point{X: 0, Y: bounds.Height - 1}, walk.Point{X: bounds.Width, Y: bounds.Height - 1})
 	canvas.DrawLinePixels(pen, walk.Point{X: 0, Y: 0}, walk.Point{X: 0, Y: bounds.Height})
 	canvas.DrawLinePixels(pen, walk.Point{X: bounds.Width - 1, Y: 0}, walk.Point{X: bounds.Width - 1, Y: bounds.Height})
+}
+
+// paintResizeOutline 绘制缩放拖拽虚框（缩放过程中只显示边框，不改变实际大小）
+func (gc *GroupCard) paintResizeOutline(canvas *walk.Canvas, bounds walk.Rectangle) {
+	// 计算新边框在 bodyWidget 客户区中的相对位置
+	curPixelX := gc.pixelX()
+	curPixelY := gc.pixelY()
+
+	// 新边框左上角相对于 bodyWidget 左上角的偏移
+	outlineX := gc.resizeNewX - curPixelX
+	outlineY := gc.resizeNewY - curPixelY
+	outlineW := gc.resizeNewW
+	outlineH := gc.resizeNewH
+
+	// 用卡片颜色画 2px 实线边框
+	pen, err := walk.NewCosmeticPen(walk.PenSolid, walk.RGB(gc.groupColor.R, gc.groupColor.G, gc.groupColor.B))
+	if err != nil {
+		return
+	}
+	defer pen.Dispose()
+
+	// 上
+	canvas.DrawLinePixels(pen, walk.Point{X: outlineX, Y: outlineY}, walk.Point{X: outlineX + outlineW, Y: outlineY})
+	// 下
+	canvas.DrawLinePixels(pen, walk.Point{X: outlineX, Y: outlineY + outlineH}, walk.Point{X: outlineX + outlineW, Y: outlineY + outlineH})
+	// 左
+	canvas.DrawLinePixels(pen, walk.Point{X: outlineX, Y: outlineY}, walk.Point{X: outlineX, Y: outlineY + outlineH})
+	// 右
+	canvas.DrawLinePixels(pen, walk.Point{X: outlineX + outlineW, Y: outlineY}, walk.Point{X: outlineX + outlineW, Y: outlineY + outlineH})
 }
 
 // paintDragGhost 绘制拖拽ghost（半透明跟随鼠标）
@@ -1027,6 +1082,14 @@ func (gc *GroupCard) SetOnRename(fn func(name string)) {
 // SetOnColor 设置修改颜色回调
 func (gc *GroupCard) SetOnColor(fn func(name string)) {
 	gc.onColor = fn
+}
+
+// SetGroupColor 直接更新卡片颜色并重绘（避免销毁重建）
+func (gc *GroupCard) SetGroupColor(colorStr string) {
+	gc.groupColor = ParseHexColor(colorStr)
+	if gc.bodyWidget != nil {
+		gc.bodyWidget.Invalidate()
+	}
 }
 
 // SetOnDelete 设置删除回调
