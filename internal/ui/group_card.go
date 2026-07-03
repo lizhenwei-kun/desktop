@@ -302,6 +302,7 @@ func (gc *GroupCard) setupMouseEvents() {
 			}
 			gc.iconDragMouseX = x
 			gc.iconDragMouseY = y
+			gc.bodyWidget.Invalidate()
 
 			if gc.onIconDragMove != nil {
 				var screenPt win.POINT
