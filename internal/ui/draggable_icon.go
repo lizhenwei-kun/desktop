@@ -19,7 +19,7 @@ const (
 	desktopIconLineHeight = 24
 	desktopIconGap        = 8  // 图标磁贴间距
 	longPressDragDelay    = 3 * time.Second  // 卡片拖拽延迟（标题栏长按）
-	iconDragDelay         = 1 * time.Second  // 图标拖拽延迟（卡片内/未分组图标）
+	iconDragDelay         = 300 * time.Millisecond  // 图标拖拽延迟（卡片内/未分组图标）
 )
 
 // DraggableIcon 可拖动图标组件
