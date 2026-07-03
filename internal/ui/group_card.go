@@ -297,9 +297,11 @@ func (gc *GroupCard) setupMouseEvents() {
 
 	gc.bodyWidget.MouseMove().Attach(func(x, y int, button walk.MouseButton) {
 		if gc.iconDragActive {
+			if gc.iconDragMouseX == x && gc.iconDragMouseY == y {
+				return
+			}
 			gc.iconDragMouseX = x
 			gc.iconDragMouseY = y
-			gc.bodyWidget.Invalidate()
 
 			if gc.onIconDragMove != nil {
 				var screenPt win.POINT
