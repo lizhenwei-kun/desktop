@@ -2,6 +2,7 @@ package desktop
 
 import (
 	"syscall"
+	"time"
 	"unsafe"
 
 	"github.com/lxn/walk"
@@ -81,7 +82,14 @@ func (s *ContextMenuState) ShowDesktopContextMenu(hwnd win.HWND, x, y int) uintp
 		appendMenu(newMenu, MF_STRING, idNewBitmap, syscall.StringToUTF16Ptr("位图图像(&B)"))
 		appendMenu(hMenu, MF_POPUP|MF_STRING, uintptr(newMenu), syscall.StringToUTF16Ptr("新建(&W)"))
 	}
-	regItems := ui.ReadDesktopRegistryMenu()
+	// 使用缓存的注册表菜单项，10 秒内不重新读取（避免每次右键都读注册表）
+	regItems := s.CachedDesktopRegItems
+	if s.registryCacheTime.IsZero() || time.Since(s.registryCacheTime) > 10*time.Second {
+		regItems = ui.ReadDesktopRegistryMenu()
+		s.registryCacheTime = time.Now()
+		s.CachedDesktopRegItems = regItems
+		s.CachedDesktopRegCmdStart = ui.MaxCmdIDDynamic
+	}
 	if len(regItems) > 0 {
 		appendMenuSeparator(hMenu)
 		nextID := ui.MaxCmdIDDynamic
@@ -89,8 +97,6 @@ func (s *ContextMenuState) ShowDesktopContextMenu(hwnd win.HWND, x, y int) uintp
 			appendMenu(hMenu, MF_STRING, uintptr(nextID), syscall.StringToUTF16Ptr(item.Name))
 			nextID++
 		}
-		s.CachedDesktopRegItems = regItems
-		s.CachedDesktopRegCmdStart = ui.MaxCmdIDDynamic
 	}
 	appendMenuSeparator(hMenu)
 	appendMenu(hMenu, MF_STRING, idDisplaySettings, syscall.StringToUTF16Ptr("显示设置(&D)"))
@@ -113,7 +119,7 @@ func (s *ContextMenuState) handleDesktopCmd(cmd int) {
 	if cmd >= s.CachedDesktopRegCmdStart && cmd < s.CachedDesktopRegCmdStart+len(s.CachedDesktopRegItems) {
 		idx := cmd - s.CachedDesktopRegCmdStart
 		if idx >= 0 && idx < len(s.CachedDesktopRegItems) {
-			ui.ExecuteRegistryCommand(s.CachedDesktopRegItems[idx].Command, "")
+			ui.ExecuteRegistryCommand(s.CachedDesktopRegItems[idx].Command, ui.GetDesktopPath())
 		}
 		return
 	}
@@ -181,7 +187,7 @@ func (s *ContextMenuState) ShowIconContextMenu(hwnd win.HWND, mgr *group.Manager
 	ici.hwnd = uintptr(hwnd)
 	ici.lpVerb = uintptr(cmd - 1)
 	ici.nShow = 1
-	ici.lpDirectory = uintptr(unsafe.Pointer(pathPtr))
+	ici.lpDirectory = 0 // NULL，让 Shell 扩展自行处理目录
 	syscall.SyscallN(cm.vtbl.InvokeCommand, pContextMenu, uintptr(unsafe.Pointer(&ici)))
 }
 
@@ -191,6 +197,14 @@ func (s *ContextMenuState) InstallRightClickHandler(bodyWidget *walk.CustomWidge
 	if hwnd == 0 {
 		return
 	}
+
+	// 保存依赖，供异步消息处理器使用
+	s.rclickMainWindow = mainWindow
+	s.rclickManager = manager
+	s.rclickExecutor = executor
+	s.rclickGetPixelPos = getPixelPos
+	s.rclickOnDesktopCmd = onDesktopCmd
+
 	s.RClickCB = syscall.NewCallback(func(hwnd uintptr, msg uint32, wParam, lParam, uIDSubclass, dwRefData uintptr) uintptr {
 		if msg == win.WM_RBUTTONDOWN {
 			x := int(win.GET_X_LPARAM(lParam))
@@ -201,25 +215,31 @@ func (s *ContextMenuState) InstallRightClickHandler(bodyWidget *walk.CustomWidge
 			win.ClientToScreen(win.HWND(hwnd), &pt)
 			screenX := int(pt.X)
 			screenY := int(pt.Y)
+
+			// 快速命中检测，判断点击在图标上还是桌面空白处
 			items := manager.GetUngroupedItems()
-			hitIcon := false
+			s.rclickHitItem = nil
 			for i, item := range items {
 				ix, iy := getPixelPos(item.Path, i)
 				if x >= ix && x <= ix+ui.TileWidth() &&
 					y >= iy && y <= iy+ui.TileHeight() {
-					hitIcon = true
-					s.ShowIconContextMenu(mainWindow, manager, executor, item, screenX, screenY)
+					s.rclickHitItem = &item
 					break
 				}
 			}
-			if !hitIcon {
-				cmd := s.ShowDesktopContextMenu(mainWindow, screenX, screenY)
-				if cmd != 0 && onDesktopCmd != nil {
-					onDesktopCmd(int(cmd))
-				}
-			}
+			s.rclickScreenX = screenX
+			s.rclickScreenY = screenY
+
+			// PostMessage 立即返回，避免 WM_RBUTTONDOWN 阻塞导致转圈
+			win.PostMessage(win.HWND(hwnd), rclickMsgID, 0, 0)
 			return 0
 		}
+
+		if msg == rclickMsgID {
+			s.deferredShowContextMenu()
+			return 0
+		}
+
 		ret, _, _ := procDefSubclassProc.Call(hwnd, uintptr(msg), wParam, lParam)
 		return ret
 	})
@@ -229,6 +249,23 @@ func (s *ContextMenuState) InstallRightClickHandler(bodyWidget *walk.CustomWidge
 		rclickSubclassID,
 		0,
 	)
+}
+
+// deferredShowContextMenu 异步延迟弹出的右键菜单（在 PostMessage 的自定义消息中执行）
+func (s *ContextMenuState) deferredShowContextMenu() {
+	hwnd := s.rclickMainWindow
+	manager := s.rclickManager
+	executor := s.rclickExecutor
+	onDesktopCmd := s.rclickOnDesktopCmd
+
+	if s.rclickHitItem != nil {
+		s.ShowIconContextMenu(hwnd, manager, executor, *s.rclickHitItem, s.rclickScreenX, s.rclickScreenY)
+	} else {
+		cmd := s.ShowDesktopContextMenu(hwnd, s.rclickScreenX, s.rclickScreenY)
+		if cmd != 0 && onDesktopCmd != nil {
+			onDesktopCmd(int(cmd))
+		}
+	}
 }
 
 // UninstallRightClickHandler 卸载右键菜单子类化

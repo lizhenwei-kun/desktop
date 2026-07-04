@@ -76,6 +76,21 @@ const (
 	MONITOR_DEFAULTTONEAREST = 0x00000002
 )
 
+// 桌面背景菜单中已内置的 Shell verb 列表，
+// 读取注册表扩展菜单时需跳过这些 verbs，避免重复。
+var desktopReservedVerbs = map[string]bool{
+	"paste":       true,
+	"pastelink":   true,
+	"refresh":     true,
+	"display":     true,
+	"personalize": true,
+	"new":         true,
+	"view":        true,
+	"arrangeby":   true,
+	"arrange":     true,
+	"properties":  true,
+}
+
 // ============================================================
 // Win32 辅助封装
 // ============================================================
@@ -382,27 +397,37 @@ func ExecuteRegistryCommand(cmdLine string, filePath string) {
 	cmdLine = strings.ReplaceAll(cmdLine, "%1", filePath)
 	cmdLine = strings.ReplaceAll(cmdLine, "%L", filePath)
 	cmdLine = strings.ReplaceAll(cmdLine, "%V", filePath)
-	// 移除其余未替换的占位符（保证不报错）
-	parts := strings.Fields(cmdLine)
-	if len(parts) == 0 {
+	// 移除残留的未替换占位符（%W, %D 等）
+	cmdLine = removeUnresolvedPlaceholders(cmdLine)
+	if strings.TrimSpace(cmdLine) == "" {
 		return
 	}
 
-	prog := parts[0]
-	var args []string
-	for _, p := range parts[1:] {
-		// 移除残留的 % 占位符
-		if strings.HasPrefix(p, "%") && len(p) > 1 {
-			continue
-		}
-		args = append(args, p)
-	}
-
-	cmd := exec.Command(prog, args...)
+	// 使用 cmd /c 执行整个命令行，正确处理引号、空格等复杂路径
+	cmd := exec.Command("cmd", "/c", cmdLine)
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: false}
 	if err := cmd.Start(); err != nil {
-		logger.Warn("executeRegistryCommand failed: %v (prog=%s)", err, prog)
+		logger.Warn("executeRegistryCommand failed: %v (cmdLine=%s)", err, cmdLine)
 	}
+}
+
+// removeUnresolvedPlaceholders 移除命令行中残留的 % 占位符
+func removeUnresolvedPlaceholders(cmdLine string) string {
+	var result strings.Builder
+	i := 0
+	for i < len(cmdLine) {
+		if cmdLine[i] == '%' && i+1 < len(cmdLine) {
+			next := cmdLine[i+1]
+			// 跳过 %X 形式的单字符占位符（如 %V, %W, %1 等）
+			if (next >= 'A' && next <= 'Z') || (next >= 'a' && next <= 'z') || (next >= '0' && next <= '9') {
+				i += 2
+				continue
+			}
+		}
+		result.WriteByte(cmdLine[i])
+		i++
+	}
+	return result.String()
 }
 
 // readDesktopRegistryMenu 读取桌面背景的注册表菜单项
@@ -412,7 +437,15 @@ func ReadDesktopRegistryMenu() []RegistryShellItem {
 	if len(items) == 0 {
 		items = readRegistryShellItems(regHKEY_CLASSES_ROOT, `Directory\Background\shell`)
 	}
-	return items
+
+	// 过滤掉已内置的菜单项（避免重复）
+	filtered := items[:0]
+	for _, item := range items {
+		if !desktopReservedVerbs[strings.ToLower(item.Verb)] {
+			filtered = append(filtered, item)
+		}
+	}
+	return filtered
 }
 
 // readFileRegistryMenu 读取文件类型的注册表菜单项
@@ -784,7 +817,7 @@ func IsTileRemeasureNeeded() bool {
 
 // pasteFromClipboard 从剪贴板粘贴文件到桌面
 func PasteFromClipboard(_, _ int) {
-	desktopPath := getDesktopPath()
+	desktopPath := GetDesktopPath()
 	if desktopPath == "" {
 		return
 	}
@@ -826,7 +859,7 @@ func PasteFromClipboard(_, _ int) {
 
 // pasteShortcutFromClipboard 从剪贴板粘贴快捷方式到桌面
 func PasteShortcutFromClipboard(_, _ int) {
-	desktopPath := getDesktopPath()
+	desktopPath := GetDesktopPath()
 	if desktopPath == "" {
 		return
 	}
@@ -908,7 +941,7 @@ func dragFinish(hDrop uintptr) {
 
 // createNewFolder 在桌面创建新文件夹
 func CreateNewFolder(_, _ int) {
-	desktopPath := getDesktopPath()
+	desktopPath := GetDesktopPath()
 	if desktopPath == "" {
 		return
 	}
@@ -928,7 +961,7 @@ func CreateNewFolder(_, _ int) {
 
 // createNewShortcut 创建新快捷方式
 func CreateNewShortcut(_, _ int) {
-	desktopPath := getDesktopPath()
+	desktopPath := GetDesktopPath()
 	if desktopPath == "" {
 		return
 	}
@@ -946,7 +979,7 @@ func CreateNewShortcut(_, _ int) {
 
 // createNewTextDocument 创建新文本文档
 func CreateNewTextDocument(_, _ int) {
-	desktopPath := getDesktopPath()
+	desktopPath := GetDesktopPath()
 	if desktopPath == "" {
 		return
 	}
@@ -966,7 +999,7 @@ func CreateNewTextDocument(_, _ int) {
 
 // createNewBitmapImage 创建新位图图像
 func CreateNewBitmapImage(_, _ int) {
-	desktopPath := getDesktopPath()
+	desktopPath := GetDesktopPath()
 	if desktopPath == "" {
 		return
 	}
@@ -1024,8 +1057,8 @@ func OpenPersonalize() {
 // 辅助函数
 // ============================================================
 
-// getDesktopPath 获取桌面路径
-func getDesktopPath() string {
+// GetDesktopPath 获取桌面路径（导出供其他包使用）
+func GetDesktopPath() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return ""

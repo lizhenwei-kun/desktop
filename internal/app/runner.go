@@ -5,9 +5,12 @@ import (
 	"image"
 	"image/color"
 	"os"
+	"syscall"
+	"unsafe"
 
 	"github.com/lxn/walk"
 	. "github.com/lxn/walk/declarative"
+	"github.com/lxn/win"
 
 	"desktop_go/internal/config"
 	"desktop_go/internal/desktop"
@@ -135,7 +138,7 @@ func (r *Runner) runDesktopMode() error {
 
 	// 监听数据变更
 	r.manager.SetOnChange(func() {
-		mw.Synchronize(func() {
+		dm.Post(func() {
 			dm.Refresh()
 		})
 	})
@@ -355,6 +358,80 @@ func (r *Runner) setWindowIcon(mw *walk.MainWindow) {
 	mw.SetIcon(walk.IconApplication())
 }
 
+// 托盘右键菜单命令 ID
+const (
+	trayCmdShowHide = 0x6001
+	trayCmdExit     = 0x6002
+)
+
+// Win32 菜单 API
+var (
+	user32Tray         = syscall.NewLazyDLL("user32.dll")
+	procCreatePopupMenuTray = user32Tray.NewProc("CreatePopupMenu")
+	procDestroyMenuTray     = user32Tray.NewProc("DestroyMenu")
+	procAppendMenuW_tray    = user32Tray.NewProc("AppendMenuW")
+	procTrackPopupMenuTray  = user32Tray.NewProc("TrackPopupMenu")
+	procSetForegroundTray   = user32Tray.NewProc("SetForegroundWindow")
+)
+
+const (
+	mfString    = 0x00000000
+	mfSeparator = 0x00000800
+	tpmReturnCmd = 0x00000100
+)
+
+// showTrayContextMenu 显示托盘右键菜单（使用 Win32 直接创建，绕过 walk 内部消息路由）
+func (r *Runner) showTrayContextMenu() {
+	hMenu, _, _ := procCreatePopupMenuTray.Call()
+	if hMenu == 0 {
+		return
+	}
+	defer procDestroyMenuTray.Call(hMenu)
+
+	showHideText := "显示/隐藏"
+	if !r.mw.Visible() {
+		showHideText = "显示/隐藏"
+	}
+	procAppendMenuW_tray.Call(hMenu, mfString, trayCmdShowHide, uintptr(unsafe.Pointer(syscall.StringToUTF16Ptr(showHideText))))
+	procAppendMenuW_tray.Call(hMenu, mfSeparator, 0, 0)
+	procAppendMenuW_tray.Call(hMenu, mfString, trayCmdExit, uintptr(unsafe.Pointer(syscall.StringToUTF16Ptr("退出"))))
+
+	procSetForegroundTray.Call(uintptr(r.mw.Handle()))
+
+	var pt win.POINT
+	if !win.GetCursorPos(&pt) {
+		return
+	}
+
+	cmd, _, _ := procTrackPopupMenuTray.Call(hMenu, tpmReturnCmd, uintptr(pt.X), uintptr(pt.Y), 0, uintptr(r.mw.Handle()), 0)
+	if cmd == 0 {
+		return
+	}
+
+	switch uintptr(cmd) {
+	case trayCmdShowHide:
+		if r.mw.Visible() {
+			r.mw.SetVisible(false)
+		} else {
+			r.mw.SetVisible(true)
+			if r.mode != ModeDesktop {
+				r.winAPI.ForceShowAndRaise(r.mw.Handle())
+			}
+		}
+	case trayCmdExit:
+		r.lifecycle.MarkClosing()
+		r.lifecycle.ExecuteCleanups()
+		if r.mode == ModeDesktop {
+			r.winAPI.DetachFromDesktop(r.mw.Handle())
+			r.winAPI.ShowDesktopIcons()
+		}
+		if r.ni != nil {
+			r.ni.Dispose()
+		}
+		walk.App().Exit(0)
+	}
+}
+
 // setupNotifyIcon 设置系统托盘图标
 func (r *Runner) setupNotifyIcon() {
 	var err error
@@ -385,38 +462,8 @@ func (r *Runner) setupNotifyIcon() {
 	r.ni.SetToolTip("DesktopGo - 桌面分组管理")
 	r.ni.SetVisible(true)
 
-	// 右键菜单
-	menu := r.ni.ContextMenu()
-
-	showAction := walk.NewAction()
-	showAction.SetText("显示/隐藏")
-	showAction.Triggered().Attach(func() {
-		if r.mw.Visible() {
-			r.mw.SetVisible(false)
-		} else {
-			r.mw.SetVisible(true)
-			if r.mode != ModeDesktop {
-				r.winAPI.ForceShowAndRaise(r.mw.Handle())
-			}
-		}
-	})
-	menu.Actions().Add(showAction)
-
-	menu.Actions().Add(walk.NewSeparatorAction())
-
-	exitAction := walk.NewAction()
-	exitAction.SetText("退出")
-	exitAction.Triggered().Attach(func() {
-		r.lifecycle.MarkClosing()
-		r.lifecycle.ExecuteCleanups()
-		if r.mode == ModeDesktop {
-			r.winAPI.DetachFromDesktop(r.mw.Handle())
-			r.winAPI.ShowDesktopIcons()
-		}
-		r.ni.Dispose()
-		walk.App().Exit(0)
-	})
-	menu.Actions().Add(exitAction)
+	// 注意：不使用 walk 内置的 ContextMenu（窗口嵌入桌面后消息路由失效），
+	// 右键菜单在 MouseUp 中通过 Win32 直接显示
 
 	// 双击托盘图标显示窗口
 	r.ni.MouseDown().Attach(func(x, y int, button walk.MouseButton) {
@@ -425,6 +472,13 @@ func (r *Runner) setupNotifyIcon() {
 			if r.mode != ModeDesktop {
 				r.winAPI.ForceShowAndRaise(r.mw.Handle())
 			}
+		}
+	})
+
+	// 右键弹出菜单（使用 Win32 直接创建，绕过 walk 消息路由）
+	r.ni.MouseUp().Attach(func(x, y int, button walk.MouseButton) {
+		if button == walk.RightButton {
+			r.showTrayContextMenu()
 		}
 	})
 }

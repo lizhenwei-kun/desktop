@@ -102,6 +102,9 @@ type GroupCard struct {
 	iconDragMouseY    int           // 当前鼠标 Y
 	ghostBmp          *walk.Bitmap  // 缓存的 ghost 图标 bitmap（避免每次重绘重新提取）
 
+	// 图标右键回调
+	onIconRightClick func(card *GroupCard, idx int, item group.GroupItem, screenX, screenY int)
+
 	// 图标拖拽回调（由 DesktopMode 设置）
 	onIconDragStart func(card *GroupCard, idx int, item group.GroupItem)
 	onIconDragMove  func(card *GroupCard, screenX, screenY int)
@@ -202,6 +205,18 @@ func NewGroupCard(parent walk.Container, grp config.Group, mgr *group.Manager, e
 // setupMouseEvents 设置鼠标事件
 func (gc *GroupCard) setupMouseEvents() {
 	gc.bodyWidget.MouseDown().Attach(func(x, y int, button walk.MouseButton) {
+		if button == walk.RightButton {
+			// 右键点击图标：显示右键菜单
+			idx := gc.getItemIndexAt(x, y)
+			if idx >= 0 && idx < len(gc.items) && gc.onIconRightClick != nil {
+				var screenPt win.POINT
+				screenPt.X = int32(x)
+				screenPt.Y = int32(y)
+				win.ClientToScreen(gc.bodyWidget.Handle(), &screenPt)
+				gc.onIconRightClick(gc, idx, gc.items[idx], int(screenPt.X), int(screenPt.Y))
+			}
+			return
+		}
 		if button != walk.LeftButton {
 			return
 		}
@@ -1158,6 +1173,11 @@ func (gc *GroupCard) SetIsDropTarget(v bool) {
 // Cleanup 清理卡片资源
 func (gc *GroupCard) Cleanup() {
 	// 全局缓存由所有卡片共享，此处不做清理
+}
+
+// SetOnIconRightClick 设置图标右键点击回调
+func (gc *GroupCard) SetOnIconRightClick(fn func(card *GroupCard, idx int, item group.GroupItem, screenX, screenY int)) {
+	gc.onIconRightClick = fn
 }
 
 // SetOnIconDragStart 设置图标拖拽开始回调

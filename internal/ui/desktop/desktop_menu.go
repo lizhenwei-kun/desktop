@@ -11,6 +11,7 @@ import (
 
 const (
 	rclickSubclassID = 2
+	rclickMsgID      = 0x8000 + 100 // WM_APP + 100，用于异步投递右键菜单
 
 	MF_STRING       = 0x00000000
 	MF_POPUP        = 0x00000010
@@ -177,7 +178,7 @@ func (dm *DesktopMode) handleContextMenuCommand(cmd int) {
 	if cmd >= dm.CachedDesktopRegCmdStart && cmd < dm.CachedDesktopRegCmdStart+len(dm.CachedDesktopRegItems) {
 		idx := cmd - dm.CachedDesktopRegCmdStart
 		if idx >= 0 && idx < len(dm.CachedDesktopRegItems) {
-			ui.ExecuteRegistryCommand(dm.CachedDesktopRegItems[idx].Command, "")
+			ui.ExecuteRegistryCommand(dm.CachedDesktopRegItems[idx].Command, ui.GetDesktopPath())
 		}
 		return
 	}

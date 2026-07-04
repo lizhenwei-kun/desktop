@@ -88,7 +88,7 @@ func (dm *DesktopMode) Setup() error {
 	dm.Container.SizeChanged().Attach(func() {
 		go func() {
 			time.Sleep(50 * time.Millisecond)
-			dm.MainWindow.Synchronize(func() {
+			dm.Post(func() {
 				dm.reapplyCardPositions()
 			})
 		}()
@@ -164,7 +164,7 @@ func (dm *DesktopMode) delayedSetup() {
 	defer recoverGoroutine("delayedSetup")
 	time.Sleep(300 * time.Millisecond)
 
-	dm.MainWindow.Synchronize(func() {
+	dm.Post(func() {
 		hwnd := dm.MainWindow.Handle()
 		logger.Debug("delayedSetup: hwnd=%v, pos=(%d,%d,%dx%d)", hwnd, dm.WorkX, dm.WorkY, dm.WorkW, dm.WorkH)
 		dm.WinAPI.RemoveWindowMenu(win.HWND(hwnd))
@@ -177,18 +177,18 @@ func (dm *DesktopMode) delayedSetup() {
 	})
 
 	time.Sleep(100 * time.Millisecond)
-	dm.MainWindow.Synchronize(func() {
+	dm.Post(func() {
 		hwnd := dm.MainWindow.Handle()
 		dm.WinAPI.SetWindowPosNoRedraw(win.HWND(hwnd), dm.WorkX, dm.WorkY, dm.WorkW+1, dm.WorkH+1)
 	})
 	time.Sleep(50 * time.Millisecond)
-	dm.MainWindow.Synchronize(func() {
+	dm.Post(func() {
 		hwnd := dm.MainWindow.Handle()
 		dm.WinAPI.MoveWindow(win.HWND(hwnd), dm.WorkX, dm.WorkY, dm.WorkW, dm.WorkH)
 	})
 	time.Sleep(100 * time.Millisecond)
 
-	dm.MainWindow.Synchronize(func() {
+	dm.Post(func() {
 		clientBounds := dm.MainWindow.ClientBoundsPixels()
 		fullH := clientBounds.Y + clientBounds.Height
 		dm.Container.SetBoundsPixels(walk.Rectangle{X: 0, Y: 0, Width: dm.WorkW, Height: fullH})
@@ -203,7 +203,7 @@ func (dm *DesktopMode) delayedSetup() {
 		go func() {
 			defer recoverGoroutine("postLayoutCardFix")
 			time.Sleep(200 * time.Millisecond)
-			dm.MainWindow.Synchronize(func() {
+			dm.Post(func() {
 				dm.reapplyCardPositions()
 				dm.WallpaperState.LoadWallpaper(dm.MainWindow.DPI, dm.WorkW, dm.WorkH)
 				dm.Manager.ReloadDesktopItems()

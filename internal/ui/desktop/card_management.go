@@ -4,6 +4,7 @@ import (
 	"github.com/lxn/win"
 
 	"desktop_go/internal/config"
+	"desktop_go/internal/group"
 	"desktop_go/internal/logger"
 	"desktop_go/internal/ui"
 )
@@ -44,6 +45,9 @@ func (dm *DesktopMode) setupCardActions(card *ui.GroupCard, grp config.Group) {
 	card.SetOnIconDragStart(dm.IconDragState.OnCardIconDragStart)
 	card.SetOnIconDragMove(dm.IconDragState.OnCardIconDragMove)
 	card.SetOnIconDragEnd(dm.IconDragState.OnCardIconDragEnd)
+	card.SetOnIconRightClick(func(_ *ui.GroupCard, _ int, item group.GroupItem, screenX, screenY int) {
+		dm.ContextMenuState.ShowIconContextMenu(dm.MainWindow.Handle(), dm.Manager, dm.Executor, item, screenX, screenY)
+	})
 	card.SetOnMouseMove(func() {
 		for _, c := range dm.Cards {
 			if c != card {

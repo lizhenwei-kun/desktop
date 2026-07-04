@@ -221,15 +221,16 @@ handleDesktopMouseDown(x, y, RightButton)
 │       └── cmd >= 0x3000 → executeRegistryCommand()
 │
 ├── ShowIconContextMenu(hwnd, mgr, executor, item, x, y)
-│   ├── CreatePopupMenu
-│   ├── 构建内置菜单（打开/打开位置/发送到/剪切/复制/删除/重命名/属性）
-│   ├── readSendToMenu() → 添加发送到项
-│   ├── readFileRegistryMenu(item.Path) → 添加注册表项
+│   ├── ComInitThread() (COM 初始化)
+│   ├── SHParseDisplayName → 获取 pidl
+│   ├── SHBindToParent → 获取 IShellFolder + pidlChild
+│   ├── GetUIObjectOf(IID_IContextMenu) → 获取 IContextMenu
+│   ├── IContextMenu::QueryContextMenu → 填充 Shell 扩展菜单
 │   ├── TrackPopupMenu(TPM_RETURNCMD)
-│   └── handleIconContextMenuCommand(...)
-│       ├── cmd < 0x4000 → 内置命令
-│       ├── cmd >= 0x5000 → executeSendToMenu()
-│       └── cmd >= 0x4000 → executeRegistryCommand()
+│   └── IContextMenu::InvokeCommand
+│       ├── lpDirectory = NULL (0)  ← 关键：必须为 NULL
+│       ├── lpVerb = cmd - 1
+│       └── nShow = SW_SHOWNORMAL
 ```
 
 ## 执行命令逻辑
@@ -237,13 +238,26 @@ handleDesktopMouseDown(x, y, RightButton)
 ### 注册表命令执行
 
 ```go
-func executeRegistryCommand(cmdLine string, filePath string) {
+func ExecuteRegistryCommand(cmdLine string, filePath string) {
     // 1. 替换占位符: %1, %L, %V → filePath
-    // 2. 移除未替换的 % 占位符
-    // 3. 按空格分割为程序路径 + 参数
-    // 4. exec.Command 启动
+    // 2. removeUnresolvedPlaceholders() 移除残留的 %X 占位符
+    // 3. 使用 cmd /c 执行整条命令行（正确处理引号、空格路径）
 }
 ```
+
+**重要规则**：
+- 必须使用 `cmd /c <cmdLine>` 执行，**不能**用 `strings.Fields` 拆分命令行（会破坏引号包裹的带空格路径）
+- 桌面背景菜单调用时，`filePath` 参数应传入 `GetDesktopPath()`（桌面路径），不能传空字符串
+- 文件图标菜单调用时，`filePath` 参数应传入文件/文件夹的完整路径
+
+### Shell COM 图标右键菜单（IContextMenu）
+
+`ShowIconContextMenu` 使用 Shell COM 接口 `IContextMenu::InvokeCommand` 执行菜单命令。
+
+**CMINVOKECOMMANDINFO.lpDirectory 规则**：
+- **必须设为 NULL (0)**，让 Shell 扩展自行根据 pidl 确定目标路径和工作目录
+- 不能传入文件/文件夹路径本身，否则某些 Shell 扩展（如 VS Code）会将其误用为工作目录导致"目录名称无效"错误
+- 系统桌面的实现也是传 NULL，由 Shell 内部处理
 
 ### 文件操作
 
@@ -283,7 +297,7 @@ func executeRegistryCommand(cmdLine string, filePath string) {
 
 | 限制 | 说明 | 改进方向 |
 |------|------|---------|
-| 不支持 shellex COM 处理器 | `ContextMenuHandlers` 需要 COM 接口调用 | 后续可接入 `IContextMenu::QueryContextMenu` |
+| ~~不支持 shellex COM 处理器~~ | 已通过 `IContextMenu::QueryContextMenu` 实现 | ✅ 已解决 |
 | 不支持级联子菜单 | 注册表 `subcommands` 暂不处理 | 可递归读取子菜单 |
 | 排序方式仅影响显示 | 未真正排序 manage r数据 | 扩展 Manager 添加排序支持 |
 | 桌面图标显示/隐藏 | 通过 bodyWidget 是否绘制控制 | 可支持 walk container 整体隐藏 |

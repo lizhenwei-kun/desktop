@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/lxn/walk"
+	"github.com/lxn/win"
 
 	"desktop_go/internal/desktop"
 	"desktop_go/internal/group"
@@ -147,6 +148,18 @@ type ContextMenuState struct {
 	CachedFileRegCmdStart    int
 
 	RClickCB uintptr // 右键窗口子类化回调地址
+
+	registryCacheTime time.Time // 注册表上次读取时间，用于缓存
+
+	// 异步右键菜单：在 WM_RBUTTONDOWN 中只记录信息，PostMessage 延迟弹出
+	rclickMainWindow win.HWND
+	rclickManager    *group.Manager
+	rclickExecutor   *ui.ProgramExecutor
+	rclickGetPixelPos func(string, int) (int, int)
+	rclickOnDesktopCmd func(cmd int)
+	rclickScreenX    int
+	rclickScreenY    int
+	rclickHitItem    *group.GroupItem // 非 nil 表示点击在图标上
 }
 
 // HoverState 悬停状态
@@ -200,4 +213,9 @@ func NewDesktopMode(mw *walk.MainWindow, mgr *group.Manager, winAPI *desktop.Win
 	logger.Debug("screen=%dx%d, workArea=(%d,%d,%d,%d), workSize=%dx%d",
 		dm.ScreenW, dm.ScreenH, left, top, right, bottom, dm.WorkW, dm.WorkH)
 	return dm
+}
+
+// Post 将 fn 投递到主 UI 线程执行，等同于 mw.Synchronize
+func (dm *DesktopMode) Post(fn func()) {
+	dm.MainWindow.Synchronize(fn)
 }

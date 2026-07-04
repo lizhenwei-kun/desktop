@@ -156,7 +156,7 @@ func (dm *DesktopMode) handleDesktopMouseDown(x, y int, button walk.MouseButton)
 func (dm *DesktopMode) checkFreeItemDragStart() {
 	defer recoverGoroutine("checkFreeItemDragStart")
 	time.Sleep(ui.IconDragDelay)
-	dm.BodyWidget.Synchronize(func() {
+	dm.Post(func() {
 		if !dm.FreeItemDragPressed || dm.FreeItemDragActive {
 			return
 		}
