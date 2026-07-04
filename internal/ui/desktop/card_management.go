@@ -41,9 +41,9 @@ func (dm *DesktopMode) setupCardActions(card *ui.GroupCard, grp config.Group) {
 	card.SetOnSizeChanged(func(name string, w, h float64) {
 		dm.Manager.UpdateGroupSize(name, w, h)
 	})
-	card.SetOnIconDragStart(dm.onCardIconDragStart)
-	card.SetOnIconDragMove(dm.onCardIconDragMove)
-	card.SetOnIconDragEnd(dm.onCardIconDragEnd)
+	card.SetOnIconDragStart(dm.IconDragState.OnCardIconDragStart)
+	card.SetOnIconDragMove(dm.IconDragState.OnCardIconDragMove)
+	card.SetOnIconDragEnd(dm.IconDragState.OnCardIconDragEnd)
 	card.SetOnMouseMove(func() {
 		for _, c := range dm.Cards {
 			if c != card {
@@ -51,8 +51,8 @@ func (dm *DesktopMode) setupCardActions(card *ui.GroupCard, grp config.Group) {
 			}
 		}
 	})
-	card.SetOnCardDragOutline(dm.onCardDragOutline)
-	card.SetOnCardDragOutlineEnd(dm.onCardDragOutlineEnd)
+	card.SetOnCardDragOutline(dm.CardDragOutline.OnCardDragOutline)
+	card.SetOnCardDragOutlineEnd(dm.CardDragOutline.OnCardDragOutlineEnd)
 	card.SetOnRename(func(name string) {
 		newName, ok := ui.ShowInputDialog(dm.MainWindow, "重命名分组", "请输入新名称：", name)
 		if ok && newName != "" && newName != name {
@@ -85,8 +85,8 @@ func (dm *DesktopMode) setupCardActions(card *ui.GroupCard, grp config.Group) {
 	card.SetOnRefresh(func() {
 		dm.refreshDesktop()
 	})
-	card.SetOnResizeOutline(dm.onCardResizeOutline)
-	card.SetOnResizeOutlineEnd(dm.onCardResizeOutlineEnd)
+	card.SetOnResizeOutline(dm.ResizeOutlineState.OnCardResizeOutline)
+	card.SetOnResizeOutlineEnd(dm.ResizeOutlineState.OnCardResizeOutlineEnd)
 }
 
 func (dm *DesktopMode) refreshCards() {

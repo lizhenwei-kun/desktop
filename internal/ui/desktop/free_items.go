@@ -34,12 +34,14 @@ func pixelToGrid(px, py int) (int, int) {
 	return col, row
 }
 
+// posToGrid 保留在 DesktopMode，grid helpers 被多处调用
 func (dm *DesktopMode) posToGrid(pos config.Position) (int, int) {
 	px := int(pos.X * float64(dm.WorkW))
 	py := int(pos.Y * float64(dm.WorkH))
 	return pixelToGrid(px, py)
 }
 
+// gridToRel 保留在 DesktopMode
 func (dm *DesktopMode) gridToRel(col, row int) config.Position {
 	px, py := gridToPixel(col, row)
 	return config.Position{
@@ -48,6 +50,7 @@ func (dm *DesktopMode) gridToRel(col, row int) config.Position {
 	}
 }
 
+// getOccupiedCells 保留在 DesktopMode
 func (dm *DesktopMode) getOccupiedCells(exceptPath string) map[[2]int]bool {
 	items := dm.Manager.GetUngroupedItems()
 	cells := make(map[[2]int]bool)
@@ -68,6 +71,7 @@ func (dm *DesktopMode) getOccupiedCells(exceptPath string) map[[2]int]bool {
 	return cells
 }
 
+// getFreeItemPixelPos 保留在 DesktopMode
 func (dm *DesktopMode) getFreeItemPixelPos(path string, fallbackIdx int) (int, int) {
 	pos := dm.Manager.GetFreeItemPosition(path)
 	if pos.X < 0 || pos.Y < 0 {
@@ -90,6 +94,7 @@ func (dm *DesktopMode) getFreeItemPixelPos(path string, fallbackIdx int) (int, i
 	return gridToPixel(col, row)
 }
 
+// findFreeGridCell 保留在 DesktopMode
 func (dm *DesktopMode) findFreeGridCell(exceptPath string, wantCol, wantRow int) (int, int) {
 	occupied := dm.getOccupiedCells(exceptPath)
 	bounds := dm.BodyWidget.ClientBoundsPixels()
@@ -118,50 +123,7 @@ func (dm *DesktopMode) findFreeGridCell(exceptPath string, wantCol, wantRow int)
 	return wantCol, wantRow
 }
 
-func (dm *DesktopMode) paintFreeItems(canvas *walk.Canvas, bounds walk.Rectangle) {
-	items := dm.Manager.GetUngroupedItems()
-	if len(items) == 0 {
-		return
-	}
-	effectiveH := bounds.Height
-	if effectiveH < 100 {
-		effectiveH = dm.WorkH
-	}
-	for idx, item := range items {
-		px, py := dm.getFreeItemPixelPos(item.Path, idx)
-		if py+ui.TileHeight() > effectiveH {
-			continue
-		}
-		if idx == dm.HoveredFreeIdx {
-			ui.DrawHoverRect(canvas, walk.Rectangle{X: px, Y: py, Width: ui.TileWidth(), Height: ui.TileHeight()})
-		}
-		bmp := ui.GlobalIconBmpCache.GetOrLoad(item.Path)
-		if bmp != nil {
-			iconX := px + (ui.TileWidth()-ui.DesktopIconSize)/2
-			iconY := py + ui.DesktopIconTop
-			canvas.DrawBitmapWithOpacityPixels(bmp, walk.Rectangle{X: iconX, Y: iconY, Width: ui.DesktopIconSize, Height: ui.DesktopIconSize}, 255)
-		}
-		font := ui.GetIconFont()
-		if font != nil {
-			defer font.Dispose()
-			displayName := item.Name
-			lines := ui.SplitTextToLines(displayName, 4)
-			labelTop := py + ui.DesktopIconLabelTop
-			for i, line := range lines {
-				if i >= 2 {
-					break
-				}
-				if i == 1 && len(lines) > 2 {
-					line = ui.TruncateText(line, 3)
-				}
-				lineY := labelTop + i*ui.DesktopIconLineHeight
-				textBounds := walk.Rectangle{X: px, Y: lineY, Width: ui.TileWidth(), Height: ui.DesktopIconLineHeight}
-				canvas.DrawTextPixels(line, font, walk.RGB(0xFF, 0xFF, 0xFF), textBounds, walk.TextCenter|walk.TextSingleLine)
-			}
-		}
-	}
-}
-
+// handleDesktopMouseDown 桌面左键按下
 func (dm *DesktopMode) handleDesktopMouseDown(x, y int, button walk.MouseButton) {
 	if button != walk.LeftButton {
 		return
@@ -190,6 +152,7 @@ func (dm *DesktopMode) handleDesktopMouseDown(x, y int, button walk.MouseButton)
 	}
 }
 
+// checkFreeItemDragStart 长按延迟后启动未分组图标拖拽
 func (dm *DesktopMode) checkFreeItemDragStart() {
 	defer recoverGoroutine("checkFreeItemDragStart")
 	time.Sleep(ui.IconDragDelay)
@@ -204,23 +167,20 @@ func (dm *DesktopMode) checkFreeItemDragStart() {
 		win.ScreenToClient(dm.BodyWidget.Handle(), &clientPt)
 		dm.FreeItemDragMouseX = int(clientPt.X)
 		dm.FreeItemDragMouseY = int(clientPt.Y)
-		dm.loadDragGhostBmp(dm.FreeItemDragItem.Path)
+		dm.IconDragState.LoadGhostBmp(dm.FreeItemDragItem.Path)
 		dm.LastDragMoveTime = time.Now()
 		dm.BodyWidget.Invalidate()
 		win.SetCapture(dm.BodyWidget.Handle())
-		dm.IconDragActive = true
-		dm.IconDragItem = dm.FreeItemDragItem
-		dm.IconDragSourceGroup = ""
-		dm.IconDragScreenX = int(screenPt.X)
-		dm.IconDragScreenY = int(screenPt.Y)
+		dm.IconDragState.ActivateFromFreeDrag(dm.FreeItemDragItem, int(screenPt.X), int(screenPt.Y))
 	})
 }
 
+// handleFreeItemDrop 未分组图标拖拽释放
 func (dm *DesktopMode) handleFreeItemDrop(screenX, screenY int) {
 	dm.IconDragActive = false
-	dm.disposeDragGhostBmp()
+	dm.IconDragState.DisposeGhostBmp()
 	defer dm.BodyWidget.Invalidate()
-	targetCard := dm.findCardAtPoint(screenX, screenY)
+	targetCard := dm.IconDragState.FindCardAtPoint(screenX, screenY)
 	if targetCard != nil {
 		dm.Manager.MoveItemToGroup(dm.FreeItemDragItem.Path, targetCard.GroupName())
 		targetCard.Refresh()
@@ -236,23 +196,10 @@ func (dm *DesktopMode) handleFreeItemDrop(screenX, screenY int) {
 		relPos := dm.gridToRel(col, row)
 		dm.Manager.SetFreeItemPosition(dm.FreeItemDragItem.Path, relPos)
 	}
-	dm.clearDropState()
+	dm.IconDragState.ClearDropState()
 }
 
+// checkFreeItemHover 调用 HoverState
 func (dm *DesktopMode) checkFreeItemHover(x, y int) bool {
-	items := dm.Manager.GetUngroupedItems()
-	newIdx := -1
-	for i := range items {
-		ix, iy := dm.getFreeItemPixelPos(items[i].Path, i)
-		if x >= ix && x <= ix+ui.TileWidth() &&
-			y >= iy && y <= iy+ui.TileHeight() {
-			newIdx = i
-			break
-		}
-	}
-	if newIdx != dm.HoveredFreeIdx {
-		dm.HoveredFreeIdx = newIdx
-		return true
-	}
-	return false
+	return dm.HoverState.CheckFreeItemHover(x, y, dm.Manager.GetUngroupedItems(), dm.getFreeItemPixelPos)
 }

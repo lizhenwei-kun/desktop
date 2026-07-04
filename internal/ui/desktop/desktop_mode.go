@@ -26,6 +26,15 @@ type WallpaperState struct {
 	WallpaperBmp *walk.Bitmap // 缓存的壁纸 bitmap
 }
 
+// WallpaperInject 壁纸注入
+type WallpaperInject struct {
+	DPI        func() int
+	WorkWidth  func() int
+	WorkHeight func() int
+}
+
+func (s *WallpaperState) Inject(WallpaperInject) {}
+
 // IconDragState 跨卡片图标拖拽状态
 type IconDragState struct {
 	IconDragActive      bool
@@ -38,8 +47,44 @@ type IconDragState struct {
 	DropInsertIdx       int
 	DropToDesktop       bool
 
-	GhostBmp         *walk.Bitmap // 拖拽 ghost 缓存（避免每次重绘重新提取图标）
-	LastDragMoveTime time.Time    // 拖拽重绘节流（避免每秒几十次完整重绘）
+	GhostBmp         *walk.Bitmap
+	LastDragMoveTime time.Time
+
+	// injected capabilities
+	iconBodyWidget         func() *walk.CustomWidget
+	iconManager            func() *group.Manager
+	iconCards              func() []*ui.GroupCard
+	iconInvalidate         func()
+	iconRefreshCard        func(card *ui.GroupCard)
+	iconIsPointInUngrouped func(screenX, screenY int) bool
+	iconMoveItemToDesktop  func(path string)
+	iconMoveItemToGroup    func(path, group string)
+	iconMoveItemWithinGroup func(group, path string, idx int)
+}
+
+func (s *IconDragState) Inject(inj IconInject) {
+	s.iconBodyWidget = inj.BodyWidget
+	s.iconManager = inj.Manager
+	s.iconCards = inj.Cards
+	s.iconInvalidate = inj.Invalidate
+	s.iconRefreshCard = inj.RefreshCard
+	s.iconIsPointInUngrouped = inj.IsPointInUngrouped
+	s.iconMoveItemToDesktop = inj.MoveItemToDesktop
+	s.iconMoveItemToGroup = inj.MoveItemToGroup
+	s.iconMoveItemWithinGroup = inj.MoveItemWithinGroup
+}
+
+// IconInject 图标拖拽注入
+type IconInject struct {
+	BodyWidget           func() *walk.CustomWidget
+	Manager              func() *group.Manager
+	Cards                func() []*ui.GroupCard
+	Invalidate           func()
+	RefreshCard          func(card *ui.GroupCard)
+	IsPointInUngrouped   func(screenX, screenY int) bool
+	MoveItemToDesktop    func(path string)
+	MoveItemToGroup      func(path, group string)
+	MoveItemWithinGroup  func(group, path string, idx int)
 }
 
 // FreeItemDragState 未分组图标拖拽状态
@@ -62,19 +107,31 @@ type CardDragOutline struct {
 	DragOutlineCard *ui.GroupCard
 	DragOutlineW    int
 	DragOutlineH    int
+
+	outlineInvalidate func()
 }
 
-// ResizeOutlineState 卡片缩放虚框状态（DC 绘制在屏幕上）
+func (s *CardDragOutline) Inject(invalidate func()) { s.outlineInvalidate = invalidate }
+
+// ResizeOutlineState 卡片缩放虚框状态
 type ResizeOutlineState struct {
 	ResizeOutlineCard *ui.GroupCard
 	ResizeOutlineX    int
 	ResizeOutlineY    int
 	ResizeOutlineW    int
 	ResizeOutlineH    int
-	PrevResizeX       int // 上一帧位置
+	PrevResizeX       int
 	PrevResizeY       int
 	PrevResizeW       int
 	PrevResizeH       int
+
+	resizeWorkX func() int
+	resizeWorkY func() int
+}
+
+func (s *ResizeOutlineState) Inject(workX, workY int) {
+	s.resizeWorkX = func() int { return workX }
+	s.resizeWorkY = func() int { return workY }
 }
 
 // ContextMenuState 右键菜单状态与缓存
@@ -89,7 +146,7 @@ type ContextMenuState struct {
 	CachedFileRegItems       []ui.RegistryShellItem
 	CachedFileRegCmdStart    int
 
-	RClickCB uintptr // 右键窗口子类化回调地址（用于卸载）
+	RClickCB uintptr // 右键窗口子类化回调地址
 }
 
 // HoverState 悬停状态

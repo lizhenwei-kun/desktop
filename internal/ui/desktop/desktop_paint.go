@@ -3,10 +3,8 @@ package desktop
 import (
 	"image"
 	"image/color"
-	"syscall"
 
 	"github.com/lxn/walk"
-	"github.com/lxn/win"
 
 	"desktop_go/internal/logger"
 	"desktop_go/internal/ui"
@@ -22,52 +20,23 @@ func (dm *DesktopMode) paintDesktop(canvas *walk.Canvas, updateBounds walk.Recta
 			paintCount, bounds.X, bounds.Y, bounds.Width, bounds.Height, dm.WallpaperBmp != nil)
 	}
 	dm.paintBackground(canvas, bounds)
-	dm.paintWallpaper(canvas, bounds)
+	dm.WallpaperState.PaintWallpaper(canvas, bounds)
 	dm.paintToolbar(canvas, bounds)
-	dm.paintFreeItems(canvas, bounds)
+	dm.HoverState.PaintFreeItems(canvas, bounds, dm.Manager.GetUngroupedItems(), dm.WorkH, dm.getFreeItemPixelPos)
 	if dm.DropToDesktop {
 		dm.paintDesktopDropHighlight(canvas, bounds)
 	}
 	if dm.FreeItemDragActive {
-		dm.paintFreeItemDragGhost(canvas, bounds)
+		ghost := dm.IconDragState.GhostBmp
+		dm.paintFreeItemDragGhost(canvas, ghost, bounds)
 	}
 	if dm.IconDragActive && dm.IconDragSourceCard != nil && !dm.FreeItemDragActive {
-		dm.paintCardItemDragGhost(canvas, bounds)
+		dm.IconDragState.PaintCardItemDragGhost(canvas)
 	}
 	if dm.DragOutlineCard != nil {
-		dm.paintCardDragOutline(canvas, bounds)
+		dm.CardDragOutline.PaintCardDragOutline(canvas, dm.BodyWidget)
 	}
 	return nil
-}
-
-func (dm *DesktopMode) drawResizeOutlineWin32(x, y, w, h int) {
-	hdc := win.GetDC(0)
-	if hdc == 0 {
-		return
-	}
-	defer win.ReleaseDC(0, hdc)
-	screenX := x + dm.WorkX
-	screenY := y + dm.WorkY
-	gdi32 := syscall.NewLazyDLL("gdi32.dll")
-	procSetROP2 := gdi32.NewProc("SetROP2")
-	procCreatePen := gdi32.NewProc("CreatePen")
-	procGetStockObject := gdi32.NewProc("GetStockObject")
-	procSetROP2.Call(uintptr(hdc), uintptr(3))
-	pen, _, _ := procCreatePen.Call(uintptr(0), uintptr(2), uintptr(win.RGB(0xFF, 0xFF, 0xFF)))
-	if pen == 0 {
-		return
-	}
-	defer gdi32.NewProc("DeleteObject").Call(pen)
-	oldPen := win.SelectObject(hdc, win.HGDIOBJ(pen))
-	defer win.SelectObject(hdc, oldPen)
-	hollowBrush, _, _ := procGetStockObject.Call(uintptr(5))
-	oldBrush := win.SelectObject(hdc, win.HGDIOBJ(hollowBrush))
-	defer win.SelectObject(hdc, oldBrush)
-	win.MoveToEx(hdc, screenX, screenY, nil)
-	win.LineTo(hdc, int32(screenX+w), int32(screenY))
-	win.LineTo(hdc, int32(screenX+w), int32(screenY+h))
-	win.LineTo(hdc, int32(screenX), int32(screenY+h))
-	win.LineTo(hdc, int32(screenX), int32(screenY))
 }
 
 func (dm *DesktopMode) paintBackground(canvas *walk.Canvas, bounds walk.Rectangle) {
@@ -82,45 +51,6 @@ func (dm *DesktopMode) paintBackground(canvas *walk.Canvas, bounds walk.Rectangl
 	if err == nil {
 		defer bmp.Dispose()
 		canvas.DrawBitmapWithOpacityPixels(bmp, bounds, 255)
-	}
-}
-
-func (dm *DesktopMode) loadWallpaper() {
-	wallpaperPath := ui.GetCurrentWallpaper()
-	logger.Debug("loadWallpaper: path=%q", wallpaperPath)
-	if wallpaperPath == "" {
-		return
-	}
-	if dm.WallpaperBmp != nil {
-		dm.WallpaperBmp.Dispose()
-		dm.WallpaperBmp = nil
-	}
-	img := ui.LoadWallpaperImage(dm.WorkW, dm.WorkH)
-	if img == nil {
-		logger.Debug("loadWallpaper: LoadWallpaperImage 返回 nil，回退到 GDI+ 加载")
-		dpi := dm.MainWindow.DPI()
-		if dpi <= 0 {
-			dpi = 96
-		}
-		bmp, err := walk.NewBitmapFromFileForDPI(wallpaperPath, dpi)
-		if err != nil {
-			logger.Debug("loadWallpaper: GDI+ 也失败: %v", err)
-			return
-		}
-		dm.WallpaperBmp = bmp
-		return
-	}
-	bmp, err := walk.NewBitmapFromImageForDPI(img, 96)
-	if err != nil {
-		logger.Debug("loadWallpaper: NewBitmapFromImageForDPI failed: %v", err)
-		return
-	}
-	dm.WallpaperBmp = bmp
-}
-
-func (dm *DesktopMode) paintWallpaper(canvas *walk.Canvas, bounds walk.Rectangle) {
-	if dm.WallpaperBmp != nil {
-		canvas.DrawBitmapWithOpacityPixels(dm.WallpaperBmp, bounds, 255)
 	}
 }
 
@@ -168,15 +98,16 @@ func (dm *DesktopMode) paintDesktopDropHighlight(canvas *walk.Canvas, bounds wal
 	canvas.DrawLinePixels(pen, walk.Point{X: rect.X + rect.Width, Y: rect.Y}, walk.Point{X: rect.X + rect.Width, Y: rect.Y + rect.Height})
 }
 
-func (dm *DesktopMode) paintFreeItemDragGhost(canvas *walk.Canvas, _ walk.Rectangle) {
-	if dm.GhostBmp == nil {
+// paintFreeItemDragGhost 保留在 DesktopMode 因为混用 FreeItemDragState 和 IconDragState 的字段
+func (dm *DesktopMode) paintFreeItemDragGhost(canvas *walk.Canvas, ghostBmp *walk.Bitmap, _ walk.Rectangle) {
+	if ghostBmp == nil {
 		return
 	}
 	ghostX := dm.FreeItemDragMouseX - ui.TileWidth()/2
 	ghostY := dm.FreeItemDragMouseY - ui.TileHeight()/2
 	iconX := ghostX + (ui.TileWidth()-ui.DesktopIconSize)/2
 	iconY := ghostY + ui.DesktopIconTop
-	canvas.DrawBitmapWithOpacityPixels(dm.GhostBmp, walk.Rectangle{X: iconX, Y: iconY, Width: ui.DesktopIconSize, Height: ui.DesktopIconSize}, 128)
+	canvas.DrawBitmapWithOpacityPixels(ghostBmp, walk.Rectangle{X: iconX, Y: iconY, Width: ui.DesktopIconSize, Height: ui.DesktopIconSize}, 128)
 	font := ui.GetIconFont()
 	if font != nil {
 		defer font.Dispose()
@@ -195,68 +126,6 @@ func (dm *DesktopMode) paintFreeItemDragGhost(canvas *walk.Canvas, _ walk.Rectan
 			canvas.DrawTextPixels(line, font, walk.RGB(0xFF, 0xFF, 0xFF), textBounds, walk.TextCenter|walk.TextSingleLine)
 		}
 	}
-}
-
-func (dm *DesktopMode) paintCardItemDragGhost(canvas *walk.Canvas, _ walk.Rectangle) {
-	if dm.GhostBmp == nil {
-		return
-	}
-	var pt win.POINT
-	pt.X = int32(dm.IconDragScreenX)
-	pt.Y = int32(dm.IconDragScreenY)
-	win.ScreenToClient(dm.BodyWidget.Handle(), &pt)
-	ghostX := int(pt.X) - ui.TileWidth()/2
-	ghostY := int(pt.Y) - ui.TileHeight()/2
-	iconX := ghostX + (ui.TileWidth()-ui.DesktopIconSize)/2
-	iconY := ghostY + ui.DesktopIconTop
-	canvas.DrawBitmapWithOpacityPixels(dm.GhostBmp, walk.Rectangle{X: iconX, Y: iconY, Width: ui.DesktopIconSize, Height: ui.DesktopIconSize}, 128)
-	font := ui.GetIconFont()
-	if font != nil {
-		defer font.Dispose()
-		displayName := dm.IconDragItem.Name
-		lines := ui.SplitTextToLines(displayName, 4)
-		labelTop := ghostY + ui.DesktopIconLabelTop
-		for i, line := range lines {
-			if i >= 2 {
-				break
-			}
-			if i == 1 && len(lines) > 2 {
-				line = ui.TruncateText(line, 3)
-			}
-			lineY := labelTop + i*ui.DesktopIconLineHeight
-			textBounds := walk.Rectangle{X: ghostX, Y: lineY, Width: ui.TileWidth(), Height: ui.DesktopIconLineHeight}
-			canvas.DrawTextPixels(line, font, walk.RGB(0xFF, 0xFF, 0xFF), textBounds, walk.TextCenter|walk.TextSingleLine)
-		}
-	}
-}
-
-func (dm *DesktopMode) paintCardDragOutline(canvas *walk.Canvas, bounds walk.Rectangle) {
-	var tl, br win.POINT
-	tl.X = int32(dm.DragOutlineX)
-	tl.Y = int32(dm.DragOutlineY)
-	br.X = int32(dm.DragOutlineX + dm.DragOutlineW)
-	br.Y = int32(dm.DragOutlineY + dm.DragOutlineH)
-	win.ScreenToClient(dm.BodyWidget.Handle(), &tl)
-	win.ScreenToClient(dm.BodyWidget.Handle(), &br)
-	rect := walk.Rectangle{X: int(tl.X), Y: int(tl.Y), Width: int(br.X - tl.X), Height: int(br.Y - tl.Y)}
-	pen, err := walk.NewCosmeticPen(walk.PenDash, walk.RGB(0xFF, 0xFF, 0xFF))
-	if err != nil {
-		return
-	}
-	defer pen.Dispose()
-	canvas.DrawLinePixels(pen, walk.Point{X: rect.X, Y: rect.Y}, walk.Point{X: rect.X + rect.Width, Y: rect.Y})
-	canvas.DrawLinePixels(pen, walk.Point{X: rect.X, Y: rect.Y + rect.Height}, walk.Point{X: rect.X + rect.Width, Y: rect.Y + rect.Height})
-	canvas.DrawLinePixels(pen, walk.Point{X: rect.X, Y: rect.Y}, walk.Point{X: rect.X, Y: rect.Y + rect.Height})
-	canvas.DrawLinePixels(pen, walk.Point{X: rect.X + rect.Width, Y: rect.Y}, walk.Point{X: rect.X + rect.Width, Y: rect.Y + rect.Height})
-}
-
-func (dm *DesktopMode) loadDragGhostBmp(filePath string) {
-	dm.disposeDragGhostBmp()
-	dm.GhostBmp = ui.GlobalIconBmpCache.GetOrLoad(filePath)
-}
-
-func (dm *DesktopMode) disposeDragGhostBmp() {
-	dm.GhostBmp = nil
 }
 
 // Refresh 刷新桌面模式
