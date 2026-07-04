@@ -88,12 +88,16 @@ type DesktopMode struct {
 	dragOutlineW       int
 	dragOutlineH       int
 
-	// 缩放虚框（DesktopMode 在桌面层绘制，不改变实际大小）
+	// 缩放虚框（DC 绘制在屏幕上，位于所有窗口之上）
 	resizeOutlineCard *GroupCard
 	resizeOutlineX    int
 	resizeOutlineY    int
 	resizeOutlineW    int
 	resizeOutlineH    int
+	prevResizeX       int // 上一帧位置（用于 XOR 擦除）
+	prevResizeY       int
+	prevResizeW       int
+	prevResizeH       int
 
 	// 右键菜单状态
 	isAutoArrange      bool
@@ -367,6 +371,51 @@ func (dm *DesktopMode) delayedSetup() {
 }
 
 
+// drawResizeOutlineWin32 使用 Win32 GDI 在屏幕上绘制缩放边框（XOR 模式，位于所有窗口之上）
+// x, y, w, h 为窗口客户区相对坐标，函数内部转为屏幕坐标
+func (dm *DesktopMode) drawResizeOutlineWin32(x, y, w, h int) {
+	hdc := win.GetDC(0) // 屏幕 DC
+	if hdc == 0 {
+		return
+	}
+	defer win.ReleaseDC(0, hdc)
+
+	// 窗口客户区坐标 → 屏幕坐标
+	screenX := x + dm.workX
+	screenY := y + dm.workY
+
+	// 通过 syscall 加载 GDI32 函数（lxn/win 未导出部分）
+	gdi32 := syscall.NewLazyDLL("gdi32.dll")
+	procSetROP2 := gdi32.NewProc("SetROP2")
+	procCreatePen := gdi32.NewProc("CreatePen")
+	procGetStockObject := gdi32.NewProc("GetStockObject")
+
+	// R2_NOT 模式：直接反转屏幕像素，画两次恢复原样
+	procSetROP2.Call(uintptr(hdc), uintptr(3)) // R2_NOT = 3
+
+	// 创建白色画笔（R2_NOT 下实际效果是反转颜色）
+	pen, _, _ := procCreatePen.Call(uintptr(0), uintptr(2), uintptr(win.RGB(0xFF, 0xFF, 0xFF))) // PS_SOLID = 0
+	if pen == 0 {
+		return
+	}
+	defer gdi32.NewProc("DeleteObject").Call(pen)
+
+	oldPen := win.SelectObject(hdc, win.HGDIOBJ(pen))
+	defer win.SelectObject(hdc, oldPen)
+
+	// 将画刷设为空，避免填充矩形
+	hollowBrush, _, _ := procGetStockObject.Call(uintptr(5)) // HOLLOW_BRUSH = 5
+	oldBrush := win.SelectObject(hdc, win.HGDIOBJ(hollowBrush))
+	defer win.SelectObject(hdc, oldBrush)
+
+	// 绘制矩形边框（使用屏幕坐标）
+	win.MoveToEx(hdc, screenX, screenY, nil)
+	win.LineTo(hdc, int32(screenX+w), int32(screenY))
+	win.LineTo(hdc, int32(screenX+w), int32(screenY+h))
+	win.LineTo(hdc, int32(screenX), int32(screenY+h))
+	win.LineTo(hdc, int32(screenX), int32(screenY))
+}
+
 // reapplyCardPositions 重新应用所有卡片的绝对定位，并确保卡片 Z-order 在 bodyWidget 上方
 func (dm *DesktopMode) reapplyCardPositions() {
 	for i, card := range dm.cards {
@@ -425,11 +474,6 @@ func (dm *DesktopMode) paintDesktop(canvas *walk.Canvas, updateBounds walk.Recta
 	// 8. 卡片拖拽虚框（不移动容器，在桌面层绘制）
 	if dm.dragOutlineCard != nil {
 		dm.paintCardDragOutline(canvas, bounds)
-	}
-
-	// 9. 缩放虚框（在桌面层绘制，避免被 bodyWidget 裁剪）
-	if dm.resizeOutlineCard != nil {
-		dm.paintCardResizeOutline(canvas, bounds)
 	}
 
 	return nil
@@ -562,35 +606,6 @@ func (dm *DesktopMode) paintCardDragOutline(canvas *walk.Canvas, bounds walk.Rec
 	}
 
 	pen, err := walk.NewCosmeticPen(walk.PenDash, walk.RGB(0xFF, 0xFF, 0xFF))
-	if err != nil {
-		return
-	}
-	defer pen.Dispose()
-
-	canvas.DrawLinePixels(pen, walk.Point{X: rect.X, Y: rect.Y}, walk.Point{X: rect.X + rect.Width, Y: rect.Y})
-	canvas.DrawLinePixels(pen, walk.Point{X: rect.X, Y: rect.Y + rect.Height}, walk.Point{X: rect.X + rect.Width, Y: rect.Y + rect.Height})
-	canvas.DrawLinePixels(pen, walk.Point{X: rect.X, Y: rect.Y}, walk.Point{X: rect.X, Y: rect.Y + rect.Height})
-	canvas.DrawLinePixels(pen, walk.Point{X: rect.X + rect.Width, Y: rect.Y}, walk.Point{X: rect.X + rect.Width, Y: rect.Y + rect.Height})
-}
-
-// paintCardResizeOutline 绘制卡片缩放虚框（在桌面层绘制，避免被 bodyWidget 裁剪）
-func (dm *DesktopMode) paintCardResizeOutline(canvas *walk.Canvas, _ walk.Rectangle) {
-	var tl, br win.POINT
-	tl.X = int32(dm.resizeOutlineX)
-	tl.Y = int32(dm.resizeOutlineY)
-	br.X = int32(dm.resizeOutlineX + dm.resizeOutlineW)
-	br.Y = int32(dm.resizeOutlineY + dm.resizeOutlineH)
-	win.ScreenToClient(dm.bodyWidget.Handle(), &tl)
-	win.ScreenToClient(dm.bodyWidget.Handle(), &br)
-
-	rect := walk.Rectangle{
-		X: int(tl.X), Y: int(tl.Y),
-		Width: int(br.X - tl.X), Height: int(br.Y - tl.Y),
-	}
-
-	// 使用卡片颜色画实线边框
-	col := dm.resizeOutlineCard.GroupColor()
-	pen, err := walk.NewCosmeticPen(walk.PenSolid, walk.RGB(col.R, col.G, col.B))
 	if err != nil {
 		return
 	}
@@ -1127,20 +1142,29 @@ func (dm *DesktopMode) onCardDragOutlineEnd(card *GroupCard) {
 	dm.bodyWidget.Invalidate()
 }
 
-// onCardResizeOutline 卡片缩放虚框更新
+// onCardResizeOutline 卡片缩放虚框更新（使用 XOR 屏幕绘制，位于所有窗口之上）
 func (dm *DesktopMode) onCardResizeOutline(card *GroupCard, newX, newY, newW, newH int) {
+	// 擦除上一帧边框（XOR 再画一次恢复原样）
+	if dm.resizeOutlineCard != nil {
+		dm.drawResizeOutlineWin32(dm.resizeOutlineX, dm.resizeOutlineY, dm.resizeOutlineW, dm.resizeOutlineH)
+	}
+
+	// 绘制新边框
 	dm.resizeOutlineCard = card
 	dm.resizeOutlineX = newX
 	dm.resizeOutlineY = newY
 	dm.resizeOutlineW = newW
 	dm.resizeOutlineH = newH
-	dm.dragThrottleInvalidate()
+	dm.drawResizeOutlineWin32(newX, newY, newW, newH)
 }
 
 // onCardResizeOutlineEnd 卡片缩放虚框清除
 func (dm *DesktopMode) onCardResizeOutlineEnd(card *GroupCard) {
+	// XOR 擦除最后一帧边框
+	if dm.resizeOutlineCard != nil {
+		dm.drawResizeOutlineWin32(dm.resizeOutlineX, dm.resizeOutlineY, dm.resizeOutlineW, dm.resizeOutlineH)
+	}
 	dm.resizeOutlineCard = nil
-	dm.bodyWidget.Invalidate()
 }
 
 // dragThrottleInvalidate 拖拽期间节流重绘（最多 ~33fps），避免连续完整重绘
