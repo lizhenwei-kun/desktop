@@ -88,6 +88,13 @@ type DesktopMode struct {
 	dragOutlineW       int
 	dragOutlineH       int
 
+	// 缩放虚框（DesktopMode 在桌面层绘制，不改变实际大小）
+	resizeOutlineCard *GroupCard
+	resizeOutlineX    int
+	resizeOutlineY    int
+	resizeOutlineW    int
+	resizeOutlineH    int
+
 	// 右键菜单状态
 	isAutoArrange      bool
 	isAlignToGrid      bool
@@ -420,6 +427,11 @@ func (dm *DesktopMode) paintDesktop(canvas *walk.Canvas, updateBounds walk.Recta
 		dm.paintCardDragOutline(canvas, bounds)
 	}
 
+	// 9. 缩放虚框（在桌面层绘制，避免被 bodyWidget 裁剪）
+	if dm.resizeOutlineCard != nil {
+		dm.paintCardResizeOutline(canvas, bounds)
+	}
+
 	return nil
 }
 
@@ -550,6 +562,35 @@ func (dm *DesktopMode) paintCardDragOutline(canvas *walk.Canvas, bounds walk.Rec
 	}
 
 	pen, err := walk.NewCosmeticPen(walk.PenDash, walk.RGB(0xFF, 0xFF, 0xFF))
+	if err != nil {
+		return
+	}
+	defer pen.Dispose()
+
+	canvas.DrawLinePixels(pen, walk.Point{X: rect.X, Y: rect.Y}, walk.Point{X: rect.X + rect.Width, Y: rect.Y})
+	canvas.DrawLinePixels(pen, walk.Point{X: rect.X, Y: rect.Y + rect.Height}, walk.Point{X: rect.X + rect.Width, Y: rect.Y + rect.Height})
+	canvas.DrawLinePixels(pen, walk.Point{X: rect.X, Y: rect.Y}, walk.Point{X: rect.X, Y: rect.Y + rect.Height})
+	canvas.DrawLinePixels(pen, walk.Point{X: rect.X + rect.Width, Y: rect.Y}, walk.Point{X: rect.X + rect.Width, Y: rect.Y + rect.Height})
+}
+
+// paintCardResizeOutline 绘制卡片缩放虚框（在桌面层绘制，避免被 bodyWidget 裁剪）
+func (dm *DesktopMode) paintCardResizeOutline(canvas *walk.Canvas, _ walk.Rectangle) {
+	var tl, br win.POINT
+	tl.X = int32(dm.resizeOutlineX)
+	tl.Y = int32(dm.resizeOutlineY)
+	br.X = int32(dm.resizeOutlineX + dm.resizeOutlineW)
+	br.Y = int32(dm.resizeOutlineY + dm.resizeOutlineH)
+	win.ScreenToClient(dm.bodyWidget.Handle(), &tl)
+	win.ScreenToClient(dm.bodyWidget.Handle(), &br)
+
+	rect := walk.Rectangle{
+		X: int(tl.X), Y: int(tl.Y),
+		Width: int(br.X - tl.X), Height: int(br.Y - tl.Y),
+	}
+
+	// 使用卡片颜色画实线边框
+	col := dm.resizeOutlineCard.GroupColor()
+	pen, err := walk.NewCosmeticPen(walk.PenSolid, walk.RGB(col.R, col.G, col.B))
 	if err != nil {
 		return
 	}
@@ -1086,6 +1127,22 @@ func (dm *DesktopMode) onCardDragOutlineEnd(card *GroupCard) {
 	dm.bodyWidget.Invalidate()
 }
 
+// onCardResizeOutline 卡片缩放虚框更新
+func (dm *DesktopMode) onCardResizeOutline(card *GroupCard, newX, newY, newW, newH int) {
+	dm.resizeOutlineCard = card
+	dm.resizeOutlineX = newX
+	dm.resizeOutlineY = newY
+	dm.resizeOutlineW = newW
+	dm.resizeOutlineH = newH
+	dm.dragThrottleInvalidate()
+}
+
+// onCardResizeOutlineEnd 卡片缩放虚框清除
+func (dm *DesktopMode) onCardResizeOutlineEnd(card *GroupCard) {
+	dm.resizeOutlineCard = nil
+	dm.bodyWidget.Invalidate()
+}
+
 // dragThrottleInvalidate 拖拽期间节流重绘（最多 ~33fps），避免连续完整重绘
 func (dm *DesktopMode) dragThrottleInvalidate() {
 	if time.Since(dm.lastDragMoveTime) < 30*time.Millisecond {
@@ -1260,6 +1317,15 @@ func (dm *DesktopMode) setupCardActions(card *GroupCard, grp config.Group) {
 			dm.bodyWidget.Invalidate()
 		}
 	})
+
+	// 缩放结束时触发桌面级刷新（等效于右键菜单的"刷新"）
+	card.SetOnRefresh(func() {
+		dm.refreshDesktop()
+	})
+
+	// 缩放虚框回调（DesktopMode 在桌面层绘制）
+	card.SetOnResizeOutline(dm.onCardResizeOutline)
+	card.SetOnResizeOutlineEnd(dm.onCardResizeOutlineEnd)
 }
 
 // refreshCards 刷新所有卡片

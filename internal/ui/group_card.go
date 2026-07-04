@@ -112,6 +112,9 @@ type GroupCard struct {
 	// 卡片拖拽虚框位置更新回调（DesktopMode 在桌面层画虚框）
 	onCardDragOutline     func(card *GroupCard, newX, newY int)
 	onCardDragOutlineEnd  func(card *GroupCard)
+	// 缩放虚框回调（DesktopMode 在桌面层画边框）
+	onResizeOutline    func(card *GroupCard, newX, newY, newW, newH int)
+	onResizeOutlineEnd func(card *GroupCard)
 }
 
 // ResizeEdge 缩放方向
@@ -498,18 +501,25 @@ func (gc *GroupCard) handleResize(x, y int) {
 	newW = ClampInt(newW, cardMinWidth, 2000)
 	newH = ClampInt(newH, cardMinHeight, 2000)
 
-	// 仅保存计算结果（不改变容器/body尺寸），触发重绘显示边框
+	// 仅保存计算结果（不改变容器/body尺寸），通知 DesktopMode 绘制缩放边框
 	gc.resizeNewX = newX
 	gc.resizeNewY = newY
 	gc.resizeNewW = newW
 	gc.resizeNewH = newH
 
-	gc.bodyWidget.Invalidate()
+	if gc.onResizeOutline != nil {
+		gc.onResizeOutline(gc, newX, newY, newW, newH)
+	}
 }
 
 // endResize 结束缩放：实际应用容器/body尺寸
 func (gc *GroupCard) endResize() {
 	gc.isResizing = false
+
+	// 清除 DesktopMode 上的缩放边框
+	if gc.onResizeOutlineEnd != nil {
+		gc.onResizeOutlineEnd(gc)
+	}
 
 	// 将拖拽中累积的新尺寸应用到实际容器
 	gc.size.Width = float64(gc.resizeNewW) / float64(gc.workW)
@@ -534,7 +544,12 @@ func (gc *GroupCard) endResize() {
 		gc.onPositionChanged(gc.groupName, gc.position.X, gc.position.Y)
 	}
 
-	gc.bodyWidget.Invalidate()
+	// 触发桌面级刷新（重新加载壁纸和桌面项，等效于右键菜单的"刷新"）
+	if gc.onRefresh != nil {
+		gc.onRefresh()
+	} else {
+		gc.refreshItems()
+	}
 }
 
 // pixelX 获取当前像素X坐标
@@ -740,12 +755,6 @@ func (gc *GroupCard) paintBody(canvas *walk.Canvas, updateBounds walk.Rectangle)
 		return nil
 	}
 
-	// 缩放拖拽中只画边框，不画实际内容
-	if gc.isResizing {
-		gc.paintResizeOutline(canvas, bounds)
-		return nil
-	}
-
 	// 绘制半透明背景
 	gc.paintBackground(canvas, bounds)
 
@@ -791,34 +800,6 @@ func (gc *GroupCard) paintDragOutline(canvas *walk.Canvas, bounds walk.Rectangle
 	canvas.DrawLinePixels(pen, walk.Point{X: bounds.Width - 1, Y: 0}, walk.Point{X: bounds.Width - 1, Y: bounds.Height})
 }
 
-// paintResizeOutline 绘制缩放拖拽虚框（缩放过程中只显示边框，不改变实际大小）
-func (gc *GroupCard) paintResizeOutline(canvas *walk.Canvas, bounds walk.Rectangle) {
-	// 计算新边框在 bodyWidget 客户区中的相对位置
-	curPixelX := gc.pixelX()
-	curPixelY := gc.pixelY()
-
-	// 新边框左上角相对于 bodyWidget 左上角的偏移
-	outlineX := gc.resizeNewX - curPixelX
-	outlineY := gc.resizeNewY - curPixelY
-	outlineW := gc.resizeNewW
-	outlineH := gc.resizeNewH
-
-	// 用卡片颜色画 2px 实线边框
-	pen, err := walk.NewCosmeticPen(walk.PenSolid, walk.RGB(gc.groupColor.R, gc.groupColor.G, gc.groupColor.B))
-	if err != nil {
-		return
-	}
-	defer pen.Dispose()
-
-	// 上
-	canvas.DrawLinePixels(pen, walk.Point{X: outlineX, Y: outlineY}, walk.Point{X: outlineX + outlineW, Y: outlineY})
-	// 下
-	canvas.DrawLinePixels(pen, walk.Point{X: outlineX, Y: outlineY + outlineH}, walk.Point{X: outlineX + outlineW, Y: outlineY + outlineH})
-	// 左
-	canvas.DrawLinePixels(pen, walk.Point{X: outlineX, Y: outlineY}, walk.Point{X: outlineX, Y: outlineY + outlineH})
-	// 右
-	canvas.DrawLinePixels(pen, walk.Point{X: outlineX + outlineW, Y: outlineY}, walk.Point{X: outlineX + outlineW, Y: outlineY + outlineH})
-}
 
 // paintDragGhost 绘制拖拽ghost（半透明跟随鼠标）
 func (gc *GroupCard) paintDragGhost(canvas *walk.Canvas, _ walk.Rectangle) {
@@ -1084,6 +1065,11 @@ func (gc *GroupCard) SetOnColor(fn func(name string)) {
 	gc.onColor = fn
 }
 
+// GroupColor 返回卡片颜色
+func (gc *GroupCard) GroupColor() color.RGBA {
+	return gc.groupColor
+}
+
 // SetGroupColor 直接更新卡片颜色并重绘（避免销毁重建）
 func (gc *GroupCard) SetGroupColor(colorStr string) {
 	gc.groupColor = ParseHexColor(colorStr)
@@ -1202,4 +1188,19 @@ func (gc *GroupCard) SetOnCardDragOutline(fn func(card *GroupCard, newX, newY in
 // SetOnCardDragOutlineEnd 设置卡片拖拽结束回调
 func (gc *GroupCard) SetOnCardDragOutlineEnd(fn func(card *GroupCard)) {
 	gc.onCardDragOutlineEnd = fn
+}
+
+// SetOnRefresh 设置桌面刷新回调（缩放结束时调用，等效于右键刷新）
+func (gc *GroupCard) SetOnRefresh(fn func()) {
+	gc.onRefresh = fn
+}
+
+// SetOnResizeOutline 设置缩放虚框回调（DesktopMode 在桌面层绘制边框）
+func (gc *GroupCard) SetOnResizeOutline(fn func(card *GroupCard, newX, newY, newW, newH int)) {
+	gc.onResizeOutline = fn
+}
+
+// SetOnResizeOutlineEnd 设置缩放虚框结束回调
+func (gc *GroupCard) SetOnResizeOutlineEnd(fn func(card *GroupCard)) {
+	gc.onResizeOutlineEnd = fn
 }
