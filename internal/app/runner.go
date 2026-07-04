@@ -14,6 +14,7 @@ import (
 	"desktop_go/internal/group"
 	"desktop_go/internal/logger"
 	"desktop_go/internal/ui"
+	desktopmode "desktop_go/internal/ui/desktop"
 )
 
 // 运行模式常量
@@ -124,7 +125,7 @@ func (r *Runner) runDesktopMode() error {
 	})
 
 	// 设置桌面模式 UI
-	dm := ui.NewDesktopMode(mw, r.manager, r.winAPI, r.lifecycle)
+	dm := desktopmode.NewDesktopMode(mw, r.manager, r.winAPI, r.lifecycle)
 	if err := dm.Setup(); err != nil {
 		return err
 	}

@@ -28,9 +28,9 @@ func TileHeight() int { return desktopIconItemHeight }
 
 // end用 Win32 GetTextExtentPoint32 真实测量文本尺寸，
 // 确保磁贴宽度能容纳 4 个汉字或 9 个西文字符（取较大值）。
-func ensureTileSizeMeasured(_ *walk.Canvas) {
+func EnsureTileSizeMeasured(_ *walk.Canvas) {
 	// 检查是否需要强制重新测量（图标大小变更后）
-	if isTileRemeasureNeeded() {
+	if IsTileRemeasureNeeded() {
 		// 重置 sync.Once，允许重新测量
 		tileSizeOnce = sync.Once{}
 	}
@@ -121,7 +121,7 @@ func ensureTileSizeMeasured(_ *walk.Canvas) {
 		if desktopIconItemWidth < 80 {
 			desktopIconItemWidth = 80
 		}
-		desktopIconItemHeight = desktopIconLabelTop + desktopIconLineHeight*2 + 4
+		desktopIconItemHeight = DesktopIconLabelTop + DesktopIconLineHeight*2 + 4
 
 		logger.Debug("ensureTileSizeMeasured: font=%s %dpt, tile=%dx%d (measured cjk=%d ascii=%d)",
 			family, ptSize, desktopIconItemWidth, desktopIconItemHeight, cjkW, asciiW)
@@ -245,7 +245,7 @@ func TruncateText(text string, maxRunes int) string {
 	return string(runes[:maxRunes-1]) + "…"
 }
 
-func drawHoverRect(canvas *walk.Canvas, bounds walk.Rectangle) {
+func DrawHoverRect(canvas *walk.Canvas, bounds walk.Rectangle) {
 	fillColor := color.RGBA{R: 0xE8, G: 0xF4, B: 0xFF, A: 0x0D}
 	borderColor := color.RGBA{R: 0x4A, G: 0xA0, B: 0xFF, A: 0x0D}
 

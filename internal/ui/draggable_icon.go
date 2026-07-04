@@ -13,13 +13,13 @@ import (
 
 // 图标磁贴规格常量
 const (
-	desktopIconSize       = 48
-	desktopIconTop        = 2
-	desktopIconLabelTop   = 52
-	desktopIconLineHeight = 24
-	desktopIconGap        = 8  // 图标磁贴间距
-	longPressDragDelay    = 1 * time.Second  // 卡片拖拽延迟（标题栏长按）
-	iconDragDelay         = 300 * time.Millisecond  // 图标拖拽延迟（卡片内/未分组图标）
+	DesktopIconSize       = 48
+	DesktopIconTop        = 2
+	DesktopIconLabelTop   = 52
+	DesktopIconLineHeight = 24
+	DesktopIconGap        = 8  // 图标磁贴间距
+	LongPressDragDelay    = 1 * time.Second  // 卡片拖拽延迟（标题栏长按）
+	IconDragDelay         = 300 * time.Millisecond  // 图标拖拽延迟（卡片内/未分组图标）
 )
 
 // DraggableIcon 可拖动图标组件
@@ -95,7 +95,7 @@ func NewDraggableIcon(parent walk.Container, filePath, groupName string, executo
 
 // checkLongPress 检测长按触发拖拽
 func (di *DraggableIcon) checkLongPress() {
-	time.Sleep(longPressDragDelay)
+	time.Sleep(LongPressDragDelay)
 	if di.isPressed {
 		di.isDragging = true
 		di.widget.Synchronize(func() {
@@ -111,7 +111,7 @@ func (di *DraggableIcon) checkLongPress() {
 // paint 绘制图标磁贴
 func (di *DraggableIcon) paint(canvas *walk.Canvas, updateBounds walk.Rectangle) error {
 	// 首次绘制时用 canvas 精确测量磁贴尺寸
-	ensureTileSizeMeasured(canvas)
+	EnsureTileSizeMeasured(canvas)
 
 	// 同步 widget 尺寸（确保与动态计算的磁贴尺寸一致）
 	di.widget.SetMinMaxSizePixels(
@@ -158,14 +158,14 @@ func (di *DraggableIcon) drawIcon(canvas *walk.Canvas, bounds walk.Rectangle) {
 	defer bmp.Dispose()
 
 	// 居中绘制图标
-	iconX := (bounds.Width - desktopIconSize) / 2
-	iconY := desktopIconTop
+	iconX := (bounds.Width - DesktopIconSize) / 2
+	iconY := DesktopIconTop
 
 	canvas.DrawBitmapWithOpacityPixels(bmp, walk.Rectangle{
 		X:      bounds.X + iconX,
 		Y:      bounds.Y + iconY,
-		Width:  desktopIconSize,
-		Height: desktopIconSize,
+		Width:  DesktopIconSize,
+		Height: DesktopIconSize,
 	}, 255)
 }
 
@@ -178,12 +178,12 @@ func (di *DraggableIcon) drawLabel(canvas *walk.Canvas, bounds walk.Rectangle) {
 	defer font.Dispose()
 
 	text := di.displayName
-	lines := splitTextToLines(text, 4)
+	lines := SplitTextToLines(text, 4)
 
 	textColor := color.RGBA{R: 0xFF, G: 0xFF, B: 0xFF, A: 0xFF}
 	shadowColor := color.RGBA{R: 0x00, G: 0x00, B: 0x00, A: 0xCC}
 
-	labelTop := bounds.Y + desktopIconLabelTop
+	labelTop := bounds.Y + DesktopIconLabelTop
 
 	for i, line := range lines {
 		if i >= 2 {
@@ -193,12 +193,12 @@ func (di *DraggableIcon) drawLabel(canvas *walk.Canvas, bounds walk.Rectangle) {
 			line = TruncateText(line, 3)
 		}
 
-		y := labelTop + i*desktopIconLineHeight
+		y := labelTop + i*DesktopIconLineHeight
 		textBounds := walk.Rectangle{
 			X:      bounds.X,
 			Y:      y,
 			Width:  desktopIconItemWidth,
-			Height: desktopIconLineHeight,
+			Height: DesktopIconLineHeight,
 		}
 
 		shadowBounds := textBounds
@@ -250,8 +250,8 @@ func getDisplayName(filePath string) string {
 	return strings.TrimSuffix(name, ext)
 }
 
-// splitTextToLines 将文本拆分为多行，优先在空格处换行，最大 maxRunes 个汉字/行
-func splitTextToLines(text string, maxCJK int) []string {
+// SplitTextToLines 将文本拆分为多行，优先在空格处换行，最大 maxRunes 个汉字/行
+func SplitTextToLines(text string, maxCJK int) []string {
 	maxWidth := maxCJK * 2 // 全角2单位，半角1单位，最大宽度8（4中文/8英文）
 	runes := []rune(text)
 

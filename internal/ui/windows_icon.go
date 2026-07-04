@@ -100,8 +100,8 @@ var (
 	procCoInitializeEx = ole32.NewProc("CoInitializeEx")
 )
 
-// comInitThread 在当前线程初始化 COM（每个线程都需要独立初始化）
-func comInitThread() {
+// ComInitThread 在当前线程初始化 COM（每个线程都需要独立初始化）
+func ComInitThread() {
 	procCoInitializeEx.Call(0, 0x2) // COINIT_APARTMENTTHREADED; 重复调用是安全的
 }
 
@@ -321,7 +321,7 @@ func (ie *IconExtractor) extractIconExtraLarge(filePath string) (image.Image, er
 	// 锁定 goroutine 到 OS 线程，确保 COM 在当前线程正确初始化
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
-	comInitThread()
+	ComInitThread()
 
 	pathPtr, _ := syscall.UTF16PtrFromString(filePath)
 

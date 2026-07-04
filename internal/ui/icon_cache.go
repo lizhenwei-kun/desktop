@@ -6,28 +6,28 @@ import (
 	"github.com/lxn/walk"
 )
 
-// globalIconBmpCache 全局图标 bitmap 缓存
+// GlobalIconBmpCache 全局图标 bitmap 缓存
 // 所有访问均在 walk 主 UI 线程中，无需加锁
-var globalIconBmpCache = newIconBmpCache()
+var GlobalIconBmpCache = newIconBmpCache()
 
-// iconBmpCache 图标 bitmap 缓存
-type iconBmpCache struct {
+// IconBmpCache 图标 bitmap 缓存
+type IconBmpCache struct {
 	cache map[string]*walk.Bitmap
 }
 
-func newIconBmpCache() *iconBmpCache {
-	return &iconBmpCache{
+func newIconBmpCache() *IconBmpCache {
+	return &IconBmpCache{
 		cache: make(map[string]*walk.Bitmap),
 	}
 }
 
 // Get 获取缓存的 bitmap，未缓存时返回 nil
-func (c *iconBmpCache) Get(path string) *walk.Bitmap {
+func (c *IconBmpCache) Get(path string) *walk.Bitmap {
 	return c.cache[path]
 }
 
 // GetOrLoad 获取缓存的 bitmap，不存在则提取并缓存
-func (c *iconBmpCache) GetOrLoad(path string) *walk.Bitmap {
+func (c *IconBmpCache) GetOrLoad(path string) *walk.Bitmap {
 	if bmp, ok := c.cache[path]; ok {
 		return bmp
 	}
@@ -35,7 +35,7 @@ func (c *iconBmpCache) GetOrLoad(path string) *walk.Bitmap {
 }
 
 // LoadAll 批量预加载图标到缓存
-func (c *iconBmpCache) LoadAll(paths []string) {
+func (c *IconBmpCache) LoadAll(paths []string) {
 	extractor := NewIconExtractor()
 	for _, path := range paths {
 		if _, ok := c.cache[path]; ok {
@@ -54,7 +54,7 @@ func (c *iconBmpCache) LoadAll(paths []string) {
 }
 
 // Remove 移除并释放单个缓存
-func (c *iconBmpCache) Remove(path string) {
+func (c *IconBmpCache) Remove(path string) {
 	if bmp, ok := c.cache[path]; ok {
 		bmp.Dispose()
 		delete(c.cache, path)
@@ -62,7 +62,7 @@ func (c *iconBmpCache) Remove(path string) {
 }
 
 // Clear 清理并释放所有缓存
-func (c *iconBmpCache) Clear() {
+func (c *IconBmpCache) Clear() {
 	for _, bmp := range c.cache {
 		bmp.Dispose()
 	}
@@ -70,7 +70,7 @@ func (c *iconBmpCache) Clear() {
 }
 
 // extractAndCache 提取图标并加入缓存
-func (c *iconBmpCache) extractAndCache(path string) *walk.Bitmap {
+func (c *IconBmpCache) extractAndCache(path string) *walk.Bitmap {
 	extractor := NewIconExtractor()
 	iconImg, err := extractor.GetIconImage(path)
 	if err != nil || iconImg == nil {

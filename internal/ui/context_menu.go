@@ -162,18 +162,18 @@ const (
 	REG_EXPAND_SZ       = 2
 	REG_MULTI_SZ        = 7
 
-	maxCmdIDDynamic     = 0x3000 // 动态命令ID起始值（桌面）
+	MaxCmdIDDynamic     = 0x3000 // 动态命令ID起始值（桌面）
 	maxCmdIDIconDynamic = 0x4000 // 动态命令ID起始值（图标）
 	maxCmdIDSendTo      = 0x5000 // 发送到动态命令ID起始值
 )
 
-// registryShellItem 注册表shell菜单项
-type registryShellItem struct {
-	verb     string // 动词名（如 "open", "edit"）
-	name     string // 显示名称
-	command  string // 执行命令
-	isDir    bool   // 是否文件夹类型路径
-	cmdID    int    // 动态分配的命令ID（桌面/图标菜单共用）
+// RegistryShellItem 注册表shell菜单项
+type RegistryShellItem struct {
+	Verb     string // 动词名（如 "open", "edit"）
+	Name     string // 显示名称
+	Command  string // 执行命令
+	IsDir    bool   // 是否文件夹类型路径
+	CmdID    int    // 动态分配的命令ID（桌面/图标菜单共用）
 }
 
 // regKey 注册表键句柄
@@ -293,8 +293,8 @@ func resolveMUIVerb(muiVerb string) string {
 
 // readRegistryShellItems 读取指定注册表路径下的 shell 菜单项
 // 格式: HKCR\Directory\Background\shell\<verb>\command\(Default)
-func readRegistryShellItems(regRoot uintptr, subKey string) []registryShellItem {
-	var items []registryShellItem
+func readRegistryShellItems(regRoot uintptr, subKey string) []RegistryShellItem {
+	var items []RegistryShellItem
 
 	hKey := regOpenKey(regRoot, subKey)
 	if hKey == 0 {
@@ -340,11 +340,11 @@ func readRegistryShellItems(regRoot uintptr, subKey string) []registryShellItem 
 			continue
 		}
 
-		items = append(items, registryShellItem{
-			verb:    verb,
-			name:    itemName,
-			command: cmdLine,
-			isDir:   false,
+		items = append(items, RegistryShellItem{
+			Verb:    verb,
+			Name:    itemName,
+			Command: cmdLine,
+			IsDir:   false,
 		})
 	}
 	return items
@@ -352,7 +352,7 @@ func readRegistryShellItems(regRoot uintptr, subKey string) []registryShellItem 
 
 // appendRegistryMenuItems 将注册表菜单项附加到弹出菜单
 // 返回添加的最后一个命令ID（供后续使用）
-func appendRegistryMenuItems(menu hMenu, items []registryShellItem, cmdIDStart int) int {
+func appendRegistryMenuItems(menu hMenu, items []RegistryShellItem, cmdIDStart int) int {
 	if len(items) == 0 {
 		return cmdIDStart
 	}
@@ -361,19 +361,19 @@ func appendRegistryMenuItems(menu hMenu, items []registryShellItem, cmdIDStart i
 
 	nextID := cmdIDStart
 	for _, item := range items {
-		if item.name == "" || item.name == "-" {
+		if item.Name == "" || item.Name == "-" {
 			appendMenuSeparator(menu)
 			continue
 		}
-		item.cmdID = nextID
-		appendMenu(menu, MF_STRING, uintptr(nextID), syscall.StringToUTF16Ptr(item.name))
+		item.CmdID = nextID
+		appendMenu(menu, MF_STRING, uintptr(nextID), syscall.StringToUTF16Ptr(item.Name))
 		nextID++
 	}
 	return nextID
 }
 
 // executeRegistryCommand 执行注册表菜单命令
-func executeRegistryCommand(cmdLine string, filePath string) {
+func ExecuteRegistryCommand(cmdLine string, filePath string) {
 	if cmdLine == "" {
 		return
 	}
@@ -406,7 +406,7 @@ func executeRegistryCommand(cmdLine string, filePath string) {
 }
 
 // readDesktopRegistryMenu 读取桌面背景的注册表菜单项
-func readDesktopRegistryMenu() []registryShellItem {
+func ReadDesktopRegistryMenu() []RegistryShellItem {
 	// 先尝试当前用户设置，再尝试全局设置
 	items := readRegistryShellItems(regHKEY_CURRENT_USER, `Software\Classes\Directory\Background\shell`)
 	if len(items) == 0 {
@@ -416,8 +416,8 @@ func readDesktopRegistryMenu() []registryShellItem {
 }
 
 // readFileRegistryMenu 读取文件类型的注册表菜单项
-func readFileRegistryMenu(filePath string) []registryShellItem {
-	var items []registryShellItem
+func ReadFileRegistryMenu(filePath string) []RegistryShellItem {
+	var items []RegistryShellItem
 
 	// 1. 所有文件通用 (HKCU 优先)
 	items = readRegistryShellItems(regHKEY_CURRENT_USER, `Software\Classes\*\shell`)
@@ -456,10 +456,10 @@ func readFileRegistryMenu(filePath string) []registryShellItem {
 }
 
 // readSendToMenu 读取"发送到"菜单项
-func readSendToMenu() []registryShellItem {
+func ReadSendToMenu() []RegistryShellItem {
 	// 从 ShellNew\SendTo 或实际的 SendTo 文件夹读取
 	sendToPath := filepath.Join(os.Getenv("APPDATA"), `Microsoft\Windows\SendTo`)
-	var items []registryShellItem
+	var items []RegistryShellItem
 	entries, err := os.ReadDir(sendToPath)
 	if err != nil {
 		return nil
@@ -473,11 +473,11 @@ func readSendToMenu() []registryShellItem {
 		}
 		displayName := strings.TrimSuffix(name, filepath.Ext(name))
 		fullPath := filepath.Join(sendToPath, name)
-		items = append(items, registryShellItem{
-			verb:    name,
-			name:    displayName,
-			command: fullPath,
-			cmdID:   cmdID,
+		items = append(items, RegistryShellItem{
+			Verb:    name,
+			Name:    displayName,
+			Command: fullPath,
+			CmdID:   cmdID,
 		})
 		cmdID++
 	}
@@ -494,240 +494,6 @@ func executeSendToMenu(sendToPath, filePath string) {
 		copyFileOrDir(filePath, filepath.Dir(sendToPath))
 	} else {
 		copyFileOrDir(filePath, sendToPath)
-	}
-}
-
-// ============================================================
-// 桌面右键菜单 —— 与 Windows 系统桌面右键菜单功能列表一致
-// ============================================================
-
-// ShowDesktopContextMenu 在指定屏幕坐标显示桌面右键菜单
-// hwnd: 菜单消息的父窗口句柄；x, y: 屏幕坐标
-func (dm *DesktopMode) ShowDesktopContextMenu(hwnd win.HWND, x, y int) {
-	// 创建弹出菜单
-	hMenu := createPopupMenu()
-	if hMenu == 0 {
-		return
-	}
-	defer destroyMenu(hMenu)
-
-	// ===== 第1区：查看 =====
-	viewMenu := createPopupMenu()
-	if viewMenu != 0 {
-		appendMenu(viewMenu, MF_STRING, idViewLargeIcons, syscall.StringToUTF16Ptr("大图标"))
-		appendMenu(viewMenu, MF_STRING, idViewMediumIcons, syscall.StringToUTF16Ptr("中图标"))
-		appendMenu(viewMenu, MF_STRING, idViewSmallIcons, syscall.StringToUTF16Ptr("小图标"))
-
-		// 当前图标大小对应的勾选
-		curSize := getDesktopIconSize()
-		switch curSize {
-		case iconSizeLarge:
-			checkMenuRadioItem(viewMenu, idViewLargeIcons, idViewSmallIcons, idViewLargeIcons)
-		case iconSizeMedium:
-			checkMenuRadioItem(viewMenu, idViewLargeIcons, idViewSmallIcons, idViewMediumIcons)
-		case iconSizeSmall:
-			checkMenuRadioItem(viewMenu, idViewLargeIcons, idViewSmallIcons, idViewSmallIcons)
-		}
-
-		appendMenuSeparator(viewMenu)
-		appendMenu(viewMenu, MF_STRING, idViewAutoArrange, syscall.StringToUTF16Ptr("自动排列图标"))
-		appendMenu(viewMenu, MF_STRING, idViewAlignToGrid, syscall.StringToUTF16Ptr("将图标与网格对齐"))
-		appendMenuSeparator(viewMenu)
-		appendMenu(viewMenu, MF_STRING, idViewShowDesktopIcons, syscall.StringToUTF16Ptr("显示桌面图标"))
-
-		// 勾选当前状态
-		if dm.isAutoArrange {
-			checkMenuItem(viewMenu, idViewAutoArrange, MF_CHECKED)
-		}
-		if dm.isAlignToGrid {
-			checkMenuItem(viewMenu, idViewAlignToGrid, MF_CHECKED)
-		}
-		if dm.isShowDesktopIcons {
-			checkMenuItem(viewMenu, idViewShowDesktopIcons, MF_CHECKED)
-		}
-
-		appendMenu(hMenu, MF_POPUP|MF_STRING, uintptr(viewMenu), syscall.StringToUTF16Ptr("查看(&V)"))
-	}
-
-	// ===== 排序方式 =====
-	sortMenu := createPopupMenu()
-	if sortMenu != 0 {
-		appendMenu(sortMenu, MF_STRING, idSortByName, syscall.StringToUTF16Ptr("名称"))
-		appendMenu(sortMenu, MF_STRING, idSortBySize, syscall.StringToUTF16Ptr("大小"))
-		appendMenu(sortMenu, MF_STRING, idSortByType, syscall.StringToUTF16Ptr("项目类型"))
-		appendMenu(sortMenu, MF_STRING, idSortByDate, syscall.StringToUTF16Ptr("修改日期"))
-
-		// 当前排序方式对应的勾选
-		switch dm.sortBy {
-		case sortByName:
-			checkMenuRadioItem(sortMenu, idSortByName, idSortByDate, idSortByName)
-		case sortBySize:
-			checkMenuRadioItem(sortMenu, idSortByName, idSortByDate, idSortBySize)
-		case sortByType:
-			checkMenuRadioItem(sortMenu, idSortByName, idSortByDate, idSortByType)
-		case sortByDate:
-			checkMenuRadioItem(sortMenu, idSortByName, idSortByDate, idSortByDate)
-		}
-
-		appendMenu(hMenu, MF_POPUP|MF_STRING, uintptr(sortMenu), syscall.StringToUTF16Ptr("排序方式(&O)"))
-	}
-
-	// ===== 分隔线 =====
-	appendMenuSeparator(hMenu)
-
-	// ===== 刷新 =====
-	appendMenu(hMenu, MF_STRING, idRefresh, syscall.StringToUTF16Ptr("刷新(&E)"))
-
-	// ===== 分隔线 =====
-	appendMenuSeparator(hMenu)
-
-	// ===== 粘贴 =====
-	appendMenu(hMenu, MF_STRING, idPaste, syscall.StringToUTF16Ptr("粘贴(&P)"))
-
-	// ===== 粘贴快捷方式 =====
-	appendMenu(hMenu, MF_STRING, idPasteShortcut, syscall.StringToUTF16Ptr("粘贴快捷方式(&S)"))
-
-	// ===== 分隔线 =====
-	appendMenuSeparator(hMenu)
-
-	// ===== 新建 =====
-	newMenu := createPopupMenu()
-	if newMenu != 0 {
-		appendMenu(newMenu, MF_STRING, idNewFolder, syscall.StringToUTF16Ptr("文件夹(&F)"))
-		appendMenu(newMenu, MF_STRING, idNewShortcut, syscall.StringToUTF16Ptr("快捷方式(&S)"))
-		appendMenuSeparator(newMenu)
-		appendMenu(newMenu, MF_STRING, idNewTextDoc, syscall.StringToUTF16Ptr("文本文档(&T)"))
-		appendMenu(newMenu, MF_STRING, idNewBitmap, syscall.StringToUTF16Ptr("位图图像(&B)"))
-
-		appendMenu(hMenu, MF_POPUP|MF_STRING, uintptr(newMenu), syscall.StringToUTF16Ptr("新建(&W)"))
-	}
-
-	// ===== 注册表扩展菜单项（第三方软件注册） =====
-	regItems := readDesktopRegistryMenu()
-	if len(regItems) > 0 {
-		appendMenuSeparator(hMenu)
-		nextID := maxCmdIDDynamic
-		for _, item := range regItems {
-			item.cmdID = nextID
-			appendMenu(hMenu, MF_STRING, uintptr(nextID), syscall.StringToUTF16Ptr(item.name))
-			nextID++
-		}
-		// 保存到 DesktopMode 中供命令处理
-		dm.cachedDesktopRegItems = regItems
-		dm.cachedDesktopRegCmdStart = maxCmdIDDynamic
-	}
-
-	// ===== 分隔线 =====
-	appendMenuSeparator(hMenu)
-
-	// ===== 显示设置 =====
-	appendMenu(hMenu, MF_STRING, idDisplaySettings, syscall.StringToUTF16Ptr("显示设置(&D)"))
-
-	// ===== 个性化 =====
-	appendMenu(hMenu, MF_STRING, idPersonalize, syscall.StringToUTF16Ptr("个性化(&R)"))
-
-	// ===== 显示菜单 =====
-	itemCount := getMenuItemCount(hMenu)
-	if itemCount == 0 {
-		return
-	}
-
-	// 调整菜单位置确保不超出屏幕边界
-	mi := getMonitorInfoAt(x, y)
-	if mi != nil {
-		if x > int(mi.rcWork.right)-350 {
-			x = int(mi.rcWork.right) - 350
-		}
-		if y > int(mi.rcWork.bottom)-200 {
-			y = int(mi.rcWork.bottom) - 200
-		}
-	}
-
-	cmd := trackPopupMenu(hMenu, TPM_RETURNCMD|TPM_LEFTALIGN|TPM_LEFTBUTTON, x, y, hwnd)
-	if cmd == 0 {
-		return
-	}
-
-	// 处理菜单命令
-	dm.handleContextMenuCommand(int(cmd))
-}
-
-// handleContextMenuCommand 处理右键菜单命令
-func (dm *DesktopMode) handleContextMenuCommand(cmd int) {
-	// 检查是否为注册表动态命令（桌面菜单）
-	if cmd >= dm.cachedDesktopRegCmdStart && cmd < dm.cachedDesktopRegCmdStart+len(dm.cachedDesktopRegItems) {
-		idx := cmd - dm.cachedDesktopRegCmdStart
-		if idx >= 0 && idx < len(dm.cachedDesktopRegItems) {
-			executeRegistryCommand(dm.cachedDesktopRegItems[idx].command, "")
-		}
-		return
-	}
-
-	switch cmd {
-	// ===== 查看 =====
-	case idViewLargeIcons:
-		setDesktopIconSize(iconSizeLarge)
-		dm.Refresh()
-	case idViewMediumIcons:
-		setDesktopIconSize(iconSizeMedium)
-		dm.Refresh()
-	case idViewSmallIcons:
-		setDesktopIconSize(iconSizeSmall)
-		dm.Refresh()
-	case idViewAutoArrange:
-		dm.isAutoArrange = !dm.isAutoArrange
-		if dm.isAutoArrange {
-			dm.autoArrangeIcons()
-		}
-		dm.Refresh()
-	case idViewAlignToGrid:
-		dm.isAlignToGrid = !dm.isAlignToGrid
-		dm.Refresh()
-	case idViewShowDesktopIcons:
-		dm.isShowDesktopIcons = !dm.isShowDesktopIcons
-		dm.bodyWidget.Invalidate()
-
-	// ===== 排序方式 =====
-	case idSortByName:
-		dm.sortBy = sortByName
-		dm.sortAndRefresh()
-	case idSortBySize:
-		dm.sortBy = sortBySize
-		dm.sortAndRefresh()
-	case idSortByType:
-		dm.sortBy = sortByType
-		dm.sortAndRefresh()
-	case idSortByDate:
-		dm.sortBy = sortByDate
-		dm.sortAndRefresh()
-
-	// ===== 刷新 =====
-	case idRefresh:
-		dm.refreshDesktop()
-
-	// ===== 粘贴 =====
-	case idPaste:
-		pasteFromClipboard(dm.workX, dm.workY)
-
-	// ===== 粘贴快捷方式 =====
-	case idPasteShortcut:
-		pasteShortcutFromClipboard(dm.workX, dm.workY)
-
-	// ===== 新建 =====
-	case idNewFolder:
-		createNewFolder(dm.workX, dm.workY)
-	case idNewShortcut:
-		createNewShortcut(dm.workX, dm.workY)
-	case idNewTextDoc:
-		createNewTextDocument(dm.workX, dm.workY)
-	case idNewBitmap:
-		createNewBitmapImage(dm.workX, dm.workY)
-
-	// ===== 系统设置 =====
-	case idDisplaySettings:
-		openDisplaySettings()
-	case idPersonalize:
-		openPersonalize()
 	}
 }
 
@@ -806,118 +572,6 @@ type iShellFolderVtbl struct {
 // iShellFolder IShellFolder 接口指针
 type iShellFolder struct {
 	vtbl *iShellFolderVtbl
-}
-
-// ShowIconContextMenu 使用 Windows Shell IContextMenu 显示文件的系统原生右键菜单
-func (dm *DesktopMode) ShowIconContextMenu(hwnd win.HWND, mgr *group.Manager, executor *ProgramExecutor, item group.GroupItem, x, y int) {
-	// 初始化 COM（每个线程需独立初始化，重复调用安全）
-	comInitThread()
-	defer procCoUninitialize.Call()
-
-	filePath := item.Path
-
-	// 1. 解析文件路径为 PIDL
-	pathPtr, _ := syscall.UTF16PtrFromString(filePath)
-	var pidl uintptr
-	hr, _, _ := procSHParseDisplayName.Call(
-		uintptr(unsafe.Pointer(pathPtr)),
-		0,
-		uintptr(unsafe.Pointer(&pidl)),
-		0,
-		0,
-	)
-	if hr != 0 || pidl == 0 {
-		logger.Warn("SHParseDisplayName failed: 0x%08X path=%s", hr, filePath)
-		return
-	}
-	defer procILFree.Call(pidl)
-
-	// 2. 获取父文件夹的 IShellFolder 和子 PIDL
-	var pShellFolder uintptr
-	var pidlChild uintptr
-	hr, _, _ = procSHBindToParent.Call(
-		pidl,
-		uintptr(unsafe.Pointer(&IID_IShellFolder)),
-		uintptr(unsafe.Pointer(&pShellFolder)),
-		uintptr(unsafe.Pointer(&pidlChild)),
-	)
-	if hr != 0 || pShellFolder == 0 {
-		logger.Warn("SHBindToParent failed: 0x%08X", hr)
-		return
-	}
-
-	// 获取 IShellFolder 虚函数表
-	sf := (*iShellFolder)(unsafe.Pointer(pShellFolder))
-	defer syscall.SyscallN(sf.vtbl.Release, pShellFolder)
-
-	// 3. 通过 IShellFolder::GetUIObjectOf 获取 IContextMenu
-	var pContextMenu uintptr
-	hr, _, _ = syscall.SyscallN(
-		sf.vtbl.GetUIObjectOf,
-		pShellFolder,
-		uintptr(hwnd),
-		1, // cidl = 1 个文件
-		uintptr(unsafe.Pointer(&pidlChild)),
-		uintptr(unsafe.Pointer(&IID_IContextMenu)),
-		0,
-		uintptr(unsafe.Pointer(&pContextMenu)),
-	)
-	if hr != 0 || pContextMenu == 0 {
-		logger.Warn("GetUIObjectOf(IContextMenu) failed: 0x%08X", hr)
-		return
-	}
-
-	cm := (*iContextMenu)(unsafe.Pointer(pContextMenu))
-	defer syscall.SyscallN(cm.vtbl.Release, pContextMenu)
-
-	// 4. 创建弹出菜单并让 Shell 填充
-	hMenu := createPopupMenu()
-	if hMenu == 0 {
-		return
-	}
-	defer destroyMenu(hMenu)
-
-	// QueryContextMenu(hMenu, indexMenu, idCmdFirst, idCmdLast, uFlags)
-	// CMF_NORMAL = 0x00000000, CMF_EXPLORE = 0x00000004
-	const CMF_NORMAL = 0x00000000
-	hr, _, _ = syscall.SyscallN(
-		cm.vtbl.QueryContextMenu,
-		pContextMenu,
-		uintptr(hMenu),
-		0,     // indexMenu
-		1,     // idCmdFirst
-		0x7FFF, // idCmdLast
-		CMF_NORMAL,
-	)
-	if hr < 0 {
-		logger.Warn("QueryContextMenu failed: 0x%08X", hr)
-		return
-	}
-
-	// 5. 显示菜单
-	cmd := trackPopupMenu(hMenu, TPM_RETURNCMD|TPM_LEFTALIGN|TPM_LEFTBUTTON|TPM_RIGHTBUTTON, x, y, hwnd)
-	if cmd == 0 {
-		return
-	}
-
-	// 6. 执行选中的命令
-	var ici cmInvokeCommandInfo
-	ici.cbSize = uint32(unsafe.Sizeof(ici))
-	ici.hwnd = uintptr(hwnd)
-	ici.lpVerb = uintptr(cmd - 1) // MAKEINTRESOURCE(cmd - idCmdFirst)
-	ici.nShow = 1                 // SW_SHOWNORMAL
-	ici.lpDirectory = uintptr(unsafe.Pointer(pathPtr))
-
-	syscall.SyscallN(
-		cm.vtbl.InvokeCommand,
-		pContextMenu,
-		uintptr(unsafe.Pointer(&ici)),
-	)
-}
-
-// handleIconContextMenuCommand 处理图标右键菜单命令（已由 IContextMenu 接管，保留供兼容）
-func (dm *DesktopMode) handleIconContextMenuCommand(mgr *group.Manager, executor *ProgramExecutor, item group.GroupItem, cmd int) {
-	// 现在由 IContextMenu::InvokeCommand 处理，此函数保留以兼容其他调用
 }
 
 // ============================================================
@@ -1073,7 +727,7 @@ const (
 )
 
 // getDesktopIconSize 获取当前桌面图标大小
-func getDesktopIconSize() int {
+func GetDesktopIconSize() int {
 	if desktopIconItemWidth >= 120 {
 		return iconSizeLarge
 	} else if desktopIconItemWidth >= 90 {
@@ -1083,7 +737,7 @@ func getDesktopIconSize() int {
 }
 
 // setDesktopIconSize 设置桌面图标大小
-func setDesktopIconSize(size int) {
+func SetDesktopIconSize(size int) {
 	switch size {
 	case iconSizeLarge:
 		desktopIconItemWidth = 132
@@ -1096,21 +750,21 @@ func setDesktopIconSize(size int) {
 		desktopIconItemHeight = 72
 	}
 	// 重置磁贴尺寸测量标记，下次绘制时重新计算
-	forceTileRemeasure()
+	ForceTileRemeasure()
 }
 
 // forceTileRemeasure 强制重新测量磁贴尺寸
 var forceRemeasure bool
 var forceRemeasureMu sync.Mutex
 
-func forceTileRemeasure() {
+func ForceTileRemeasure() {
 	forceRemeasureMu.Lock()
 	defer forceRemeasureMu.Unlock()
 	forceRemeasure = true
 }
 
 // isTileRemeasureNeeded 检查是否需要重新测量并重置标记
-func isTileRemeasureNeeded() bool {
+func IsTileRemeasureNeeded() bool {
 	forceRemeasureMu.Lock()
 	defer forceRemeasureMu.Unlock()
 	if forceRemeasure {
@@ -1124,35 +778,12 @@ func isTileRemeasureNeeded() bool {
 // 桌面状态管理
 // ============================================================
 
-// sortAndRefresh 按当前排序方式重新排序并刷新显示
-func (dm *DesktopMode) sortAndRefresh() {
-	dm.bodyWidget.Invalidate()
-}
-
-// autoArrangeIcons 自动排列图标
-func (dm *DesktopMode) autoArrangeIcons() {
-	items := dm.manager.GetUngroupedItems()
-	for i, item := range items {
-		col := i % 8
-		row := i / 8
-		relPos := dm.gridToRel(col, row)
-		dm.manager.SetFreeItemPosition(item.Path, relPos)
-	}
-}
-
-// refreshDesktop 刷新桌面
-func (dm *DesktopMode) refreshDesktop() {
-	dm.loadWallpaper()
-	dm.manager.ReloadDesktopItems()
-	dm.bodyWidget.Invalidate()
-}
-
 // ============================================================
 // 剪贴板操作
 // ============================================================
 
 // pasteFromClipboard 从剪贴板粘贴文件到桌面
-func pasteFromClipboard(_, _ int) {
+func PasteFromClipboard(_, _ int) {
 	desktopPath := getDesktopPath()
 	if desktopPath == "" {
 		return
@@ -1194,7 +825,7 @@ func pasteFromClipboard(_, _ int) {
 }
 
 // pasteShortcutFromClipboard 从剪贴板粘贴快捷方式到桌面
-func pasteShortcutFromClipboard(_, _ int) {
+func PasteShortcutFromClipboard(_, _ int) {
 	desktopPath := getDesktopPath()
 	if desktopPath == "" {
 		return
@@ -1276,7 +907,7 @@ func dragFinish(hDrop uintptr) {
 // ============================================================
 
 // createNewFolder 在桌面创建新文件夹
-func createNewFolder(_, _ int) {
+func CreateNewFolder(_, _ int) {
 	desktopPath := getDesktopPath()
 	if desktopPath == "" {
 		return
@@ -1296,7 +927,7 @@ func createNewFolder(_, _ int) {
 }
 
 // createNewShortcut 创建新快捷方式
-func createNewShortcut(_, _ int) {
+func CreateNewShortcut(_, _ int) {
 	desktopPath := getDesktopPath()
 	if desktopPath == "" {
 		return
@@ -1314,7 +945,7 @@ func createNewShortcut(_, _ int) {
 }
 
 // createNewTextDocument 创建新文本文档
-func createNewTextDocument(_, _ int) {
+func CreateNewTextDocument(_, _ int) {
 	desktopPath := getDesktopPath()
 	if desktopPath == "" {
 		return
@@ -1334,7 +965,7 @@ func createNewTextDocument(_, _ int) {
 }
 
 // createNewBitmapImage 创建新位图图像
-func createNewBitmapImage(_, _ int) {
+func CreateNewBitmapImage(_, _ int) {
 	desktopPath := getDesktopPath()
 	if desktopPath == "" {
 		return
@@ -1380,12 +1011,12 @@ func createNewBitmapImage(_, _ int) {
 // ============================================================
 
 // openDisplaySettings 打开显示设置
-func openDisplaySettings() {
+func OpenDisplaySettings() {
 	exec.Command("cmd", "/c", "start", "ms-settings:display").Start()
 }
 
 // openPersonalize 打开个性化设置
-func openPersonalize() {
+func OpenPersonalize() {
 	exec.Command("cmd", "/c", "start", "ms-settings:personalization").Start()
 }
 

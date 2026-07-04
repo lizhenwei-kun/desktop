@@ -88,7 +88,7 @@ type GroupCard struct {
 	// 拖放目标指示
 	isDropTarget bool
 
-	// (图标 bitmap 由全局 globalIconBmpCache 管理)
+	// (图标 bitmap 由全局 GlobalIconBmpCache 管理)
 
 	// 图标拖拽状态（卡片内图标拖动）
 	iconDragActive    bool
@@ -365,7 +365,7 @@ func (gc *GroupCard) setupMouseEvents() {
 
 // checkDragStart 检查是否开始拖拽（长按3秒）
 func (gc *GroupCard) checkDragStart() {
-	time.Sleep(longPressDragDelay)
+	time.Sleep(LongPressDragDelay)
 	if gc.isPressed {
 		gc.isDragging = true
 		// 初始化虚框位置为当前位置（防止未移动直接释放时位置为0）
@@ -376,7 +376,7 @@ func (gc *GroupCard) checkDragStart() {
 
 // checkIconDragStart 检查是否开始图标拖拽（长按1秒）
 func (gc *GroupCard) checkIconDragStart() {
-	time.Sleep(iconDragDelay)
+	time.Sleep(IconDragDelay)
 	gc.bodyWidget.Synchronize(func() {
 		if !gc.iconDragPressed || gc.isResizing || gc.isDragging || gc.iconDragActive {
 			return
@@ -811,10 +811,10 @@ func (gc *GroupCard) paintDragGhost(canvas *walk.Canvas, _ walk.Rectangle) {
 	ghostY := gc.iconDragMouseY - desktopIconItemHeight/2
 
 	// 缓存 bitmap 50% 透明度绘制
-	iconX := ghostX + (desktopIconItemWidth-desktopIconSize)/2
-	iconY := ghostY + desktopIconTop
+	iconX := ghostX + (desktopIconItemWidth-DesktopIconSize)/2
+	iconY := ghostY + DesktopIconTop
 	canvas.DrawBitmapWithOpacityPixels(gc.ghostBmp, walk.Rectangle{
-		X: iconX, Y: iconY, Width: desktopIconSize, Height: desktopIconSize,
+		X: iconX, Y: iconY, Width: DesktopIconSize, Height: DesktopIconSize,
 	}, 128)
 
 	// 绘制ghost文字标签
@@ -822,9 +822,9 @@ func (gc *GroupCard) paintDragGhost(canvas *walk.Canvas, _ walk.Rectangle) {
 	if font != nil {
 		defer font.Dispose()
 		displayName := gc.iconDragItem.Name
-		lines := splitTextToLines(displayName, 4)
+		lines := SplitTextToLines(displayName, 4)
 
-		labelTop := ghostY + desktopIconLabelTop
+		labelTop := ghostY + DesktopIconLabelTop
 		for i, line := range lines {
 			if i >= 2 {
 				break
@@ -832,10 +832,10 @@ func (gc *GroupCard) paintDragGhost(canvas *walk.Canvas, _ walk.Rectangle) {
 			if i == 1 && len(lines) > 2 {
 				line = TruncateText(line, 3)
 			}
-			lineY := labelTop + i*desktopIconLineHeight
+			lineY := labelTop + i*DesktopIconLineHeight
 			textBounds := walk.Rectangle{
 				X: ghostX, Y: lineY,
-				Width: desktopIconItemWidth, Height: desktopIconLineHeight,
+				Width: desktopIconItemWidth, Height: DesktopIconLineHeight,
 			}
 			canvas.DrawTextPixels(line, font, walk.RGB(0xFF, 0xFF, 0xFF), textBounds,
 				walk.TextCenter|walk.TextSingleLine)
@@ -846,7 +846,7 @@ func (gc *GroupCard) paintDragGhost(canvas *walk.Canvas, _ walk.Rectangle) {
 // loadGhostBitmap 预加载 ghost 图标 bitmap（从全局缓存取，零文件 I/O）
 func (gc *GroupCard) loadGhostBitmap() {
 	gc.disposeGhostBitmap()
-	gc.ghostBmp = globalIconBmpCache.GetOrLoad(gc.iconDragItem.Path)
+	gc.ghostBmp = GlobalIconBmpCache.GetOrLoad(gc.iconDragItem.Path)
 }
 
 // disposeGhostBitmap 释放 ghost 图标 bitmap 引用（bitmap 由全局缓存管理，不 Dispose）
@@ -956,22 +956,22 @@ func (gc *GroupCard) paintIconGrid(canvas *walk.Canvas, bounds walk.Rectangle) {
 // paintIconTile 绘制单个图标磁贴（使用缓存 bitmap）
 func (gc *GroupCard) paintIconTile(canvas *walk.Canvas, item group.GroupItem, x, y int, hovered bool) {
 	// 首次绘制时用 canvas 精确测量磁贴尺寸
-	ensureTileSizeMeasured(canvas)
+	EnsureTileSizeMeasured(canvas)
 
 	if hovered {
-		drawHoverRect(canvas, walk.Rectangle{
+		DrawHoverRect(canvas, walk.Rectangle{
 			X: x, Y: y,
 			Width: desktopIconItemWidth, Height: desktopIconItemHeight,
 		})
 	}
 
 	// 使用全局图标缓存，避免每次重绘文件 I/O
-	bmp := globalIconBmpCache.GetOrLoad(item.Path)
+	bmp := GlobalIconBmpCache.GetOrLoad(item.Path)
 	if bmp != nil {
-		iconX := x + (desktopIconItemWidth-desktopIconSize)/2
-		iconY := y + desktopIconTop
-		canvas.DrawBitmapWithOpacityPixels(bmp, walk.Rectangle{
-			X: iconX, Y: iconY, Width: desktopIconSize, Height: desktopIconSize,
+	iconX := x + (desktopIconItemWidth-DesktopIconSize)/2
+	iconY := y + DesktopIconTop
+	canvas.DrawBitmapWithOpacityPixels(bmp, walk.Rectangle{
+		X: iconX, Y: iconY, Width: DesktopIconSize, Height: DesktopIconSize,
 		}, 255)
 	}
 
@@ -980,9 +980,9 @@ func (gc *GroupCard) paintIconTile(canvas *walk.Canvas, item group.GroupItem, x,
 	if font != nil {
 		defer font.Dispose()
 		displayName := item.Name
-		lines := splitTextToLines(displayName, 4)
+		lines := SplitTextToLines(displayName, 4)
 
-		labelTop := y + desktopIconLabelTop
+		labelTop := y + DesktopIconLabelTop
 
 		for i, line := range lines {
 			if i >= 2 {
@@ -992,10 +992,10 @@ func (gc *GroupCard) paintIconTile(canvas *walk.Canvas, item group.GroupItem, x,
 				line = TruncateText(line, 3)
 			}
 
-			lineY := labelTop + i*desktopIconLineHeight
+			lineY := labelTop + i*DesktopIconLineHeight
 			textBounds := walk.Rectangle{
 				X: x, Y: lineY,
-				Width: desktopIconItemWidth, Height: desktopIconLineHeight,
+				Width: desktopIconItemWidth, Height: DesktopIconLineHeight,
 			}
 
 			shadowBounds := textBounds
@@ -1037,7 +1037,7 @@ func (gc *GroupCard) rebuildIconCache() {
 	for i, item := range gc.items {
 		paths[i] = item.Path
 	}
-	globalIconBmpCache.LoadAll(paths)
+	GlobalIconBmpCache.LoadAll(paths)
 }
 
 // Container 返回卡片容器
@@ -1204,3 +1204,24 @@ func (gc *GroupCard) SetOnResizeOutline(fn func(card *GroupCard, newX, newY, new
 func (gc *GroupCard) SetOnResizeOutlineEnd(fn func(card *GroupCard)) {
 	gc.onResizeOutlineEnd = fn
 }
+
+// GroupName 返回分组名称
+func (gc *GroupCard) GroupName() string { return gc.groupName }
+
+// IconDragItem 返回当前拖拽的图标项目
+func (gc *GroupCard) IconDragItem() group.GroupItem { return gc.iconDragItem }
+
+// IconDragMouseX 返回图标拖拽鼠标 X 坐标（bodyWidget 客户区）
+func (gc *GroupCard) IconDragMouseX() int { return gc.iconDragMouseX }
+
+// IconDragMouseY 返回图标拖拽鼠标 Y 坐标（bodyWidget 客户区）
+func (gc *GroupCard) IconDragMouseY() int { return gc.iconDragMouseY }
+
+// Items 返回分组中的所有项目
+func (gc *GroupCard) Items() []group.GroupItem { return gc.items }
+
+// PixelW 返回像素宽度
+func (gc *GroupCard) PixelW() int { return gc.pixelW() }
+
+// PixelH 返回像素高度
+func (gc *GroupCard) PixelH() int { return gc.pixelH() }
