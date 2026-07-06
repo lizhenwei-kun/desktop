@@ -1,6 +1,7 @@
 package desktop
 
 import (
+	"bytes"
 	"syscall"
 	"time"
 	"unsafe"
@@ -9,6 +10,7 @@ import (
 	"github.com/lxn/win"
 
 	"desktop_go/internal/group"
+	"desktop_go/internal/logger"
 	"desktop_go/internal/ui"
 )
 
@@ -148,6 +150,7 @@ func (s *ContextMenuState) ShowSystemDesktopContextMenu(hwnd win.HWND, x, y int)
 	ui.ComInitThread()
 	defer procCoUninitialize.Call()
 
+	// 获取桌面 IShellFolder
 	var pDesktopShellFolder uintptr
 	hr, _, _ := procSHGetDesktopFolder.Call(uintptr(unsafe.Pointer(&pDesktopShellFolder)))
 	if hr != 0 || pDesktopShellFolder == 0 {
@@ -172,7 +175,8 @@ func (s *ContextMenuState) ShowSystemDesktopContextMenu(hwnd win.HWND, x, y int)
 
 	// 系统菜单项 cmd ID 从 2 开始（保留 1 给自定义项）
 	const CMF_NORMAL = 0x00000000
-	hr, _, _ = syscall.SyscallN(cm.vtbl.QueryContextMenu, pContextMenu, uintptr(hMenu), 0, 2, 0xFFFF, CMF_NORMAL)
+	const CMF_EXPLORE = 0x00000004
+	hr, _, _ = syscall.SyscallN(cm.vtbl.QueryContextMenu, pContextMenu, uintptr(hMenu), 0, 2, 0xFFFF, CMF_NORMAL|CMF_EXPLORE)
 	if int32(hr) < 0 {
 		return 0
 	}
@@ -251,16 +255,84 @@ func (s *ContextMenuState) ShowSystemDesktopContextMenu(hwnd win.HWND, x, y int)
 	}
 
 	if cmd >= 2 {
-		// 系统菜单命令，设置 lpDirectory 为桌面目录
+		// 系统菜单命令
 		desktopPath := ui.GetDesktopPath()
-		dirPtr, _ := syscall.UTF16PtrFromString(desktopPath)
-		var ici cmInvokeCommandInfo
-		ici.cbSize = uint32(unsafe.Sizeof(ici))
-		ici.hwnd = uintptr(hwnd)
-		ici.lpVerb = uintptr(cmd - 2)
-		ici.nShow = 1
-		ici.lpDirectory = uintptr(unsafe.Pointer(dirPtr))
-		syscall.SyscallN(cm.vtbl.InvokeCommand, pContextMenu, uintptr(unsafe.Pointer(&ici)))
+		logger.Debug("ShowSystemDesktopContextMenu: invoking system cmd=%d, desktopPath=%q", cmd, desktopPath)
+		if desktopPath == "" {
+			logger.Error("ShowSystemDesktopContextMenu: desktopPath is empty, system cmd=%d may fail with invalid directory", cmd)
+			return idRefresh
+		}
+
+		// 获取 verb 名称：先用 GCS_VERBA (0x0004)，但扩展可能返回 UTF-16LE 数据
+		// 所以同时读取 byte 和 uint16 两个视角
+		verbA := make([]byte, 512)
+		var verbStr string
+		var gotVerb bool
+
+		hrA, _, _ := syscall.SyscallN(cm.vtbl.GetCommandString, pContextMenu, uintptr(cmd-2), 0x0004, 0, uintptr(unsafe.Pointer(&verbA[0])), uintptr(len(verbA)))
+		if int32(hrA) >= 0 {
+			// 尝试当 UTF-16LE 解析（扩展可能返回 Unicode 数据）
+			if len(verbA) >= 2 {
+				_ = verbA[1] // 边界检查
+			}
+			verbW := unsafe.Slice((*uint16)(unsafe.Pointer(&verbA[0])), len(verbA)/2)
+			verbName := syscall.UTF16ToString(verbW)
+			if verbName != "" {
+				verbStr = verbName
+				gotVerb = true
+				logger.Debug("ShowSystemDesktopContextMenu: cmd=%d -> verbA(as UTF-16)=%q (idx=%d, hr=0x%08x)", cmd, verbStr, cmd-2, hrA)
+			} else {
+				// 回退：按 ANSI 解析
+				n := bytes.IndexByte(verbA, 0)
+				if n < 0 {
+					n = len(verbA)
+				}
+				if n > 0 {
+					verbStr = string(verbA[:n])
+					gotVerb = true
+					logger.Debug("ShowSystemDesktopContextMenu: cmd=%d -> verbA(as ANSI)=%q (idx=%d, hr=0x%08x)", cmd, verbStr, cmd-2, hrA)
+				}
+			}
+		}
+
+		if !gotVerb {
+			// 尝试 GCS_VERBW (0x0044)
+			verbW := make([]uint16, 256)
+			hrW, _, _ := syscall.SyscallN(cm.vtbl.GetCommandString, pContextMenu, uintptr(cmd-2), 0x0044, 0, uintptr(unsafe.Pointer(&verbW[0])), uintptr(len(verbW)))
+			if int32(hrW) >= 0 {
+				verbStr = syscall.UTF16ToString(verbW)
+				gotVerb = true
+				logger.Debug("ShowSystemDesktopContextMenu: cmd=%d -> verbW=%q (idx=%d, hr=0x%08x)", cmd, verbStr, cmd-2, hrW)
+			}
+		}
+
+		if gotVerb && verbStr != "" {
+			// 使用 string verb + CMIC_MASK_UNICODE
+			verbPtr, _ := syscall.UTF16PtrFromString(verbStr)
+			const CMIC_MASK_UNICODE = 0x00004000
+			var ici cmInvokeCommandInfo
+			ici.cbSize = uint32(unsafe.Sizeof(ici))
+			ici.fMask = CMIC_MASK_UNICODE
+			ici.hwnd = uintptr(hwnd)
+			ici.lpVerb = uintptr(unsafe.Pointer(verbPtr))
+			ici.nShow = 1
+			ici.lpDirectory = 0
+			ret, _, _ := syscall.SyscallN(cm.vtbl.InvokeCommand, pContextMenu, uintptr(unsafe.Pointer(&ici)))
+			logger.Debug("ShowSystemDesktopContextMenu: string verb InvokeCommand returned %d for cmd=%d, verb=%q", ret, cmd, verbStr)
+		} else {
+			logger.Warn("ShowSystemDesktopContextMenu: GetCommandString failed (A=0x%08x), trying integer verb", hrA)
+			// 回退：整数索引方式
+			const CMIC_MASK_FLAG_NO_UI = 0x00000400
+			var ici cmInvokeCommandInfo
+			ici.cbSize = uint32(unsafe.Sizeof(ici))
+			ici.fMask = CMIC_MASK_FLAG_NO_UI
+			ici.hwnd = uintptr(hwnd)
+			ici.lpVerb = uintptr(cmd - 2)
+			ici.nShow = 1
+			ici.lpDirectory = 0
+			ret, _, _ := syscall.SyscallN(cm.vtbl.InvokeCommand, pContextMenu, uintptr(unsafe.Pointer(&ici)))
+			logger.Debug("ShowSystemDesktopContextMenu: integer verb InvokeCommand returned %d for cmd=%d", ret, cmd)
+		}
 		return idRefresh
 	}
 

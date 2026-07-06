@@ -170,6 +170,13 @@ type HoverState struct {
 	HoveredFreeIdx int // 当前悬停的未分组图标索引
 }
 
+// SelectionState 选中与编辑状态
+type SelectionState struct {
+	SelectedFreeIdx int      // 当前选中的未分组图标索引，-1 表示无
+	EditingFreeIdx  int      // 当前正在编辑标题的未分组图标索引，-1 表示无
+	FreeEditHwnd    win.HWND // 原生编辑框窗口句柄（激活时有效）
+}
+
 // DesktopMode 桌面模式 UI 管理器
 type DesktopMode struct {
 	MainWindow *walk.MainWindow
@@ -189,6 +196,7 @@ type DesktopMode struct {
 	ResizeOutlineState  // 缩放虚框
 	ContextMenuState    // 右键菜单状态
 	HoverState          // 悬停状态
+	SelectionState      // 选中与编辑状态
 }
 
 // NewDesktopMode 创建桌面模式
@@ -211,6 +219,10 @@ func NewDesktopMode(mw *walk.MainWindow, mgr *group.Manager, winAPI *desktop.Win
 		},
 		HoverState: HoverState{
 			HoveredFreeIdx: -1,
+		},
+		SelectionState: SelectionState{
+			SelectedFreeIdx: -1,
+			EditingFreeIdx:  -1,
 		},
 	}
 	logger.Debug("screen=%dx%d, workArea=(%d,%d,%d,%d), workSize=%dx%d",

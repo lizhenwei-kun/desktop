@@ -265,3 +265,36 @@ func DrawHoverRect(canvas *walk.Canvas, bounds walk.Rectangle) {
 		canvas.DrawBitmapWithOpacityPixels(bmp, bounds, 255)
 	}
 }
+
+// DrawSelectionRect 绘制选中高亮（半透明边框，背景几乎全透）
+func DrawSelectionRect(canvas *walk.Canvas, bounds walk.Rectangle) {
+	fillColor := color.RGBA{R: 0x4A, G: 0xA0, B: 0xFF, A: 0x08}
+	borderColor := color.RGBA{R: 0x4A, G: 0xA0, B: 0xFF, A: 0x18}
+
+	img := image.NewRGBA(image.Rect(0, 0, bounds.Width, bounds.Height))
+	for y := 0; y < bounds.Height; y++ {
+		for x := 0; x < bounds.Width; x++ {
+			if x == 0 || x == bounds.Width-1 || y == 0 || y == bounds.Height-1 {
+				img.SetRGBA(x, y, borderColor)
+			} else {
+				img.SetRGBA(x, y, fillColor)
+			}
+		}
+	}
+	// 外边框稍亮一点
+	outerBorder := color.RGBA{R: 0x4A, G: 0xA0, B: 0xFF, A: 0x30}
+	for x := 0; x < bounds.Width; x++ {
+		img.SetRGBA(x, 0, outerBorder)
+		img.SetRGBA(x, bounds.Height-1, outerBorder)
+	}
+	for y := 0; y < bounds.Height; y++ {
+		img.SetRGBA(0, y, outerBorder)
+		img.SetRGBA(bounds.Width-1, y, outerBorder)
+	}
+
+	bmp, err := walk.NewBitmapFromImage(img)
+	if err == nil {
+		defer bmp.Dispose()
+		canvas.DrawBitmapWithOpacityPixels(bmp, bounds, 255)
+	}
+}

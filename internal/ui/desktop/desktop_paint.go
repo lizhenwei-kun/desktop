@@ -22,7 +22,7 @@ func (dm *DesktopMode) paintDesktop(canvas *walk.Canvas, updateBounds walk.Recta
 	dm.paintBackground(canvas, bounds)
 	dm.WallpaperState.PaintWallpaper(canvas, bounds)
 	dm.paintToolbar(canvas, bounds)
-	dm.HoverState.PaintFreeItems(canvas, bounds, dm.Manager.GetUngroupedItems(), dm.WorkH, dm.getFreeItemPixelPos)
+	dm.HoverState.PaintFreeItems(canvas, bounds, dm.Manager.GetUngroupedItems(), dm.WorkH, dm.getFreeItemPixelPos, dm.SelectedFreeIdx, dm.EditingFreeIdx)
 	if dm.DropToDesktop {
 		dm.paintDesktopDropHighlight(canvas, bounds)
 	}

@@ -409,6 +409,52 @@ func (m *Manager) UpdateGroupColor(name, color string) {
 	m.save()
 }
 
+// RenameItem 重命名文件项，同时更新配置中的路径（支持桌面快捷方式实际文件名修改）
+func (m *Manager) RenameItem(oldPath, newName string) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	oldDir := filepath.Dir(oldPath)
+	oldExt := filepath.Ext(oldPath)
+	newPath := filepath.Join(oldDir, newName+oldExt)
+
+	// 检查目标是否已存在
+	if _, err := os.Stat(newPath); err == nil {
+		return "", os.ErrExist
+	}
+
+	// 实际重命名磁盘文件
+	if err := os.Rename(oldPath, newPath); err != nil {
+		return "", err
+	}
+
+	// 更新 DesktopItems 映射
+	if gName, ok := m.cfg.DesktopItems[oldPath]; ok {
+		delete(m.cfg.DesktopItems, oldPath)
+		m.cfg.DesktopItems[newPath] = gName
+	}
+
+	// 更新 UngroupedPositions
+	if pos, ok := m.cfg.UngroupedPositions[oldPath]; ok {
+		delete(m.cfg.UngroupedPositions, oldPath)
+		m.cfg.UngroupedPositions[newPath] = pos
+	}
+
+	// 更新 itemOrder
+	for gName, order := range m.itemOrder {
+		for i, p := range order {
+			if p == oldPath {
+				m.itemOrder[gName][i] = newPath
+				break
+			}
+		}
+	}
+
+	m.save()
+	m.notifyChange()
+	return newPath, nil
+}
+
 // ReloadDesktopItems 从 Windows 桌面目录重新同步内容
 func (m *Manager) ReloadDesktopItems() {
 	m.mu.Lock()

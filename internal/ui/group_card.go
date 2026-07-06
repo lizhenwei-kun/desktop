@@ -3,7 +3,10 @@ package ui
 import (
 	"image"
 	"image/color"
+	"strings"
+	"syscall"
 	"time"
+	"unsafe"
 
 	"github.com/lxn/walk"
 	"github.com/lxn/win"
@@ -12,6 +15,9 @@ import (
 	"desktop_go/internal/group"
 	"desktop_go/internal/logger"
 )
+
+// Win32 函数
+var procCreateWindowExW = syscall.NewLazyDLL("user32.dll").NewProc("CreateWindowExW")
 
 // 卡片最小尺寸
 const (
@@ -85,6 +91,11 @@ type GroupCard struct {
 	// 悬停检测状态
 	hoveredItemIdx int // 当前悬停的图标索引，-1 表示无
 
+	// 选中与编辑状态
+	selectedItemIdx int      // 当前选中的图标索引，-1 表示无
+	editingItemIdx  int      // 当前正在编辑标题的图标索引，-1 表示无
+	cardEditHwnd    win.HWND // 原生编辑框窗口句柄（激活时有效）
+
 	// 拖放目标指示
 	isDropTarget bool
 
@@ -112,6 +123,8 @@ type GroupCard struct {
 
 	// 当此卡片收到 MouseMove 时通知 DesktopMode（用于清除其它卡片悬停）
 	onMouseMove func()
+	// 当此卡片收到任意左键点击时通知 DesktopMode（用于清除桌面选中）
+	onAnyLeftClick func()
 	// 卡片拖拽虚框位置更新回调（DesktopMode 在桌面层画虚框）
 	onCardDragOutline     func(card *GroupCard, newX, newY int)
 	onCardDragOutlineEnd  func(card *GroupCard)
@@ -138,16 +151,18 @@ const (
 // NewGroupCard 创建分组卡片
 func NewGroupCard(parent walk.Container, grp config.Group, mgr *group.Manager, executor *ProgramExecutor, owner walk.Form, workW, workH int) (*GroupCard, error) {
 	gc := &GroupCard{
-		groupName:     grp.Name,
-		groupColor:    ParseHexColor(grp.Color),
-		position:      grp.Position,
-		size:          grp.Size,
-		manager:       mgr,
-		executor:      executor,
-		owner:         owner,
-		workW:         workW,
-		workH:         workH,
+		groupName:      grp.Name,
+		groupColor:     ParseHexColor(grp.Color),
+		position:       grp.Position,
+		size:           grp.Size,
+		manager:        mgr,
+		executor:       executor,
+		owner:          owner,
+		workW:          workW,
+		workH:          workH,
 		hoveredItemIdx: -1,
+		selectedItemIdx: -1,
+		editingItemIdx:  -1,
 	}
 
 	var err error
@@ -205,6 +220,10 @@ func NewGroupCard(parent walk.Container, grp config.Group, mgr *group.Manager, e
 // setupMouseEvents 设置鼠标事件
 func (gc *GroupCard) setupMouseEvents() {
 	gc.bodyWidget.MouseDown().Attach(func(x, y int, button walk.MouseButton) {
+		if button == walk.LeftButton && gc.onAnyLeftClick != nil {
+			gc.onAnyLeftClick()
+		}
+
 		if button == walk.RightButton {
 			// 右键点击图标：显示右键菜单
 			idx := gc.getItemIndexAt(x, y)
@@ -267,9 +286,36 @@ func (gc *GroupCard) setupMouseEvents() {
 			return
 		}
 
-		// 图标区域：检测双击和长按拖拽
+		// 先检测是否在编辑模式 → 结束编辑
+		if gc.editingItemIdx >= 0 {
+			gc.endCardItemEdit(true)
+			if gc.cardEditHwnd != 0 {
+				var rect win.RECT
+				win.GetWindowRect(gc.cardEditHwnd, &rect)
+				var pt win.POINT
+				pt.X = rect.Left
+				pt.Y = rect.Top
+				win.ScreenToClient(gc.bodyWidget.Handle(), &pt)
+				ex := int(pt.X)
+				ey := int(pt.Y)
+				ew := int(rect.Right - rect.Left)
+				eh := int(rect.Bottom - rect.Top)
+				if x >= ex && x <= ex+ew && y >= ey && y <= ey+eh {
+					return
+				}
+			}
+		}
+
+		// 图标区域：检测选中、编辑、双击和长按拖拽
 		idx := gc.getItemIndexAt(x, y)
 		if idx >= 0 && idx < len(gc.items) {
+
+			// 如果已选中且点击在标签区域 → 进入编辑模式
+			if gc.selectedItemIdx == idx && gc.isCardItemInLabelArea(y, idx) {
+				gc.startCardItemEdit(idx)
+				return
+			}
+
 			now := time.Now()
 			if idx == gc.lastClickIdx && now.Sub(gc.lastClickTime) < doubleClickMs*time.Millisecond {
 				// 双击：执行程序
@@ -280,6 +326,9 @@ func (gc *GroupCard) setupMouseEvents() {
 			gc.lastClickTime = now
 			gc.lastClickIdx = idx
 
+			// 单击选中
+			gc.setCardItemSelection(idx)
+
 			// 长按拖拽检测
 			gc.iconDragPressed = true
 			gc.iconDragIdx = idx
@@ -288,6 +337,9 @@ func (gc *GroupCard) setupMouseEvents() {
 			gc.iconDragStartY = y
 			gc.iconDragStartTime = time.Now()
 			go gc.checkIconDragStart()
+		} else {
+			// 点击图标区域外 → 清除选中
+			gc.clearCardSelection()
 		}
 	})
 
@@ -964,16 +1016,33 @@ func (gc *GroupCard) paintIconGrid(canvas *walk.Canvas, bounds walk.Rectangle) {
 			break
 		}
 
-		gc.paintIconTile(canvas, item, x, y, i == gc.hoveredItemIdx)
+		hovered := i == gc.hoveredItemIdx
+		selected := i == gc.selectedItemIdx
+		editing := i == gc.editingItemIdx
+		gc.paintIconTile(canvas, item, x, y, hovered, selected, editing)
 	}
 }
 
 // paintIconTile 绘制单个图标磁贴（使用缓存 bitmap）
-func (gc *GroupCard) paintIconTile(canvas *walk.Canvas, item group.GroupItem, x, y int, hovered bool) {
+func (gc *GroupCard) paintIconTile(canvas *walk.Canvas, item group.GroupItem, x, y int, hovered, selected, editing bool) {
 	// 首次绘制时用 canvas 精确测量磁贴尺寸
 	EnsureTileSizeMeasured(canvas)
 
-	if hovered {
+	// 预先计算文字行数，选中时框需要包含所有文字
+	displayName := item.Name
+	lines := SplitTextToLines(displayName, 4)
+	selH := desktopIconItemHeight
+	if selected {
+		selH = DesktopIconLabelTop + len(lines)*DesktopIconLineHeight + 4
+	}
+
+	// 绘制选中/悬停高亮
+	if selected {
+		DrawSelectionRect(canvas, walk.Rectangle{
+			X: x, Y: y,
+			Width: desktopIconItemWidth, Height: selH,
+		})
+	} else if hovered {
 		DrawHoverRect(canvas, walk.Rectangle{
 			X: x, Y: y,
 			Width: desktopIconItemWidth, Height: desktopIconItemHeight,
@@ -990,34 +1059,53 @@ func (gc *GroupCard) paintIconTile(canvas *walk.Canvas, item group.GroupItem, x,
 		}, 255)
 	}
 
+	// 编辑模式下不绘制名称（由编辑框显示）
+	if editing {
+		return
+	}
+
 	// 绘制名称
 	font := GetIconFont()
 	if font != nil {
 		defer font.Dispose()
-		displayName := item.Name
-		lines := SplitTextToLines(displayName, 4)
-
 		labelTop := y + DesktopIconLabelTop
 
-		for i, line := range lines {
-			if i >= 2 {
-				break
+		if selected {
+			// 选中状态：显示所有行，不加省略号
+			for i, line := range lines {
+				lineY := labelTop + i*DesktopIconLineHeight
+				textBounds := walk.Rectangle{
+					X: x, Y: lineY,
+					Width: desktopIconItemWidth, Height: DesktopIconLineHeight,
+				}
+				shadowBounds := textBounds
+				shadowBounds.X++
+				shadowBounds.Y++
+				canvas.DrawTextPixels(line, font, walk.RGB(0, 0, 0), shadowBounds, walk.TextCenter|walk.TextSingleLine)
+				canvas.DrawTextPixels(line, font, walk.RGB(0xFF, 0xFF, 0xFF), textBounds, walk.TextCenter|walk.TextSingleLine)
 			}
-			if i == 1 && len(lines) > 2 {
-				line = TruncateText(line, 3)
-			}
+		} else {
+			// 非选中：最多显示2行，超出省略
+			for i, line := range lines {
+				if i >= 2 {
+					break
+				}
+				if i == 1 && len(lines) > 2 {
+					line = TruncateText(line, 3)
+				}
 
-			lineY := labelTop + i*DesktopIconLineHeight
-			textBounds := walk.Rectangle{
-				X: x, Y: lineY,
-				Width: desktopIconItemWidth, Height: DesktopIconLineHeight,
-			}
+				lineY := labelTop + i*DesktopIconLineHeight
+				textBounds := walk.Rectangle{
+					X: x, Y: lineY,
+					Width: desktopIconItemWidth, Height: DesktopIconLineHeight,
+				}
 
-			shadowBounds := textBounds
-			shadowBounds.X++
-			shadowBounds.Y++
-			canvas.DrawTextPixels(line, font, walk.RGB(0, 0, 0), shadowBounds, walk.TextCenter|walk.TextSingleLine)
-			canvas.DrawTextPixels(line, font, walk.RGB(0xFF, 0xFF, 0xFF), textBounds, walk.TextCenter|walk.TextSingleLine)
+				shadowBounds := textBounds
+				shadowBounds.X++
+				shadowBounds.Y++
+				canvas.DrawTextPixels(line, font, walk.RGB(0, 0, 0), shadowBounds, walk.TextCenter|walk.TextSingleLine)
+				canvas.DrawTextPixels(line, font, walk.RGB(0xFF, 0xFF, 0xFF), textBounds, walk.TextCenter|walk.TextSingleLine)
+			}
 		}
 	}
 }
@@ -1162,6 +1250,213 @@ func (gc *GroupCard) ClearHover() {
 	}
 }
 
+// isCardItemInLabelArea 判断点击是否在卡片内图标磁贴的标签区域
+func (gc *GroupCard) isCardItemInLabelArea(y int, idx int) bool {
+	_, tileY := gc.getIconTileBounds(idx)
+	labelStart := tileY + DesktopIconLabelTop
+	labelEnd := labelStart + 2*DesktopIconLineHeight
+	return y >= labelStart && y < labelEnd
+}
+
+// setCardItemSelection 设置选中的图标索引
+func (gc *GroupCard) setCardItemSelection(idx int) {
+	if gc.selectedItemIdx != idx {
+		gc.selectedItemIdx = idx
+		gc.bodyWidget.Invalidate()
+	}
+}
+
+// clearCardSelection 清除选中状态
+func (gc *GroupCard) clearCardSelection() {
+	if gc.editingItemIdx >= 0 {
+		gc.endCardItemEdit(false)
+	}
+	if gc.selectedItemIdx != -1 {
+		gc.selectedItemIdx = -1
+		gc.bodyWidget.Invalidate()
+	}
+}
+
+// startCardItemEdit 开始编辑卡片内图标的标题
+func (gc *GroupCard) startCardItemEdit(idx int) {
+	if idx < 0 || idx >= len(gc.items) {
+		return
+	}
+	gc.editingItemIdx = idx
+
+	item := gc.items[idx]
+	labelX, tileY := gc.getIconTileBounds(idx)
+	labelY := tileY + DesktopIconLabelTop
+	labelW := desktopIconItemWidth
+	labelH := 2 * DesktopIconLineHeight // 覆盖两行文字
+
+	// 如果已有编辑框，先销毁
+	if gc.cardEditHwnd != 0 {
+		win.DestroyWindow(gc.cardEditHwnd)
+		gc.cardEditHwnd = 0
+	}
+
+	// 使用原生 Win32 EDIT 控件，直接作为 bodyWidget 的子窗口（避开 Walk 布局）
+	hwnd := gc.bodyWidget.Handle()
+	className := syscall.StringToUTF16Ptr("EDIT")
+	windowText := syscall.StringToUTF16Ptr(item.Name)
+	style := uintptr(win.WS_CHILD | win.WS_VISIBLE | win.WS_BORDER | win.ES_LEFT | win.ES_AUTOHSCROLL)
+	ret, _, _ := procCreateWindowExW.Call(
+		0,
+		uintptr(unsafe.Pointer(className)),
+		uintptr(unsafe.Pointer(windowText)),
+		style,
+		uintptr(labelX), uintptr(labelY), uintptr(labelW), uintptr(labelH),
+		uintptr(hwnd), 0, 0, 0)
+	editHwnd := win.HWND(ret)
+
+	if editHwnd == 0 {
+		logger.Error("startCardItemEdit: CreateWindowExW failed")
+		gc.editingItemIdx = -1
+		return
+	}
+
+	// 设置字体
+	font := GetIconFont()
+	if font != nil {
+		hdc := win.GetDC(editHwnd)
+		if hdc != 0 {
+			dpi := int(win.GetDeviceCaps(hdc, win.LOGPIXELSY))
+			win.ReleaseDC(editHwnd, hdc)
+			if dpi <= 0 {
+				dpi = 96
+			}
+			var lf win.LOGFONT
+			lf.LfHeight = -win.MulDiv(int32(font.PointSize()), int32(dpi), 72)
+			lf.LfWeight = win.FW_NORMAL
+			lf.LfCharSet = win.DEFAULT_CHARSET
+			lf.LfOutPrecision = win.OUT_TT_PRECIS
+			lf.LfClipPrecision = win.CLIP_DEFAULT_PRECIS
+			lf.LfQuality = win.CLEARTYPE_QUALITY
+			lf.LfPitchAndFamily = win.VARIABLE_PITCH | win.FF_SWISS
+			family := syscall.StringToUTF16(font.Family())
+			copy(lf.LfFaceName[:], family)
+			hFont := win.CreateFontIndirect(&lf)
+			if hFont != 0 {
+				win.SendMessage(editHwnd, win.WM_SETFONT, uintptr(hFont), 1)
+			}
+		}
+		font.Dispose()
+	}
+
+	// 设置背景色
+	win.SendMessage(editHwnd, win.EM_SETBKGNDCOLOR, 0, uintptr(win.RGB(0x30, 0x34, 0x3C)))
+
+	// 选中全部文字
+	win.SendMessage(editHwnd, win.EM_SETSEL, 0, ^uintptr(0))
+	win.SetFocus(editHwnd)
+
+	gc.cardEditHwnd = editHwnd
+
+	// 子类化编辑框捕获事件
+	gc.setupCardEditSubclass(editHwnd, idx)
+}
+
+// setupCardEditSubclass 子类化编辑框
+func (gc *GroupCard) setupCardEditSubclass(editHwnd win.HWND, idx int) {
+	editCB := syscall.NewCallback(func(hwnd uintptr, msg uint32, wParam, lParam uintptr) uintptr {
+		switch msg {
+		case win.WM_KILLFOCUS:
+			gc.bodyWidget.Synchronize(func() {
+				gc.commitCardItemEditFromHwnd(win.HWND(hwnd), idx)
+				win.DestroyWindow(win.HWND(hwnd))
+				gc.cardEditHwnd = 0
+				gc.editingItemIdx = -1
+				gc.bodyWidget.Invalidate()
+			})
+			return 0
+		case win.WM_KEYDOWN:
+			if wParam == win.VK_RETURN {
+				gc.bodyWidget.Synchronize(func() {
+					gc.commitCardItemEditFromHwnd(win.HWND(hwnd), idx)
+					win.DestroyWindow(win.HWND(hwnd))
+					gc.cardEditHwnd = 0
+					gc.editingItemIdx = -1
+					gc.bodyWidget.Invalidate()
+				})
+				return 0
+			}
+			if wParam == win.VK_ESCAPE {
+				gc.bodyWidget.Synchronize(func() {
+					win.DestroyWindow(win.HWND(hwnd))
+					gc.cardEditHwnd = 0
+					gc.editingItemIdx = -1
+					gc.bodyWidget.Invalidate()
+				})
+				return 0
+			}
+		}
+		ret, _, _ := procDefSubclassProc.Call(hwnd, uintptr(msg), wParam, lParam)
+		return ret
+	})
+	procSetWindowSubclass.Call(uintptr(editHwnd), editCB, 10002, uintptr(idx))
+}
+
+// commitCardItemEditFromHwnd 从编辑框读取文字并提交
+func (gc *GroupCard) commitCardItemEditFromHwnd(editHwnd win.HWND, idx int) {
+	textLen := win.SendMessage(editHwnd, win.WM_GETTEXTLENGTH, 0, 0)
+	buf := make([]uint16, textLen+1)
+	win.SendMessage(editHwnd, win.WM_GETTEXT, uintptr(textLen+1), uintptr(unsafe.Pointer(&buf[0])))
+	newName := syscall.UTF16ToString(buf)
+	gc.commitCardItemRename(newName, idx)
+}
+
+// endCardItemEdit 结束编辑
+func (gc *GroupCard) endCardItemEdit(save bool) {
+	if gc.editingItemIdx < 0 {
+		return
+	}
+	if gc.cardEditHwnd != 0 {
+		if save {
+			textLen := win.SendMessage(gc.cardEditHwnd, win.WM_GETTEXTLENGTH, 0, 0)
+			buf := make([]uint16, textLen+1)
+			win.SendMessage(gc.cardEditHwnd, win.WM_GETTEXT, uintptr(textLen+1), uintptr(unsafe.Pointer(&buf[0])))
+			newName := syscall.UTF16ToString(buf)
+			gc.commitCardItemRename(newName, gc.editingItemIdx)
+		}
+		win.DestroyWindow(gc.cardEditHwnd)
+		gc.cardEditHwnd = 0
+	}
+	gc.editingItemIdx = -1
+	gc.bodyWidget.Invalidate()
+}
+
+// commitCardItemRename 提交卡片内图标重命名
+func (gc *GroupCard) commitCardItemRename(newName string, idx int) {
+	if idx < 0 || idx >= len(gc.items) {
+		return
+	}
+	newName = strings.TrimSpace(newName)
+	if newName == "" {
+		return
+	}
+	item := gc.items[idx]
+	if newName == item.Name {
+		return
+	}
+
+	oldPath := item.Path
+	newPath, err := gc.manager.RenameItem(oldPath, newName)
+	if err != nil {
+		logger.Warn("commitCardItemRename: failed to rename %q -> %q: %v", oldPath, newName, err)
+		return
+	}
+
+	// 更新图标缓存
+	GlobalIconBmpCache.Remove(oldPath)
+	if newPath != "" {
+		GlobalIconBmpCache.GetOrLoad(newPath)
+	}
+
+	logger.Info("card item renamed: %q -> %q", oldPath, newPath)
+	gc.refreshItems()
+}
+
 // SetIsDropTarget 设置是否为当前拖放目标（绘制高亮边框）
 func (gc *GroupCard) SetIsDropTarget(v bool) {
 	if gc.isDropTarget != v {
@@ -1198,6 +1493,11 @@ func (gc *GroupCard) SetOnIconDragEnd(fn func(card *GroupCard, screenX, screenY 
 // SetOnMouseMove 设置鼠标移动通知回调（用于清除其它卡片悬停）
 func (gc *GroupCard) SetOnMouseMove(fn func()) {
 	gc.onMouseMove = fn
+}
+
+// SetOnAnyLeftClick 设置任意左键点击回调（用于桌面清除选中）
+func (gc *GroupCard) SetOnAnyLeftClick(fn func()) {
+	gc.onAnyLeftClick = fn
 }
 
 // SetOnCardDragOutline 设置卡片拖拽虚框回调

@@ -95,6 +95,12 @@ func (dm *DesktopMode) setupCardActions(card *ui.GroupCard, grp config.Group) {
 			}
 		}
 	})
+	card.SetOnAnyLeftClick(func() {
+		// 点击卡片时清除桌面图标选中
+		if dm.SelectedFreeIdx != -1 {
+			dm.clearSelection()
+		}
+	})
 	card.SetOnCardDragOutline(dm.CardDragOutline.OnCardDragOutline)
 	card.SetOnCardDragOutlineEnd(dm.CardDragOutline.OnCardDragOutlineEnd)
 	card.SetOnRename(func(name string) {
