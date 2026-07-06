@@ -64,6 +64,11 @@ func getMenuItemCount(menu hMenu) int {
 	return int(ret)
 }
 
+func insertMenu(menu hMenu, position uint32, flags uintptr, idOrPopup uintptr, text *uint16) bool {
+	ret, _, _ := procInsertMenuW.Call(uintptr(menu), uintptr(position), flags, idOrPopup, uintptr(unsafe.Pointer(text)))
+	return ret != 0
+}
+
 var (
 	// user32 菜单
 	user32Menu             = syscall.NewLazyDLL("user32.dll")
@@ -74,12 +79,14 @@ var (
 	procCheckMenuItem      = user32Menu.NewProc("CheckMenuItem")
 	procCheckMenuRadioItem = user32Menu.NewProc("CheckMenuRadioItem")
 	procGetMenuItemCount   = user32Menu.NewProc("GetMenuItemCount")
+	procInsertMenuW        = user32Menu.NewProc("InsertMenuW")
 
 	// shell32 COM
 	shell32Menu            = syscall.NewLazyDLL("shell32.dll")
 	procSHParseDisplayName = shell32Menu.NewProc("SHParseDisplayName")
 	procSHBindToParent     = shell32Menu.NewProc("SHBindToParent")
 	procILFree             = shell32Menu.NewProc("ILFree")
+	procSHGetDesktopFolder = shell32Menu.NewProc("SHGetDesktopFolder")
 
 	// ole32
 	ole32Menu          = syscall.NewLazyDLL("ole32.dll")
@@ -171,6 +178,7 @@ const (
 	idNewBitmap            = 0x1044
 	idDisplaySettings      = 0x1051
 	idPersonalize          = 0x1052
+	idNewCard              = 0x6001
 )
 
 // handleContextMenuCommand 处理桌面右键菜单命令（保留在 DesktopMode，因为涉及多处 DesktopMode 方法调用）

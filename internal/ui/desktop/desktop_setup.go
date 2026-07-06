@@ -104,6 +104,7 @@ func (dm *DesktopMode) Setup() error {
 	dm.ContextMenuState.InstallRightClickHandler(
 		dm.BodyWidget, dm.MainWindow.Handle(), dm.Manager, dm.Executor, dm.getFreeItemPixelPos,
 		func(cmd int) { dm.handleContextMenuCommand(cmd) },
+		dm.addNewCard,
 	)
 
 	dm.BodyWidget.MouseMove().Attach(func(x, y int, button walk.MouseButton) {

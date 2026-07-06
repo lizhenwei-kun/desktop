@@ -157,8 +157,11 @@ type ContextMenuState struct {
 	rclickExecutor   *ui.ProgramExecutor
 	rclickGetPixelPos func(string, int) (int, int)
 	rclickOnDesktopCmd func(cmd int)
+	rclickOnNewCard   func()
 	rclickScreenX    int
 	rclickScreenY    int
+	rclickClientX    int
+	rclickClientY    int
 	rclickHitItem    *group.GroupItem // 非 nil 表示点击在图标上
 }
 

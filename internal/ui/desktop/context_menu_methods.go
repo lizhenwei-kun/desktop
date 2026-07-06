@@ -141,6 +141,133 @@ func (s *ContextMenuState) handleDesktopCmd(cmd int) {
 	}
 }
 
+// ShowSystemDesktopContextMenu 显示系统桌面右键菜单（含自定义项）
+// 菜单结构：新建卡片 → 刷新 → 查看 → 排序方式 → 系统菜单
+// 返回命令 ID（0 表示取消，其他由调用者处理）
+func (s *ContextMenuState) ShowSystemDesktopContextMenu(hwnd win.HWND, x, y int) uintptr {
+	ui.ComInitThread()
+	defer procCoUninitialize.Call()
+
+	var pDesktopShellFolder uintptr
+	hr, _, _ := procSHGetDesktopFolder.Call(uintptr(unsafe.Pointer(&pDesktopShellFolder)))
+	if hr != 0 || pDesktopShellFolder == 0 {
+		return 0
+	}
+	sf := (*iShellFolder)(unsafe.Pointer(pDesktopShellFolder))
+	defer syscall.SyscallN(sf.vtbl.Release, pDesktopShellFolder)
+
+	var pContextMenu uintptr
+	hr, _, _ = syscall.SyscallN(sf.vtbl.CreateViewObject, pDesktopShellFolder, uintptr(hwnd), uintptr(unsafe.Pointer(&IID_IContextMenu)), uintptr(unsafe.Pointer(&pContextMenu)))
+	if hr != 0 || pContextMenu == 0 {
+		return 0
+	}
+	cm := (*iContextMenu)(unsafe.Pointer(pContextMenu))
+	defer syscall.SyscallN(cm.vtbl.Release, pContextMenu)
+
+	hMenu := createPopupMenu()
+	if hMenu == 0 {
+		return 0
+	}
+	defer destroyMenu(hMenu)
+
+	// 系统菜单项 cmd ID 从 2 开始（保留 1 给自定义项）
+	const CMF_NORMAL = 0x00000000
+	hr, _, _ = syscall.SyscallN(cm.vtbl.QueryContextMenu, pContextMenu, uintptr(hMenu), 0, 2, 0xFFFF, CMF_NORMAL)
+	if int32(hr) < 0 {
+		return 0
+	}
+
+	// 构建"查看"子菜单
+	viewMenu := createPopupMenu()
+	if viewMenu != 0 {
+		appendMenu(viewMenu, MF_STRING, idViewLargeIcons, syscall.StringToUTF16Ptr("大图标"))
+		appendMenu(viewMenu, MF_STRING, idViewMediumIcons, syscall.StringToUTF16Ptr("中图标"))
+		appendMenu(viewMenu, MF_STRING, idViewSmallIcons, syscall.StringToUTF16Ptr("小图标"))
+		curSize := ui.GetDesktopIconSize()
+		switch curSize {
+		case 0:
+			checkMenuRadioItem(viewMenu, idViewLargeIcons, idViewSmallIcons, idViewLargeIcons)
+		case 1:
+			checkMenuRadioItem(viewMenu, idViewLargeIcons, idViewSmallIcons, idViewMediumIcons)
+		case 2:
+			checkMenuRadioItem(viewMenu, idViewLargeIcons, idViewSmallIcons, idViewSmallIcons)
+		}
+		appendMenuSeparator(viewMenu)
+		appendMenu(viewMenu, MF_STRING, idViewAutoArrange, syscall.StringToUTF16Ptr("自动排列图标"))
+		appendMenu(viewMenu, MF_STRING, idViewAlignToGrid, syscall.StringToUTF16Ptr("将图标与网格对齐"))
+		appendMenuSeparator(viewMenu)
+		appendMenu(viewMenu, MF_STRING, idViewShowDesktopIcons, syscall.StringToUTF16Ptr("显示桌面图标"))
+		if s.IsAutoArrange {
+			checkMenuItem(viewMenu, idViewAutoArrange, MF_CHECKED)
+		}
+		if s.IsAlignToGrid {
+			checkMenuItem(viewMenu, idViewAlignToGrid, MF_CHECKED)
+		}
+		if s.IsShowDesktopIcons {
+			checkMenuItem(viewMenu, idViewShowDesktopIcons, MF_CHECKED)
+		}
+	}
+
+	// 构建"排序方式"子菜单
+	sortMenu := createPopupMenu()
+	if sortMenu != 0 {
+		appendMenu(sortMenu, MF_STRING, idSortByName, syscall.StringToUTF16Ptr("名称"))
+		appendMenu(sortMenu, MF_STRING, idSortBySize, syscall.StringToUTF16Ptr("大小"))
+		appendMenu(sortMenu, MF_STRING, idSortByType, syscall.StringToUTF16Ptr("项目类型"))
+		appendMenu(sortMenu, MF_STRING, idSortByDate, syscall.StringToUTF16Ptr("修改日期"))
+		switch s.SortBy {
+		case 0:
+			checkMenuRadioItem(sortMenu, idSortByName, idSortByDate, idSortByName)
+		case 1:
+			checkMenuRadioItem(sortMenu, idSortByName, idSortByDate, idSortBySize)
+		case 2:
+			checkMenuRadioItem(sortMenu, idSortByName, idSortByDate, idSortByType)
+		case 3:
+			checkMenuRadioItem(sortMenu, idSortByName, idSortByDate, idSortByDate)
+		}
+	}
+
+	// 在系统菜单前插入我们的自定义项（倒序插入，位置正确后为正序）
+	insertMenu(hMenu, 0, MF_BYPOSITION|MF_SEPARATOR, 0, nil)                              // pos0=自定义与系统分隔线
+	if sortMenu != 0 {
+		insertMenu(hMenu, 0, MF_BYPOSITION|MF_POPUP, uintptr(sortMenu), syscall.StringToUTF16Ptr("排序方式(&O)"))
+	}
+	if viewMenu != 0 {
+		insertMenu(hMenu, 0, MF_BYPOSITION|MF_POPUP, uintptr(viewMenu), syscall.StringToUTF16Ptr("查看(&V)"))
+	}
+	insertMenu(hMenu, 0, MF_BYPOSITION|MF_STRING, idRefresh, syscall.StringToUTF16Ptr("刷新(&E)"))
+	insertMenu(hMenu, 0, MF_BYPOSITION|MF_SEPARATOR, 0, nil)                              // 新建卡片与自定义菜单分隔线
+	insertMenu(hMenu, 0, MF_BYPOSITION|MF_STRING, idNewCard, syscall.StringToUTF16Ptr("新建卡片"))
+
+	cmd := trackPopupMenu(hMenu, TPM_RETURNCMD|TPM_LEFTALIGN|TPM_LEFTBUTTON, x, y, hwnd)
+	if cmd == 0 {
+		return 0
+	}
+
+	if cmd == idNewCard {
+		// 仅记录"新建卡片"意图，不在 COM 上下文内直接调用 addNewCard
+		// 由调用者（deferredShowContextMenu）在 COM 反初始化后执行
+		return cmd
+	}
+
+	if cmd >= 2 {
+		// 系统菜单命令，设置 lpDirectory 为桌面目录
+		desktopPath := ui.GetDesktopPath()
+		dirPtr, _ := syscall.UTF16PtrFromString(desktopPath)
+		var ici cmInvokeCommandInfo
+		ici.cbSize = uint32(unsafe.Sizeof(ici))
+		ici.hwnd = uintptr(hwnd)
+		ici.lpVerb = uintptr(cmd - 2)
+		ici.nShow = 1
+		ici.lpDirectory = uintptr(unsafe.Pointer(dirPtr))
+		syscall.SyscallN(cm.vtbl.InvokeCommand, pContextMenu, uintptr(unsafe.Pointer(&ici)))
+		return idRefresh
+	}
+
+	// 自定义命令（1 已被 idNewCard 用，2+ 为系统命令，走到这里 cmd=idRefresh/view*/sort*）
+	return cmd
+}
+
 // ShowIconContextMenu 显示文件图标右键菜单（Shell 扩展菜单）
 func (s *ContextMenuState) ShowIconContextMenu(hwnd win.HWND, mgr *group.Manager, executor *ui.ProgramExecutor, item group.GroupItem, x, y int) {
 	ui.ComInitThread()
@@ -192,7 +319,7 @@ func (s *ContextMenuState) ShowIconContextMenu(hwnd win.HWND, mgr *group.Manager
 }
 
 // InstallRightClickHandler 安装右键菜单子类化
-func (s *ContextMenuState) InstallRightClickHandler(bodyWidget *walk.CustomWidget, mainWindow win.HWND, manager *group.Manager, executor *ui.ProgramExecutor, getPixelPos func(string, int) (int, int), onDesktopCmd func(cmd int)) {
+func (s *ContextMenuState) InstallRightClickHandler(bodyWidget *walk.CustomWidget, mainWindow win.HWND, manager *group.Manager, executor *ui.ProgramExecutor, getPixelPos func(string, int) (int, int), onDesktopCmd func(cmd int), onNewCard func()) {
 	hwnd := bodyWidget.Handle()
 	if hwnd == 0 {
 		return
@@ -204,6 +331,7 @@ func (s *ContextMenuState) InstallRightClickHandler(bodyWidget *walk.CustomWidge
 	s.rclickExecutor = executor
 	s.rclickGetPixelPos = getPixelPos
 	s.rclickOnDesktopCmd = onDesktopCmd
+	s.rclickOnNewCard = onNewCard
 
 	s.RClickCB = syscall.NewCallback(func(hwnd uintptr, msg uint32, wParam, lParam, uIDSubclass, dwRefData uintptr) uintptr {
 		if msg == win.WM_RBUTTONDOWN {
@@ -213,24 +341,12 @@ func (s *ContextMenuState) InstallRightClickHandler(bodyWidget *walk.CustomWidge
 			pt.X = int32(x)
 			pt.Y = int32(y)
 			win.ClientToScreen(win.HWND(hwnd), &pt)
-			screenX := int(pt.X)
-			screenY := int(pt.Y)
+			s.rclickScreenX = int(pt.X)
+			s.rclickScreenY = int(pt.Y)
+			s.rclickClientX = x
+			s.rclickClientY = y
 
-			// 快速命中检测，判断点击在图标上还是桌面空白处
-			items := manager.GetUngroupedItems()
-			s.rclickHitItem = nil
-			for i, item := range items {
-				ix, iy := getPixelPos(item.Path, i)
-				if x >= ix && x <= ix+ui.TileWidth() &&
-					y >= iy && y <= iy+ui.TileHeight() {
-					s.rclickHitItem = &item
-					break
-				}
-			}
-			s.rclickScreenX = screenX
-			s.rclickScreenY = screenY
-
-			// PostMessage 立即返回，避免 WM_RBUTTONDOWN 阻塞导致转圈
+			// PostMessage 立即返回，不做任何其他操作，彻底避免 WM_RBUTTONDOWN 阻塞导致转圈
 			win.PostMessage(win.HWND(hwnd), rclickMsgID, 0, 0)
 			return 0
 		}
@@ -258,12 +374,31 @@ func (s *ContextMenuState) deferredShowContextMenu() {
 	executor := s.rclickExecutor
 	onDesktopCmd := s.rclickOnDesktopCmd
 
+	// 在自定义消息中做命中检测（移到此处避免 WM_RBUTTONDOWN 中执行导致转圈）
+	items := manager.GetUngroupedItems()
+	s.rclickHitItem = nil
+	for i, item := range items {
+		ix, iy := s.rclickGetPixelPos(item.Path, i)
+		if s.rclickClientX >= ix && s.rclickClientX <= ix+ui.TileWidth() &&
+			s.rclickClientY >= iy && s.rclickClientY <= iy+ui.TileHeight() {
+			s.rclickHitItem = &item
+			break
+		}
+	}
+
 	if s.rclickHitItem != nil {
 		s.ShowIconContextMenu(hwnd, manager, executor, *s.rclickHitItem, s.rclickScreenX, s.rclickScreenY)
 	} else {
-		cmd := s.ShowDesktopContextMenu(hwnd, s.rclickScreenX, s.rclickScreenY)
+		cmd := s.ShowSystemDesktopContextMenu(hwnd, s.rclickScreenX, s.rclickScreenY)
 		if cmd != 0 && onDesktopCmd != nil {
-			onDesktopCmd(int(cmd))
+			if int(cmd) == idNewCard {
+				// "新建卡片"在 COM 反初始化后执行，避免影响卡片重建
+				if s.rclickOnNewCard != nil {
+					s.rclickOnNewCard()
+				}
+			} else {
+				onDesktopCmd(int(cmd))
+			}
 		}
 	}
 }

@@ -15,7 +15,47 @@ func (dm *DesktopMode) addNewCard() {
 		return
 	}
 	dm.Manager.CreateGroup(name, "#30343CBD")
+	pos := dm.findFreeGroupPosition()
+	dm.Manager.UpdateGroupPosition(name, pos.X, pos.Y)
 	dm.refreshCards()
+}
+
+// findFreeGroupPosition 查找不与现有卡片重叠的可用位置（相对坐标）
+// 卡片默认大小约 0.156w x 0.288h，以网格方式排列避免重叠
+func (dm *DesktopMode) findFreeGroupPosition() config.Position {
+	groups := dm.Manager.GetGroups()
+	const (
+		cardW = 0.17 // 卡片宽度 + 间距
+		cardH = 0.31 // 卡片高度 + 间距
+		cols  = 5
+		baseX = 0.05
+		baseY = 0.05
+	)
+	for idx := 0; idx < 200; idx++ {
+		col := idx % cols
+		row := idx / cols
+		x := baseX + float64(col)*cardW
+		y := baseY + float64(row)*cardH
+		overlap := false
+		for _, g := range groups {
+			dx := g.Position.X - x
+			if dx < 0 {
+				dx = -dx
+			}
+			dy := g.Position.Y - y
+			if dy < 0 {
+				dy = -dy
+			}
+			if dx < 0.14 && dy < 0.26 {
+				overlap = true
+				break
+			}
+		}
+		if !overlap {
+			return config.Position{X: x, Y: y}
+		}
+	}
+	return config.Position{X: 0.1, Y: 0.1}
 }
 
 func (dm *DesktopMode) createGroupCards() {
@@ -83,7 +123,7 @@ func (dm *DesktopMode) setupCardActions(card *ui.GroupCard, grp config.Group) {
 					break
 				}
 			}
-			dm.BodyWidget.Invalidate()
+			dm.Refresh()
 		}
 	})
 	card.SetOnRefresh(func() {
@@ -100,6 +140,7 @@ func (dm *DesktopMode) refreshCards() {
 	}
 	dm.Cards = nil
 	dm.createGroupCards()
+	dm.reapplyCardPositions()
 	dm.BodyWidget.Invalidate()
 }
 
