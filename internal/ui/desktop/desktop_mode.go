@@ -36,19 +36,32 @@ type WallpaperInject struct {
 
 func (s *WallpaperState) Inject(WallpaperInject) {}
 
-// UnifiedDragState 统一图标拖拽状态
+// UnifiedDragState 统一图标拖拽状态（未分组 + 分组内图标共用）
 type UnifiedDragState struct {
-	DragActive      bool
-	DragItemPath    string
-	DragItemName    string
-	DragSourceGroup string // "" 表示从未分组拖出
-	GhostBmp        *walk.Bitmap
-	DragMouseX      int // bodyWidget 客户区坐标
-	DragMouseY      int
-	DragScreenX     int
-	DragScreenY     int
-	DropToDesktop   bool // 拖拽悬停在桌面空白区域
-	LastMoveTime    time.Time
+	DragActive      bool   // 是否有拖拽正在进行
+	DragItemPath    string // 被拖拽项目的路径
+	DragItemName    string // 被拖拽项目的显示名
+	DragSourceGroup string // 来源分组，"" 表示从未分组拖出
+	GhostBmp        *walk.Bitmap // 拖拽幽灵 bitmap
+	DragMouseX      int    // bodyWidget 客户区坐标 X
+	DragMouseY      int    // bodyWidget 客户区坐标 Y
+	DragScreenX     int    // 屏幕绝对坐标 X
+	DragScreenY     int    // 屏幕绝对坐标 Y
+	DropToDesktop   bool   // 拖拽悬停在桌面空白区域
+	LastMoveTime    time.Time // 上次移动时间
+
+	// 拖拽来源
+	DragPressed     bool          // 鼠标在图标上按下（MouseDown 设，MouseUp 清）
+	SourceCard      *ui.GroupCard // 非 nil 表示从卡片拖出，nil 表示从未分组拖出
+	SourceItemIdx   int           // 在源卡片中的索引（-1 表示未分组）
+	SourceItem      group.GroupItem // 被拖拽的项目信息
+
+	// 双击检测（未分组图标）
+	LastClickTime time.Time
+	LastClickPath string
+
+	// 拖拽幽灵顶层窗口（在所有窗口之上绘制幽灵，不被卡片遮挡）
+	GhostHwnd win.HWND
 }
 
 // UnifiedSelectionState 统一选中/悬停/编辑状态
@@ -142,10 +155,6 @@ type DesktopMode struct {
 	CardDragOutline     // 卡片拖拽虚框
 	ResizeOutlineState  // 缩放虚框
 	ContextMenuState    // 右键菜单状态
-
-	dragPressed  bool      // 鼠标在桌面图标上按下（MouseDown 设，MouseUp 清）
-	lastClickTime time.Time // 未分组图标上次点击时间（双击检测）
-	lastClickPath string   // 未分组图标上次点击路径（双击检测）
 }
 
 // NewDesktopMode 创建桌面模式

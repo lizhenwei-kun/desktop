@@ -23,9 +23,6 @@ func (dm *DesktopMode) paintDesktop(canvas *walk.Canvas, updateBounds walk.Recta
 	dm.WallpaperState.PaintWallpaper(canvas, bounds)
 	dm.paintToolbar(canvas, bounds)
 	dm.paintAllIcons(canvas, bounds)
-	if dm.DragActive {
-		dm.paintDragGhost(canvas, bounds)
-	}
 	if dm.DragOutlineCard != nil {
 		dm.CardDragOutline.PaintCardDragOutline(canvas, dm.BodyWidget)
 	}

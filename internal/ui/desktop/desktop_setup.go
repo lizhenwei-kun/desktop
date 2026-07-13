@@ -104,8 +104,11 @@ func (dm *DesktopMode) Setup() error {
 			screenPt.X = int32(x)
 			screenPt.Y = int32(y)
 			win.ClientToScreen(dm.BodyWidget.Handle(), &screenPt)
+			dm.DragScreenX = int(screenPt.X)
+			dm.DragScreenY = int(screenPt.Y)
 			dm.updateDropTarget(int(screenPt.X), int(screenPt.Y))
-			dm.BodyWidget.Invalidate()
+			// 移动幽灵窗口到鼠标位置
+			dm.moveGhostWindow(int(screenPt.X), int(screenPt.Y))
 			return
 		}
 		if dm.checkItemHover(x, y) {
@@ -114,17 +117,16 @@ func (dm *DesktopMode) Setup() error {
 	})
 
 	dm.BodyWidget.MouseUp().Attach(func(x, y int, button walk.MouseButton) {
-		dm.dragPressed = false
+		dm.DragPressed = false
 		if !dm.DragActive {
 			return
 		}
-		dm.DragActive = false
 		win.ReleaseCapture()
 		var screenPt win.POINT
 		screenPt.X = int32(x)
 		screenPt.Y = int32(y)
 		win.ClientToScreen(dm.BodyWidget.Handle(), &screenPt)
-		dm.handleFreeItemDrop(int(screenPt.X), int(screenPt.Y))
+		dm.handleIconDrop(int(screenPt.X), int(screenPt.Y))
 	})
 
 	// 创建卡片

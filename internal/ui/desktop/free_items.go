@@ -16,11 +16,30 @@ import (
 )
 
 // Win32 函数
-var procCreateWindowExW = syscall.NewLazyDLL("user32.dll").NewProc("CreateWindowExW")
+var (
+	user32DLL                = syscall.NewLazyDLL("user32.dll")
+	procCreateWindowExW      = user32DLL.NewProc("CreateWindowExW")
+	procDestroyWindow        = user32DLL.NewProc("DestroyWindow")
+	procUpdateLayeredWindow  = user32DLL.NewProc("UpdateLayeredWindow")
+	procSetLayeredWindowAttributes = user32DLL.NewProc("SetLayeredWindowAttributes")
+		procLoadCursorW          = user32DLL.NewProc("LoadCursorW")
+		procDrawTextW            = user32DLL.NewProc("DrawTextW")
+		procFillRect             = user32DLL.NewProc("FillRect")
+		procGetDC                = user32DLL.NewProc("GetDC")
+		procReleaseDC            = user32DLL.NewProc("ReleaseDC")
+	gdi32DLL                 = syscall.NewLazyDLL("gdi32.dll")
+	procCreateCompatibleDC   = gdi32DLL.NewProc("CreateCompatibleDC")
+	procDeleteDC             = gdi32DLL.NewProc("DeleteDC")
+	procCreateCompatibleBitmap = gdi32DLL.NewProc("CreateCompatibleBitmap")
+	procCreateSolidBrush     = gdi32DLL.NewProc("CreateSolidBrush")
+	procSelectObject         = gdi32DLL.NewProc("SelectObject")
+	procDeleteObject         = gdi32DLL.NewProc("DeleteObject")
+)
 
 const (
 	freeGridLeft = 20
 	freeGridTop  = 60
+	_ULW_ALPHA   = 0x00000002
 )
 
 func freeCellW() int { return ui.TileWidth() + ui.DesktopIconGap }
@@ -142,7 +161,11 @@ func (dm *DesktopMode) findItemByPath(path string) *group.ItemInfo {
 	return nil
 }
 
-// handleDesktopMouseDown 桌面左键按下
+// ============================================================
+// 统一图标拖拽入口（未分组 + 分组内图标共用）
+// ============================================================
+
+// handleDesktopMouseDown 桌面左键按下（未分组图标点击 + 拖拽检测）
 func (dm *DesktopMode) handleDesktopMouseDown(x, y int, button walk.MouseButton) {
 	if button != walk.LeftButton {
 		return
@@ -151,7 +174,6 @@ func (dm *DesktopMode) handleDesktopMouseDown(x, y int, button walk.MouseButton)
 	// 如果当前正在编辑标题，先结束编辑（保存修改）
 	if dm.EditingPath != "" {
 		dm.endItemEdit(true)
-		// 如果点击在编辑框区域内，让编辑框处理
 		if dm.EditHwnd != 0 {
 			var rect win.RECT
 			win.GetWindowRect(dm.EditHwnd, &rect)
@@ -185,34 +207,32 @@ func (dm *DesktopMode) handleDesktopMouseDown(x, y int, button walk.MouseButton)
 		if x >= ix && x <= ix+ui.TileWidth() &&
 			y >= iy && y <= iy+ui.TileHeight() {
 
-			// 如果已选中且点击在标签区域 → 进入编辑模式
 			if dm.SelectedPath == item.Path && dm.isInLabelArea(y, iy) {
 				dm.startItemEdit(item.Path)
 				return
 			}
 
 			// 双击检测
-			if dm.lastClickPath == item.Path && !dm.lastClickTime.IsZero() &&
-				time.Since(dm.lastClickTime) < 500*time.Millisecond {
-				// 双击→执行程序
+			if dm.LastClickPath == item.Path && !dm.LastClickTime.IsZero() &&
+				time.Since(dm.LastClickTime) < 500*time.Millisecond {
 				dm.Executor.Execute(item.Path)
-				dm.lastClickTime = time.Time{}
+				dm.LastClickTime = time.Time{}
 				return
 			}
 
-			// 单击选中（全局唯一）
+			// 单击选中
 			dm.selectItem(item.Path)
-			dm.lastClickTime = time.Now()
-			dm.lastClickPath = item.Path
+			dm.LastClickTime = time.Now()
+			dm.LastClickPath = item.Path
 
-			// 记录按下，延迟后启动拖拽
-			dm.dragPressed = true
-			dm.dragHoldStart(item.Path, x, y)
+			// 统一拖拽启动（未分组来源）
+			dm.DragPressed = true
+			dm.startIconDrag("", item.Path, item.Name, x, y)
 			return
 		}
 	}
 
-	// 检测卡片内图标点击（作为卡片自身 MouseDown 的补充/备选）
+	// 检测卡片内图标点击
 	if dm.isPointInAnyCard(x, y) {
 		return
 	}
@@ -232,20 +252,17 @@ func (dm *DesktopMode) isPointInAnyCard(cx, cy int) bool {
 	for _, card := range dm.Cards {
 		sb := card.ScreenBounds()
 		if sx >= sb.X && sx <= sb.X+sb.Width && sy >= sb.Y && sy <= sb.Y+sb.Height {
-			// 找到被点击的卡片，将屏幕坐标转为卡片 bodyWidget 客户区坐标
 			var bodyPt win.POINT
 			bodyPt.X = int32(sx)
 			bodyPt.Y = int32(sy)
 			win.ScreenToClient(card.BodyWidgetHandle(), &bodyPt)
 			bodyX := int(bodyPt.X)
 			bodyY := int(bodyPt.Y)
-			// 如果在卡片主体区域（非标题栏），尝试查找并选中图标
 			if bodyY >= ui.CardHeaderHeight {
 				itemIdx := card.HitTestIcon(bodyX, bodyY)
 				if itemIdx >= 0 {
 					items := card.Items()
 					if itemIdx < len(items) {
-						// 清除其他卡片选中
 						for _, c2 := range dm.Cards {
 							if c2 != card {
 								c2.ClearSelection()
@@ -255,7 +272,6 @@ func (dm *DesktopMode) isPointInAnyCard(cx, cy int) bool {
 						dm.selectItem(items[itemIdx].Path)
 					}
 				} else {
-					// 点击卡片空白区域 → 清除选中
 					card.ClearSelection()
 					dm.clearSelectedItem()
 				}
@@ -276,7 +292,6 @@ func (dm *DesktopMode) isInLabelArea(y, tileY int) bool {
 // selectItem 设置选中的项目路径（全局唯一）
 func (dm *DesktopMode) selectItem(itemPath string) {
 	if dm.SelectedPath != itemPath {
-		// 清除所有卡片的选中
 		for _, c := range dm.Cards {
 			c.ClearSelection()
 		}
@@ -290,7 +305,6 @@ func (dm *DesktopMode) clearSelectedItem() {
 	if dm.EditingPath != "" {
 		dm.endItemEdit(false)
 	}
-	// 清除所有卡片的选中
 	for _, c := range dm.Cards {
 		c.ClearSelection()
 	}
@@ -318,20 +332,17 @@ func (dm *DesktopMode) startItemEdit(itemPath string) {
 		return
 	}
 
-	// 如果已有编辑框，先销毁
 	if dm.EditHwnd != 0 {
 		win.DestroyWindow(dm.EditHwnd)
 		dm.EditHwnd = 0
 	}
 
-	// 获取标签区域坐标（与文字渲染位置精确一致）
 	ix, iy := dm.getFreeItemPixelPos(foundItem.Path, foundIdx)
 	labelX := ix
 	labelY := iy + ui.DesktopIconLabelTop
 	labelW := ui.TileWidth()
 	labelH := 2 * ui.DesktopIconLineHeight
 
-	// 使用原生 Win32 EDIT 控件，直接作为 bodyWidget 的子窗口（避开 Walk 布局）
 	hwnd := dm.BodyWidget.Handle()
 	className := syscall.StringToUTF16Ptr("EDIT")
 	windowText := syscall.StringToUTF16Ptr(foundItem.Name)
@@ -350,8 +361,6 @@ func (dm *DesktopMode) startItemEdit(itemPath string) {
 	}
 
 	editHWND := win.HWND(editHwnd)
-
-	// 设置字体
 	font := ui.GetIconFont()
 	if font != nil {
 		hdc := win.GetDC(editHWND)
@@ -379,16 +388,10 @@ func (dm *DesktopMode) startItemEdit(itemPath string) {
 		font.Dispose()
 	}
 
-	// 设置背景色
 	win.SendMessage(editHWND, win.EM_SETBKGNDCOLOR, 0, uintptr(win.RGB(0x30, 0x34, 0x3C)))
-
-	// 选中全部文字
 	win.SendMessage(editHWND, win.EM_SETSEL, 0, ^uintptr(0))
 	win.SetFocus(editHWND)
-
 	dm.EditHwnd = editHWND
-
-	// 子类化编辑框捕获事件
 	dm.setupItemEditSubclass(editHWND, itemPath)
 }
 
@@ -468,7 +471,6 @@ func (dm *DesktopMode) commitItemRename(newName string, itemPath string) {
 		return
 	}
 
-	// 查找当前名称
 	items := dm.Manager.GetUngroupedItems()
 	var currentName string
 	for _, item := range items {
@@ -491,7 +493,6 @@ func (dm *DesktopMode) commitItemRename(newName string, itemPath string) {
 		return
 	}
 
-	// 更新图标缓存
 	ui.GlobalIconBmpCache.Remove(oldPath)
 	if newPath != "" {
 		ui.GlobalIconBmpCache.GetOrLoad(newPath)
@@ -519,48 +520,68 @@ func (dm *DesktopMode) checkFreeItemHover(x, y int) bool {
 	return false
 }
 
-// dragHoldStart 记录按下状态，延迟后启动拖拽（仅当鼠标仍在按下时）
-func (dm *DesktopMode) dragHoldStart(itemPath string, x, y int) {
+// ============================================================
+// 统一拖拽启动（未分组 + 分组内图标共用入口）
+// ============================================================
+
+// startIconDrag 记录按下状态，延迟后启动拖拽（未分组 + 分组内共用）
+// 从按下到实际拖拽激活之间由 DragPressed 控制
+func (dm *DesktopMode) startIconDrag(sourceGroup, itemPath, itemName string, clientX, clientY int) {
 	dm.DragItemPath = itemPath
-	dm.DragItemName = ""
-	dm.DragScreenX = x
-	dm.DragScreenY = y
+	dm.DragItemName = itemName
+	dm.DragSourceGroup = sourceGroup
+	dm.DragScreenX = clientX
+	dm.DragScreenY = clientY
 	dm.LastMoveTime = time.Now()
+
 	go func() {
-		defer recoverGoroutine("dragHoldStart")
+		defer recoverGoroutine("startIconDrag")
 		time.Sleep(ui.IconDragDelay)
 		dm.Post(func() {
-			if !dm.dragPressed || dm.DragActive {
+			if !dm.DragPressed || dm.DragActive {
 				return
 			}
-			// 获取实时光标位置
 			var screenPt, clientPt win.POINT
 			win.GetCursorPos(&screenPt)
 			clientPt = screenPt
 			win.ScreenToClient(dm.BodyWidget.Handle(), &clientPt)
 
-			// 查找项目信息
-			item := dm.findItemByPath(itemPath)
-			name := ""
-			srcGroup := ""
-			if item != nil {
-				name = item.Name
-				srcGroup = item.GroupName
+			// 如果来源分组为空（未分组），查找项目信息填充名称和分组
+			if dm.DragSourceGroup == "" {
+				item := dm.findItemByPath(itemPath)
+				if item != nil {
+					dm.DragItemName = item.Name
+					dm.DragSourceGroup = item.GroupName
+				}
 			}
 
 			dm.DragActive = true
-			dm.DragItemName = name
-			dm.DragSourceGroup = srcGroup
 			dm.DragMouseX = int(clientPt.X)
 			dm.DragMouseY = int(clientPt.Y)
 			dm.DragScreenX = int(screenPt.X)
 			dm.DragScreenY = int(screenPt.Y)
 			dm.loadDragGhost(itemPath)
 			dm.LastMoveTime = time.Now()
-			dm.BodyWidget.Invalidate()
+			// 创建幽灵窗口（自动绘制内容并显示）
+			dm.createGhostWindow()
 			win.SetCapture(dm.BodyWidget.Handle())
 		})
 	}()
+}
+
+// handleCardIconPress 卡片内图标按下回调（由 GroupCard.onIconPress 直接回调）
+// 设置来源信息后调用 startIconDrag，由 UnifiedDragState 统一管理延迟检测
+func (dm *DesktopMode) handleCardIconPress(card *ui.GroupCard, idx int, item group.GroupItem, clientX, clientY int) {
+	dm.SourceCard = card
+	dm.SourceItemIdx = idx
+	dm.SourceItem = item
+	dm.DragPressed = true
+	// 将卡片内客户区坐标转为屏幕坐标
+	var screenPt win.POINT
+	screenPt.X = int32(clientX)
+	screenPt.Y = int32(clientY)
+	win.ClientToScreen(card.BodyWidgetHandle(), &screenPt)
+	dm.startIconDrag(card.GroupName(), item.Path, item.Name, int(screenPt.X), int(screenPt.Y))
 }
 
 // loadDragGhost 加载拖拽 ghost 图标 bitmap
@@ -574,19 +595,189 @@ func (dm *DesktopMode) disposeDragGhost() {
 	dm.GhostBmp = nil
 }
 
-// updateDropTarget 更新拖拽目标（用于拖拽中的高亮指示）
-func (dm *DesktopMode) updateDropTarget(screenX, screenY int) {
-	// 拖拽过程中：检查是否在卡片上
-	var onCard bool
-	for _, card := range dm.Cards {
-		sb := card.ScreenBounds()
-		if screenX >= sb.X && screenX <= sb.X+sb.Width &&
-			screenY >= sb.Y && screenY <= sb.Y+sb.Height {
-			onCard = true
-			break
+// createGhostWindow 创建小型顶层透明窗口用于拖拽幽灵
+// 使用 UpdateLayeredWindow + 32bpp alpha 位图实现逐像素透明
+func (dm *DesktopMode) createGhostWindow() {
+	if dm.GhostHwnd != 0 {
+		return
+	}
+	hInst := win.GetModuleHandle(nil)
+	className := syscall.StringToUTF16Ptr("DesktopGoGhost")
+
+	var wc win.WNDCLASSEX
+	wc.CbSize = uint32(unsafe.Sizeof(wc))
+	wc.Style = win.CS_HREDRAW | win.CS_VREDRAW
+	wc.LpfnWndProc = syscall.NewCallback(ghostWndProc)
+	wc.HInstance = hInst
+	cursorRet, _, _ := procLoadCursorW.Call(0, uintptr(win.IDC_ARROW))
+	wc.HCursor = win.HCURSOR(cursorRet)
+	wc.HbrBackground = win.HBRUSH(5) // HOLLOW_BRUSH
+	wc.LpszClassName = className
+	win.RegisterClassEx(&wc)
+
+	exStyle := uint32(win.WS_EX_LAYERED | win.WS_EX_TRANSPARENT | win.WS_EX_TOPMOST | win.WS_EX_TOOLWINDOW)
+	style := uint32(win.WS_POPUP)
+
+	tileW := ui.TileWidth()
+	tileH := ui.TileHeight()
+	ghostX := dm.DragScreenX - tileW/2
+	ghostY := dm.DragScreenY - tileH/2
+
+	hwnd, _, _ := procCreateWindowExW.Call(
+		uintptr(exStyle),
+		uintptr(unsafe.Pointer(className)),
+		0,
+		uintptr(style),
+		uintptr(ghostX), uintptr(ghostY), uintptr(tileW), uintptr(tileH),
+		0, 0, uintptr(hInst), 0)
+	if hwnd == 0 {
+		return
+	}
+	dm.GhostHwnd = win.HWND(hwnd)
+
+	win.ShowWindow(win.HWND(hwnd), win.SW_SHOWNA)
+
+	// 创建时绘制一次内容（使用 UpdateLayeredWindow 逐像素透明）
+	dm.repaintGhostWindow()
+}
+
+// destroyGhostWindow 销毁拖拽幽灵窗口
+func (dm *DesktopMode) destroyGhostWindow() {
+	if dm.GhostHwnd != 0 {
+		procDestroyWindow.Call(uintptr(dm.GhostHwnd))
+		dm.GhostHwnd = 0
+	}
+}
+
+// moveGhostWindow 移动幽灵窗口到指定屏幕坐标
+func (dm *DesktopMode) moveGhostWindow(screenX, screenY int) {
+	if dm.GhostHwnd == 0 {
+		return
+	}
+	tileW := ui.TileWidth()
+	tileH := ui.TileHeight()
+	ghostX := screenX - tileW/2
+	ghostY := screenY - tileH/2
+	win.SetWindowPos(dm.GhostHwnd, 0, int32(ghostX), int32(ghostY), 0, 0,
+		win.SWP_NOSIZE|win.SWP_NOZORDER|win.SWP_NOACTIVATE)
+}
+
+// repaintGhostWindow 重绘幽灵窗口内容（用 BitBlt 普通拷贝，背景用粉红色做透明键）
+func (dm *DesktopMode) repaintGhostWindow() {
+	if dm.GhostHwnd == 0 {
+		return
+	}
+
+	hdc := win.GetDC(dm.GhostHwnd)
+	if hdc == 0 {
+		return
+	}
+	defer win.ReleaseDC(dm.GhostHwnd, hdc)
+
+	memDC := win.CreateCompatibleDC(hdc)
+	if memDC == 0 {
+		return
+	}
+	defer win.DeleteDC(memDC)
+
+	tileW := int32(ui.TileWidth())
+	tileH := int32(ui.TileHeight())
+	hBmp := win.CreateCompatibleBitmap(hdc, tileW, tileH)
+	if hBmp == 0 {
+		return
+	}
+	defer win.DeleteObject(win.HGDIOBJ(hBmp))
+
+	oldBmp := win.SelectObject(memDC, win.HGDIOBJ(hBmp))
+	defer win.SelectObject(memDC, oldBmp)
+
+	// 用透明键颜色填充背景（后续通过 SetLayeredWindowAttributes 设为透明）
+	transparentKey := win.RGB(0xFF, 0x00, 0xFF) // 亮粉红色
+	bgBrush, _, _ := procCreateSolidBrush.Call(uintptr(transparentKey))
+	if bgBrush != 0 {
+		bgRect := win.RECT{Right: tileW, Bottom: tileH}
+		procFillRect.Call(uintptr(memDC), uintptr(unsafe.Pointer(&bgRect)), bgBrush)
+		procDeleteObject.Call(bgBrush)
+	}
+
+	// 绘制图标
+	iconPath, _ := syscall.UTF16PtrFromString(dm.DragItemPath)
+	var hIcon win.HICON
+	procPrivateExtractIcons := syscall.NewLazyDLL("user32.dll").NewProc("PrivateExtractIconsW")
+	procPrivateExtractIcons.Call(
+		uintptr(unsafe.Pointer(iconPath)),
+		0, uintptr(ui.DesktopIconSize), uintptr(ui.DesktopIconSize),
+		uintptr(unsafe.Pointer(&hIcon)), 0, 1, 0)
+	if hIcon != 0 {
+		iconX := (tileW - int32(ui.DesktopIconSize)) / 2
+		iconY := int32(ui.DesktopIconTop)
+		win.DrawIconEx(memDC, iconX, iconY, hIcon,
+			int32(ui.DesktopIconSize), int32(ui.DesktopIconSize),
+			0, 0, win.DI_NORMAL)
+		win.DestroyIcon(hIcon)
+	}
+
+	// 绘制文字
+	displayName := dm.DragItemName
+	lines := ui.SplitTextToLines(displayName, 4)
+	font := ui.GetIconFont()
+	if font != nil {
+		lf := win.LOGFONT{}
+		lf.LfHeight = -win.MulDiv(int32(font.PointSize()), 96, 72)
+		lf.LfWeight = win.FW_NORMAL
+		lf.LfCharSet = win.DEFAULT_CHARSET
+		lf.LfQuality = win.CLEARTYPE_QUALITY
+		family := syscall.StringToUTF16(font.Family())
+		copy(lf.LfFaceName[:], family)
+		hFont := win.CreateFontIndirect(&lf)
+		font.Dispose()
+		if hFont != 0 {
+			oldFont := win.SelectObject(memDC, win.HGDIOBJ(hFont))
+			win.SetTextColor(memDC, win.RGB(0xFF, 0xFF, 0xFF))
+			win.SetBkMode(memDC, win.TRANSPARENT)
+			labelTop := int32(ui.DesktopIconLabelTop)
+			for i, line := range lines {
+				if i >= 2 {
+					break
+				}
+				if i == 1 && len(lines) > 2 {
+					line = ui.TruncateText(line, 3)
+				}
+				text := syscall.StringToUTF16(line)
+				textRect := win.RECT{
+					Left: 0, Top: labelTop + int32(i)*int32(ui.DesktopIconLineHeight),
+					Right: tileW, Bottom: labelTop + int32(i+1)*int32(ui.DesktopIconLineHeight),
+				}
+				dtFlags := uintptr(win.DT_CENTER | win.DT_SINGLELINE | win.DT_VCENTER)
+				procDrawTextW.Call(uintptr(memDC), uintptr(unsafe.Pointer(&text[0])),
+					uintptr(len(line)), uintptr(unsafe.Pointer(&textRect)), dtFlags)
+			}
+			win.SelectObject(memDC, oldFont)
+			win.DeleteObject(win.HGDIOBJ(hFont))
 		}
 	}
-	_ = onCard
+
+	// 拷贝到窗口 DC
+	win.BitBlt(hdc, 0, 0, tileW, tileH, memDC, 0, 0, win.SRCCOPY)
+
+	// 用粉红色做透明键
+	procSetLayeredWindowAttributes.Call(uintptr(dm.GhostHwnd),
+		uintptr(transparentKey), 0, 0x00000001) // LWA_COLORKEY
+}
+
+// ghostWndProc 幽灵窗口消息处理
+func ghostWndProc(hwnd uintptr, msg uint32, wParam, lParam uintptr) uintptr {
+	return win.DefWindowProc(win.HWND(hwnd), msg, wParam, lParam)
+}
+
+// updateDropTarget 更新拖拽目标（用于拖拽中的高亮指示）
+func (dm *DesktopMode) updateDropTarget(screenX, screenY int) {
+	for _, card := range dm.Cards {
+		sb := card.ScreenBounds()
+		onCard := screenX >= sb.X && screenX <= sb.X+sb.Width &&
+			screenY >= sb.Y && screenY <= sb.Y+sb.Height
+		card.SetIsDropTarget(onCard)
+	}
 }
 
 // LoadGhostBmp 加载拖拽 ghost 图像
@@ -600,11 +791,22 @@ func (dm *DesktopMode) DisposeGhostBmp() {
 	dm.GhostBmp = nil
 }
 
-// handleFreeItemDrop 未分组图标拖拽释放
-func (dm *DesktopMode) handleFreeItemDrop(screenX, screenY int) {
+// ============================================================
+// 统一拖拽释放（未分组 + 分组内图标共用）
+// ============================================================
+
+// handleIconDrop 统一图标拖拽释放
+func (dm *DesktopMode) handleIconDrop(screenX, screenY int) {
 	dm.DragActive = false
 	dm.DisposeGhostBmp()
+	// 销毁幽灵窗口
+	dm.destroyGhostWindow()
 	defer dm.BodyWidget.Invalidate()
+
+	// 清除所有卡片的高亮
+	for _, c := range dm.Cards {
+		c.SetIsDropTarget(false)
+	}
 
 	// 检查是否拖放到卡片上
 	var targetCard *ui.GroupCard
@@ -617,10 +819,36 @@ func (dm *DesktopMode) handleFreeItemDrop(screenX, screenY int) {
 		}
 	}
 
-	if targetCard != nil {
+	sourceCard := dm.SourceCard
+
+	if targetCard != nil && sourceCard != nil && targetCard == sourceCard {
+		// 同一分组内：拖拽排序
+		var bodyPt win.POINT
+		bodyPt.X = int32(screenX)
+		bodyPt.Y = int32(screenY)
+		win.ScreenToClient(sourceCard.BodyWidgetHandle(), &bodyPt)
+		newIdx := sourceCard.HitTestIcon(int(bodyPt.X), int(bodyPt.Y))
+		if newIdx < 0 {
+			items := sourceCard.Items()
+			newIdx = len(items) - 1
+		}
+		dm.Manager.MoveItemWithinGroup(sourceCard.GroupName(), dm.DragItemPath, newIdx)
+		sourceCard.Refresh()
+	} else if targetCard != nil && sourceCard != nil && targetCard != sourceCard {
+		// 从一个分组拖到另一个分组
+		dm.Manager.MoveItemToGroup(dm.DragItemPath, targetCard.GroupName())
+		targetCard.Refresh()
+		sourceCard.Refresh()
+	} else if targetCard != nil && sourceCard == nil {
+		// 从未分组拖到分组
 		dm.Manager.MoveItemToGroup(dm.DragItemPath, targetCard.GroupName())
 		targetCard.Refresh()
 	} else {
+		// 拖到桌面空白区域
+		if sourceCard != nil {
+			// 从分组拖出到桌面
+			dm.Manager.MoveItemToDesktop(dm.DragItemPath)
+		}
 		var pt win.POINT
 		pt.X = int32(screenX)
 		pt.Y = int32(screenY)
@@ -631,10 +859,24 @@ func (dm *DesktopMode) handleFreeItemDrop(screenX, screenY int) {
 		col, row := dm.findFreeGridCell(dm.DragItemPath, wantCol, wantRow)
 		relPos := dm.gridToRel(col, row)
 		dm.Manager.SetFreeItemPosition(dm.DragItemPath, relPos)
+		if sourceCard != nil {
+			sourceCard.Refresh()
+		}
 	}
 
 	// 清理拖拽状态
+	dm.clearDragState()
+}
+
+// clearDragState 清除统一拖拽状态
+func (dm *DesktopMode) clearDragState() {
 	dm.DragItemPath = ""
 	dm.DragItemName = ""
 	dm.DragSourceGroup = ""
+	dm.DragPressed = false
+	dm.SourceCard = nil
+	dm.SourceItemIdx = -1
+	dm.SourceItem = group.GroupItem{}
+	dm.destroyGhostWindow()
+	win.ReleaseCapture()
 }

@@ -7,11 +7,23 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/lxn/walk"
 	"github.com/lxn/win"
 
 	"desktop_go/internal/logger"
+)
+
+// 图标磁贴规格常量
+const (
+	DesktopIconSize       = 48
+	DesktopIconTop        = 2
+	DesktopIconLabelTop   = 52
+	DesktopIconLineHeight = 24
+	DesktopIconGap        = 8  // 图标磁贴间距
+	LongPressDragDelay    = 1 * time.Second  // 卡片拖拽延迟（标题栏长按）
+	IconDragDelay         = 300 * time.Millisecond  // 图标拖拽延迟（卡片内/未分组图标）
 )
 
 var (
@@ -234,6 +246,50 @@ func ClampInt(val, min, max int) int {
 		return max
 	}
 	return val
+}
+
+// SplitTextToLines 将文本拆分为多行，优先在空格处换行，最大 maxRunes 个汉字/行
+func SplitTextToLines(text string, maxCJK int) []string {
+	maxWidth := maxCJK * 2 // 全角2单位，半角1单位，最大宽度8（4中文/8英文）
+	runes := []rune(text)
+
+	var lines []string
+	pos := 0
+	for pos < len(runes) {
+		width := 0
+		end := pos
+		lastSpace := -1
+
+		for end < len(runes) {
+			r := runes[end]
+			w := 2               // 默认全角
+			if r <= 0xFF {       // ASCII 及半角符号
+				w = 1
+			}
+			if width+w > maxWidth {
+				break
+			}
+			width += w
+			end++
+			if r == ' ' || r == '\t' {
+				lastSpace = end - 1
+			}
+		}
+
+		if end >= len(runes) {
+			lines = append(lines, string(runes[pos:]))
+			break
+		}
+
+		if lastSpace >= pos {
+			lines = append(lines, string(runes[pos:lastSpace]))
+			pos = lastSpace + 1 // 跳过分隔空格
+		} else {
+			lines = append(lines, string(runes[pos:end]))
+			pos = end
+		}
+	}
+	return lines
 }
 
 // TruncateText 截断文字，超出部分用省略号

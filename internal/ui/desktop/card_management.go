@@ -132,6 +132,9 @@ func (dm *DesktopMode) setupCardActions(card *ui.GroupCard, grp config.Group) {
 	})
 	card.SetOnResizeOutline(dm.ResizeOutlineState.OnCardResizeOutline)
 	card.SetOnResizeOutlineEnd(dm.ResizeOutlineState.OnCardResizeOutlineEnd)
+
+	// 图标按下回调（通知 DesktopMode 通过 UnifiedDragState 统一管理拖拽）
+	card.SetOnIconPress(dm.handleCardIconPress)
 }
 
 func (dm *DesktopMode) refreshCards() {

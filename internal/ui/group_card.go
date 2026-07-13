@@ -53,7 +53,7 @@ type GroupCard struct {
 	lastClickTime time.Time
 	lastClickIdx  int
 
-	// 拖拽状态
+	// 拖拽状态（卡片整体拖拽）
 	isDragging    bool
 	isPressed     bool // 鼠标是否按下（用于长按检测）
 	dragStartX    int
@@ -96,6 +96,9 @@ type GroupCard struct {
 
 	// 图标右键回调（DesktopMode 设置，显示 Shell 扩展菜单）
 	onIconRightClick func(card *GroupCard, idx int, item group.GroupItem, screenX, screenY int)
+
+	// 图标按下回调（通知 DesktopMode，由 UnifiedDragState 统一管理拖拽延迟检测和状态）
+	onIconPress func(card *GroupCard, idx int, item group.GroupItem, clientX, clientY int)
 
 	// 卡片拖拽虚框位置更新回调（DesktopMode 在桌面层画虚框）
 	onCardDragOutline     func(card *GroupCard, newX, newY int)
@@ -241,7 +244,7 @@ func (gc *GroupCard) setupMouseEvents() {
 			return
 		}
 
-		// 图标区域：双击检测（两击间隔 < 500ms 且是同一个图标）
+		// 图标区域：双击检测 + 通知 DesktopMode 处理拖拽
 		idx := gc.getItemIndexAt(x, y)
 		if idx >= 0 && idx < len(gc.items) {
 			if gc.lastClickIdx == idx && !gc.lastClickTime.IsZero() &&
@@ -257,6 +260,11 @@ func (gc *GroupCard) setupMouseEvents() {
 			}
 			gc.lastClickTime = time.Now()
 			gc.lastClickIdx = idx
+
+			// 通知 DesktopMode 图标按下（由 UnifiedDragState 统一管理拖拽延迟检测）
+			if gc.onIconPress != nil {
+				gc.onIconPress(gc, idx, gc.items[idx], x, y)
+			}
 			return
 		}
 
@@ -270,6 +278,9 @@ func (gc *GroupCard) setupMouseEvents() {
 		if button != walk.LeftButton {
 			return
 		}
+
+		// 图标拖拽释放由 DesktopMode 统一处理（通过 SetCapture 捕获的 BodyWidget MouseUp）
+		// 此处不处理任何拖拽逻辑
 
 		isDragEnd := gc.isDragging
 		gc.isPressed = false
@@ -1035,6 +1046,11 @@ func (gc *GroupCard) SetOnCardDragOutline(fn func(card *GroupCard, newX, newY in
 // SetOnCardDragOutlineEnd 设置卡片拖拽结束回调
 func (gc *GroupCard) SetOnCardDragOutlineEnd(fn func(card *GroupCard)) {
 	gc.onCardDragOutlineEnd = fn
+}
+
+// SetOnIconPress 设置图标按下回调（通知 DesktopMode 统一管理拖拽）
+func (gc *GroupCard) SetOnIconPress(fn func(card *GroupCard, idx int, item group.GroupItem, clientX, clientY int)) {
+	gc.onIconPress = fn
 }
 
 // SetOnResizeOutline 设置缩放虚框回调（DesktopMode 在桌面层绘制边框）
