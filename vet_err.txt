@@ -1,3 +1,0 @@
-# desktop_go/internal/ui
-internal\ui\windows_icon.go:358:28: possible misuse of unsafe.Pointer
-internal\ui\windows_icon.go:358:55: possible misuse of unsafe.Pointer
