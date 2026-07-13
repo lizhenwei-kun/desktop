@@ -22,16 +22,9 @@ func (dm *DesktopMode) paintDesktop(canvas *walk.Canvas, updateBounds walk.Recta
 	dm.paintBackground(canvas, bounds)
 	dm.WallpaperState.PaintWallpaper(canvas, bounds)
 	dm.paintToolbar(canvas, bounds)
-	dm.HoverState.PaintFreeItems(canvas, bounds, dm.Manager.GetUngroupedItems(), dm.WorkH, dm.getFreeItemPixelPos, dm.SelectedFreeIdx, dm.EditingFreeIdx)
-	if dm.DropToDesktop {
-		dm.paintDesktopDropHighlight(canvas, bounds)
-	}
-	if dm.FreeItemDragActive {
-		ghost := dm.IconDragState.GhostBmp
-		dm.paintFreeItemDragGhost(canvas, ghost, bounds)
-	}
-	if dm.IconDragActive && dm.IconDragSourceCard != nil && !dm.FreeItemDragActive {
-		dm.IconDragState.PaintCardItemDragGhost(canvas)
+	dm.paintAllIcons(canvas, bounds)
+	if dm.DragActive {
+		dm.paintDragGhost(canvas, bounds)
 	}
 	if dm.DragOutlineCard != nil {
 		dm.CardDragOutline.PaintCardDragOutline(canvas, dm.BodyWidget)
@@ -98,20 +91,20 @@ func (dm *DesktopMode) paintDesktopDropHighlight(canvas *walk.Canvas, bounds wal
 	canvas.DrawLinePixels(pen, walk.Point{X: rect.X + rect.Width, Y: rect.Y}, walk.Point{X: rect.X + rect.Width, Y: rect.Y + rect.Height})
 }
 
-// paintFreeItemDragGhost 保留在 DesktopMode 因为混用 FreeItemDragState 和 IconDragState 的字段
-func (dm *DesktopMode) paintFreeItemDragGhost(canvas *walk.Canvas, ghostBmp *walk.Bitmap, _ walk.Rectangle) {
-	if ghostBmp == nil {
+// paintDragGhost 绘制统一拖拽幽灵（合并原 paintFreeItemDragGhost 和 PaintCardItemDragGhost）
+func (dm *DesktopMode) paintDragGhost(canvas *walk.Canvas, _ walk.Rectangle) {
+	if dm.GhostBmp == nil {
 		return
 	}
-	ghostX := dm.FreeItemDragMouseX - ui.TileWidth()/2
-	ghostY := dm.FreeItemDragMouseY - ui.TileHeight()/2
+	ghostX := dm.DragMouseX - ui.TileWidth()/2
+	ghostY := dm.DragMouseY - ui.TileHeight()/2
 	iconX := ghostX + (ui.TileWidth()-ui.DesktopIconSize)/2
 	iconY := ghostY + ui.DesktopIconTop
-	canvas.DrawBitmapWithOpacityPixels(ghostBmp, walk.Rectangle{X: iconX, Y: iconY, Width: ui.DesktopIconSize, Height: ui.DesktopIconSize}, 128)
+	canvas.DrawBitmapWithOpacityPixels(dm.GhostBmp, walk.Rectangle{X: iconX, Y: iconY, Width: ui.DesktopIconSize, Height: ui.DesktopIconSize}, 128)
 	font := ui.GetIconFont()
 	if font != nil {
 		defer font.Dispose()
-		displayName := dm.FreeItemDragItem.Name
+		displayName := dm.DragItemName
 		lines := ui.SplitTextToLines(displayName, 4)
 		labelTop := ghostY + ui.DesktopIconLabelTop
 		for i, line := range lines {

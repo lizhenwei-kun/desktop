@@ -16,7 +16,7 @@ import (
 
 var (
 	desktopIconItemWidth  = 132
-	desktopIconItemHeight = 132
+	desktopIconItemHeight = 104 // DesktopIconLabelTop(52) + DesktopIconLineHeight(24)*2 + 4
 	tileSizeOnce          sync.Once
 )
 
@@ -246,8 +246,8 @@ func TruncateText(text string, maxRunes int) string {
 }
 
 func DrawHoverRect(canvas *walk.Canvas, bounds walk.Rectangle) {
-	fillColor := color.RGBA{R: 0xE8, G: 0xF4, B: 0xFF, A: 0x0D}
-	borderColor := color.RGBA{R: 0x4A, G: 0xA0, B: 0xFF, A: 0x0D}
+	fillColor := color.RGBA{R: 0x00, G: 0x45, B: 0x8A, A: 0x15}
+	borderColor := color.RGBA{R: 0x00, G: 0x5A, B: 0xAD, A: 0x20}
 
 	img := image.NewRGBA(image.Rect(0, 0, bounds.Width, bounds.Height))
 	for y := 0; y < bounds.Height; y++ {
@@ -266,10 +266,10 @@ func DrawHoverRect(canvas *walk.Canvas, bounds walk.Rectangle) {
 	}
 }
 
-// DrawSelectionRect 绘制选中高亮（半透明边框，背景几乎全透）
+// DrawSelectionRect 绘制选中高亮（深蓝色边框，半透明背景）
 func DrawSelectionRect(canvas *walk.Canvas, bounds walk.Rectangle) {
-	fillColor := color.RGBA{R: 0x4A, G: 0xA0, B: 0xFF, A: 0x08}
-	borderColor := color.RGBA{R: 0x4A, G: 0xA0, B: 0xFF, A: 0x18}
+	fillColor := color.RGBA{R: 0x00, G: 0x4D, B: 0x96, A: 0x18}
+	borderColor := color.RGBA{R: 0x00, G: 0x6B, B: 0xCC, A: 0x30}
 
 	img := image.NewRGBA(image.Rect(0, 0, bounds.Width, bounds.Height))
 	for y := 0; y < bounds.Height; y++ {
@@ -281,8 +281,8 @@ func DrawSelectionRect(canvas *walk.Canvas, bounds walk.Rectangle) {
 			}
 		}
 	}
-	// 外边框稍亮一点
-	outerBorder := color.RGBA{R: 0x4A, G: 0xA0, B: 0xFF, A: 0x30}
+	// 外边框更亮
+	outerBorder := color.RGBA{R: 0x00, G: 0x7D, B: 0xE0, A: 0x40}
 	for x := 0; x < bounds.Width; x++ {
 		img.SetRGBA(x, 0, outerBorder)
 		img.SetRGBA(x, bounds.Height-1, outerBorder)

@@ -1,0 +1,15 @@
+# desktop_go/test1
+test1\walk_test_2.go:39:6: main redeclared in this block
+	test1\walk_test_1.go:9:6: other declaration of main
+# desktop_go/internal/ui/desktop
+internal\ui\desktop\free_items.go:221:24: method DesktopMode.selectItem already declared at internal\ui\desktop\card_management.go:155:24
+internal\ui\desktop\free_items.go:229:24: method DesktopMode.clearSelectedItem already declared at internal\ui\desktop\card_management.go:161:24
+internal\ui\desktop\icon_drag_methods.go:14:10: undefined: IconDragState
+internal\ui\desktop\icon_drag_methods.go:23:10: undefined: IconDragState
+internal\ui\desktop\icon_drag_methods.go:38:10: undefined: IconDragState
+internal\ui\desktop\icon_drag_methods.go:45:10: undefined: IconDragState
+internal\ui\desktop\icon_drag_methods.go:72:10: undefined: IconDragState
+internal\ui\desktop\icon_drag_methods.go:92:10: undefined: IconDragState
+internal\ui\desktop\icon_drag_methods.go:103:10: undefined: IconDragState
+internal\ui\desktop\icon_drag_methods.go:113:10: undefined: IconDragState
+internal\ui\desktop\icon_drag_methods.go:113:10: too many errors

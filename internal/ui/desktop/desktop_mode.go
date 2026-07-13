@@ -36,69 +36,27 @@ type WallpaperInject struct {
 
 func (s *WallpaperState) Inject(WallpaperInject) {}
 
-// IconDragState 跨卡片图标拖拽状态
-type IconDragState struct {
-	IconDragActive      bool
-	IconDragSourceCard  *ui.GroupCard
-	IconDragItem        group.GroupItem
-	IconDragSourceGroup string
-	IconDragScreenX     int
-	IconDragScreenY     int
-	DropTargetCard      *ui.GroupCard
-	DropInsertIdx       int
-	DropToDesktop       bool
-
-	GhostBmp         *walk.Bitmap
-	LastDragMoveTime time.Time
-
-	// injected capabilities
-	iconBodyWidget         func() *walk.CustomWidget
-	iconManager            func() *group.Manager
-	iconCards              func() []*ui.GroupCard
-	iconInvalidate         func()
-	iconRefreshCard        func(card *ui.GroupCard)
-	iconIsPointInUngrouped func(screenX, screenY int) bool
-	iconMoveItemToDesktop  func(path string)
-	iconMoveItemToGroup    func(path, group string)
-	iconMoveItemWithinGroup func(group, path string, idx int)
+// UnifiedDragState 统一图标拖拽状态
+type UnifiedDragState struct {
+	DragActive      bool
+	DragItemPath    string
+	DragItemName    string
+	DragSourceGroup string // "" 表示从未分组拖出
+	GhostBmp        *walk.Bitmap
+	DragMouseX      int // bodyWidget 客户区坐标
+	DragMouseY      int
+	DragScreenX     int
+	DragScreenY     int
+	DropToDesktop   bool // 拖拽悬停在桌面空白区域
+	LastMoveTime    time.Time
 }
 
-func (s *IconDragState) Inject(inj IconInject) {
-	s.iconBodyWidget = inj.BodyWidget
-	s.iconManager = inj.Manager
-	s.iconCards = inj.Cards
-	s.iconInvalidate = inj.Invalidate
-	s.iconRefreshCard = inj.RefreshCard
-	s.iconIsPointInUngrouped = inj.IsPointInUngrouped
-	s.iconMoveItemToDesktop = inj.MoveItemToDesktop
-	s.iconMoveItemToGroup = inj.MoveItemToGroup
-	s.iconMoveItemWithinGroup = inj.MoveItemWithinGroup
-}
-
-// IconInject 图标拖拽注入
-type IconInject struct {
-	BodyWidget           func() *walk.CustomWidget
-	Manager              func() *group.Manager
-	Cards                func() []*ui.GroupCard
-	Invalidate           func()
-	RefreshCard          func(card *ui.GroupCard)
-	IsPointInUngrouped   func(screenX, screenY int) bool
-	MoveItemToDesktop    func(path string)
-	MoveItemToGroup      func(path, group string)
-	MoveItemWithinGroup  func(group, path string, idx int)
-}
-
-// FreeItemDragState 未分组图标拖拽状态
-type FreeItemDragState struct {
-	FreeItemDragActive    bool
-	FreeItemDragIdx       int
-	FreeItemDragItem      group.GroupItem
-	FreeItemDragPressed   bool
-	FreeItemDragStartTime time.Time
-	FreeItemDragStartX    int
-	FreeItemDragStartY    int
-	FreeItemDragMouseX    int
-	FreeItemDragMouseY    int
+// UnifiedSelectionState 统一选中/悬停/编辑状态
+type UnifiedSelectionState struct {
+	SelectedPath  string   // 当前选中的项目路径，"" 表示无
+	HoveredPath   string   // 当前悬停的项目路径，"" 表示无
+	EditingPath   string   // 当前正在编辑标题的项目路径，"" 表示无
+	EditHwnd      win.HWND // 原生编辑框窗口句柄
 }
 
 // CardDragOutline 卡片拖拽虚框状态
@@ -156,6 +114,7 @@ type ContextMenuState struct {
 	rclickManager    *group.Manager
 	rclickExecutor   *ui.ProgramExecutor
 	rclickGetPixelPos func(string, int) (int, int)
+	rclickGetCards    func() []*ui.GroupCard
 	rclickOnDesktopCmd func(cmd int)
 	rclickOnNewCard   func()
 	rclickScreenX    int
@@ -163,18 +122,6 @@ type ContextMenuState struct {
 	rclickClientX    int
 	rclickClientY    int
 	rclickHitItem    *group.GroupItem // 非 nil 表示点击在图标上
-}
-
-// HoverState 悬停状态
-type HoverState struct {
-	HoveredFreeIdx int // 当前悬停的未分组图标索引
-}
-
-// SelectionState 选中与编辑状态
-type SelectionState struct {
-	SelectedFreeIdx int      // 当前选中的未分组图标索引，-1 表示无
-	EditingFreeIdx  int      // 当前正在编辑标题的未分组图标索引，-1 表示无
-	FreeEditHwnd    win.HWND // 原生编辑框窗口句柄（激活时有效）
 }
 
 // DesktopMode 桌面模式 UI 管理器
@@ -190,13 +137,15 @@ type DesktopMode struct {
 
 	ScreenInfo          // 屏幕/工作区尺寸
 	WallpaperState      // 壁纸缓存
-	IconDragState       // 跨卡片图标拖拽
-	FreeItemDragState   // 未分组图标拖拽
+	UnifiedDragState    // 统一图标拖拽
+	UnifiedSelectionState // 统一选中/悬停/编辑
 	CardDragOutline     // 卡片拖拽虚框
 	ResizeOutlineState  // 缩放虚框
 	ContextMenuState    // 右键菜单状态
-	HoverState          // 悬停状态
-	SelectionState      // 选中与编辑状态
+
+	dragPressed  bool      // 鼠标在桌面图标上按下（MouseDown 设，MouseUp 清）
+	lastClickTime time.Time // 未分组图标上次点击时间（双击检测）
+	lastClickPath string   // 未分组图标上次点击路径（双击检测）
 }
 
 // NewDesktopMode 创建桌面模式
@@ -216,13 +165,6 @@ func NewDesktopMode(mw *walk.MainWindow, mgr *group.Manager, winAPI *desktop.Win
 			WorkY:   top,
 			WorkW:   right - left,
 			WorkH:   bottom - top,
-		},
-		HoverState: HoverState{
-			HoveredFreeIdx: -1,
-		},
-		SelectionState: SelectionState{
-			SelectedFreeIdx: -1,
-			EditingFreeIdx:  -1,
 		},
 	}
 	logger.Debug("screen=%dx%d, workArea=(%d,%d,%d,%d), workSize=%dx%d",

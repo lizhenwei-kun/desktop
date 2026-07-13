@@ -391,7 +391,7 @@ func (s *ContextMenuState) ShowIconContextMenu(hwnd win.HWND, mgr *group.Manager
 }
 
 // InstallRightClickHandler 安装右键菜单子类化
-func (s *ContextMenuState) InstallRightClickHandler(bodyWidget *walk.CustomWidget, mainWindow win.HWND, manager *group.Manager, executor *ui.ProgramExecutor, getPixelPos func(string, int) (int, int), onDesktopCmd func(cmd int), onNewCard func()) {
+func (s *ContextMenuState) InstallRightClickHandler(bodyWidget *walk.CustomWidget, mainWindow win.HWND, manager *group.Manager, executor *ui.ProgramExecutor, getPixelPos func(string, int) (int, int), getCards func() []*ui.GroupCard, onDesktopCmd func(cmd int), onNewCard func()) {
 	hwnd := bodyWidget.Handle()
 	if hwnd == 0 {
 		return
@@ -402,6 +402,7 @@ func (s *ContextMenuState) InstallRightClickHandler(bodyWidget *walk.CustomWidge
 	s.rclickManager = manager
 	s.rclickExecutor = executor
 	s.rclickGetPixelPos = getPixelPos
+	s.rclickGetCards = getCards
 	s.rclickOnDesktopCmd = onDesktopCmd
 	s.rclickOnNewCard = onNewCard
 
@@ -447,13 +448,35 @@ func (s *ContextMenuState) deferredShowContextMenu() {
 	onDesktopCmd := s.rclickOnDesktopCmd
 
 	// 在自定义消息中做命中检测（移到此处避免 WM_RBUTTONDOWN 中执行导致转圈）
-	items := manager.GetUngroupedItems()
+	// 使用 GetAllItems() 检查所有项目（未分组 + 分组内）
+	allItems := manager.GetAllItems()
 	s.rclickHitItem = nil
-	for i, item := range items {
-		ix, iy := s.rclickGetPixelPos(item.Path, i)
+	for _, item := range allItems {
+		var ix, iy int
+		if item.GroupName == "" {
+			// 未分组项目：遍历查找索引
+			ungrouped := manager.GetUngroupedItems()
+			for i, ui := range ungrouped {
+				if ui.Path == item.Path {
+					ix, iy = s.rclickGetPixelPos(item.Path, i)
+					break
+				}
+			}
+		} else {
+			// 分组内项目：从卡片的布局中获取卡片区域
+			for _, card := range s.rclickGetCards() {
+				if card.GroupName() == item.GroupName {
+					sb := card.ScreenBounds()
+					ix = sb.X
+					iy = sb.Y
+					break
+				}
+			}
+		}
 		if s.rclickClientX >= ix && s.rclickClientX <= ix+ui.TileWidth() &&
 			s.rclickClientY >= iy && s.rclickClientY <= iy+ui.TileHeight() {
-			s.rclickHitItem = &item
+			itemCopy := group.GroupItem{Path: item.Path, Name: item.Name}
+			s.rclickHitItem = &itemCopy
 			break
 		}
 	}

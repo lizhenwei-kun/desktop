@@ -4,60 +4,89 @@ import (
 	"github.com/lxn/walk"
 	"github.com/lxn/win"
 
-	"desktop_go/internal/group"
 	"desktop_go/internal/ui"
 )
 
-// CheckFreeItemHover 检测悬停的未分组图标
-func (s *HoverState) CheckFreeItemHover(x, y int, items []group.GroupItem, getPixelPos func(string, int) (int, int)) bool {
-	newIdx := -1
-	for i, item := range items {
-		ix, iy := getPixelPos(item.Path, i)
+// checkItemHover 检测鼠标悬停的桌面图标（未分组 + 卡片内图标）
+// 对于卡片内图标：简单检测鼠标是否在卡片范围内
+// 对于未分组图标：精确检测鼠标是否在图标磁贴内
+func (dm *DesktopMode) checkItemHover(x, y int) bool {
+	prevHovered := dm.HoveredPath
+	dm.HoveredPath = ""
+
+	// 检查未分组项目
+	ungrouped := dm.Manager.GetUngroupedItems()
+	for i, item := range ungrouped {
+		ix, iy := dm.getFreeItemPixelPos(item.Path, i)
 		if x >= ix && x <= ix+ui.TileWidth() &&
 			y >= iy && y <= iy+ui.TileHeight() {
-			newIdx = i
+			dm.HoveredPath = item.Path
 			break
 		}
 	}
-	if newIdx != s.HoveredFreeIdx {
-		s.HoveredFreeIdx = newIdx
-		return true
+
+	// 如果未分组未命中，检查是否在任意卡片范围内（简化处理，不精确到单个图标）
+	if dm.HoveredPath == "" {
+		for _, card := range dm.Cards {
+			sb := card.ScreenBounds()
+			var pt win.POINT
+			pt.X = int32(x)
+			pt.Y = int32(y)
+			win.ClientToScreen(dm.BodyWidget.Handle(), &pt)
+			sx := int(pt.X)
+			sy := int(pt.Y)
+			if sx >= sb.X && sx <= sb.X+sb.Width &&
+				sy >= sb.Y && sy <= sb.Y+sb.Height {
+				// 鼠标在卡片区域内，但卡片内图标由卡片自己管理悬停
+				// 这里不清除 HoveredPath，保持为空即可（卡片区域不设置桌面级悬停）
+				break
+			}
+		}
 	}
-	return false
+
+	return dm.HoveredPath != prevHovered
 }
 
-// PaintFreeItems 绘制未分组图标
-// selectedIdx: 当前选中图标的索引，-1 表示无
-// editingIdx: 当前正在编辑标题的图标索引，-1 表示无（编辑时不绘制文字标签）
-func (s *HoverState) PaintFreeItems(canvas *walk.Canvas, bounds walk.Rectangle, items []group.GroupItem, workH int, getPixelPos func(string, int) (int, int), selectedIdx, editingIdx int) {
+// paintAllIcons 绘制所有桌面图标（未分组项目）
+// 分组项目的图标由 GroupCard 的 bodyWidget 自行绘制
+func (dm *DesktopMode) paintAllIcons(canvas *walk.Canvas, bounds walk.Rectangle) {
+	items := dm.Manager.GetUngroupedItems()
 	if len(items) == 0 {
 		return
 	}
+
 	effectiveH := bounds.Height
 	if effectiveH < 100 {
-		effectiveH = workH
+		effectiveH = dm.WorkH
 	}
+
 	for idx, item := range items {
-		px, py := getPixelPos(item.Path, idx)
+		px, py := dm.getFreeItemPixelPos(item.Path, idx)
 		if py+ui.TileHeight() > effectiveH {
 			continue
 		}
+
+		// 判断当前项目的选中/悬停/编辑状态（基于路径）
+		isSelected := item.Path == dm.SelectedPath
+		isHovered := item.Path == dm.HoveredPath
+		isEditing := item.Path == dm.EditingPath
 
 		// 预先计算文字行数，选中时框需要包含所有文字
 		displayName := item.Name
 		lines := ui.SplitTextToLines(displayName, 4)
 		selH := ui.TileHeight()
-		if idx == selectedIdx {
+		if isSelected {
 			selH = ui.DesktopIconLabelTop + len(lines)*ui.DesktopIconLineHeight + 4
 		}
 
 		// 绘制选中/悬停高亮
-		if idx == selectedIdx {
+		if isSelected {
 			ui.DrawSelectionRect(canvas, walk.Rectangle{X: px, Y: py, Width: ui.TileWidth(), Height: selH})
-		} else if idx == s.HoveredFreeIdx {
+		} else if isHovered {
 			ui.DrawHoverRect(canvas, walk.Rectangle{X: px, Y: py, Width: ui.TileWidth(), Height: ui.TileHeight()})
 		}
 
+		// 绘制图标
 		bmp := ui.GlobalIconBmpCache.GetOrLoad(item.Path)
 		if bmp != nil {
 			iconX := px + (ui.TileWidth()-ui.DesktopIconSize)/2
@@ -66,15 +95,16 @@ func (s *HoverState) PaintFreeItems(canvas *walk.Canvas, bounds walk.Rectangle, 
 		}
 
 		// 编辑模式下不绘制文字标签（由编辑框显示）
-		if idx == editingIdx {
+		if isEditing {
 			continue
 		}
 
+		// 绘制文字标签
 		font := ui.GetIconFont()
 		if font != nil {
 			defer font.Dispose()
 			labelTop := py + ui.DesktopIconLabelTop
-			if idx == selectedIdx {
+			if isSelected {
 				// 选中状态：显示所有行，不加省略号
 				for i, line := range lines {
 					lineY := labelTop + i*ui.DesktopIconLineHeight
@@ -99,20 +129,33 @@ func (s *HoverState) PaintFreeItems(canvas *walk.Canvas, bounds walk.Rectangle, 
 	}
 }
 
-// IsPointInUngroupedArea 判断屏幕坐标是否在未分组图标区域内
-func (s *HoverState) IsPointInUngroupedArea(screenX, screenY int, bodyWidget *walk.CustomWidget, items []group.GroupItem, getPixelPos func(string, int) (int, int)) bool {
+// IsPointInItem 判断屏幕坐标是否在任意桌面图标的范围内
+func (dm *DesktopMode) IsPointInItem(screenX, screenY int) bool {
 	var pt win.POINT
 	pt.X = int32(screenX)
 	pt.Y = int32(screenY)
-	win.ScreenToClient(bodyWidget.Handle(), &pt)
+	win.ScreenToClient(dm.BodyWidget.Handle(), &pt)
 	cx := int(pt.X)
 	cy := int(pt.Y)
-	for i, item := range items {
-		ix, iy := getPixelPos(item.Path, i)
+
+	// 检查未分组项目
+	ungrouped := dm.Manager.GetUngroupedItems()
+	for i, item := range ungrouped {
+		ix, iy := dm.getFreeItemPixelPos(item.Path, i)
 		if cx >= ix && cx <= ix+ui.TileWidth() &&
 			cy >= iy && cy <= iy+ui.TileHeight() {
 			return true
 		}
 	}
+
+	// 检查分组卡片范围
+	for _, card := range dm.Cards {
+		sb := card.ScreenBounds()
+		if screenX >= sb.X && screenX <= sb.X+sb.Width &&
+			screenY >= sb.Y && screenY <= sb.Y+sb.Height {
+			return true
+		}
+	}
+
 	return false
 }

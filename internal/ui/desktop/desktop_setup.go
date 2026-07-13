@@ -9,7 +9,6 @@ import (
 	"github.com/lxn/walk"
 	"github.com/lxn/win"
 
-	"desktop_go/internal/group"
 	"desktop_go/internal/logger"
 	"desktop_go/internal/ui"
 )
@@ -34,17 +33,6 @@ func (dm *DesktopMode) Setup() error {
 		dm.MainWindow.DPI(), dm.WorkX, dm.WorkY, dm.WorkW, dm.WorkH)
 
 	// === 注入子结构体能力 ===
-	dm.IconDragState.Inject(IconInject{
-		BodyWidget:          func() *walk.CustomWidget { return dm.BodyWidget },
-		Manager:             func() *group.Manager { return dm.Manager },
-		Cards:               func() []*ui.GroupCard { return dm.Cards },
-		Invalidate:          func() { dm.BodyWidget.Invalidate() },
-		RefreshCard:         func(card *ui.GroupCard) { card.Refresh() },
-		IsPointInUngrouped:  func(sx, sy int) bool { return dm.HoverState.IsPointInUngroupedArea(sx, sy, dm.BodyWidget, dm.Manager.GetUngroupedItems(), dm.getFreeItemPixelPos) },
-		MoveItemToDesktop:   dm.Manager.MoveItemToDesktop,
-		MoveItemToGroup:     dm.Manager.MoveItemToGroup,
-		MoveItemWithinGroup: dm.Manager.MoveItemWithinGroup,
-	})
 	dm.CardDragOutline.Inject(func() { dm.BodyWidget.Invalidate() })
 	dm.ResizeOutlineState.Inject(dm.WorkX, dm.WorkY)
 
@@ -103,39 +91,34 @@ func (dm *DesktopMode) Setup() error {
 	// 右键菜单子类化
 	dm.ContextMenuState.InstallRightClickHandler(
 		dm.BodyWidget, dm.MainWindow.Handle(), dm.Manager, dm.Executor, dm.getFreeItemPixelPos,
+		func() []*ui.GroupCard { return dm.Cards },
 		func(cmd int) { dm.handleContextMenuCommand(cmd) },
 		dm.addNewCard,
 	)
 
 	dm.BodyWidget.MouseMove().Attach(func(x, y int, button walk.MouseButton) {
-		for _, c := range dm.Cards {
-			c.ClearHover()
-		}
-		if dm.FreeItemDragActive {
-			dm.FreeItemDragMouseX = x
-			dm.FreeItemDragMouseY = y
+		if dm.DragActive {
+			dm.DragMouseX = x
+			dm.DragMouseY = y
 			var screenPt win.POINT
 			screenPt.X = int32(x)
 			screenPt.Y = int32(y)
 			win.ClientToScreen(dm.BodyWidget.Handle(), &screenPt)
-			dm.IconDragState.UpdateDropTarget(int(screenPt.X), int(screenPt.Y))
+			dm.updateDropTarget(int(screenPt.X), int(screenPt.Y))
+			dm.BodyWidget.Invalidate()
 			return
 		}
-		if dm.checkFreeItemHover(x, y) {
+		if dm.checkItemHover(x, y) {
 			dm.BodyWidget.Invalidate()
 		}
 	})
 
 	dm.BodyWidget.MouseUp().Attach(func(x, y int, button walk.MouseButton) {
-		if dm.FreeItemDragPressed && !dm.FreeItemDragActive {
-			dm.FreeItemDragPressed = false
+		dm.dragPressed = false
+		if !dm.DragActive {
 			return
 		}
-		if !dm.FreeItemDragActive {
-			return
-		}
-		dm.FreeItemDragActive = false
-		dm.FreeItemDragPressed = false
+		dm.DragActive = false
 		win.ReleaseCapture()
 		var screenPt win.POINT
 		screenPt.X = int32(x)

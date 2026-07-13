@@ -168,6 +168,90 @@ type GroupItem struct {
 	Name string
 }
 
+// ItemInfo 统一项目信息（分组内 + 未分组）
+type ItemInfo struct {
+	Path      string // 文件路径
+	Name      string // 显示名（不含扩展名）
+	GroupName string // 所属分组名，"" 表示未分组
+}
+
+// GetAllItems 返回所有项目，按先分组内（按分组顺序）后未分组的顺序排列
+// 同一组内按 itemOrder 或名称排序，未分组按名称排序
+func (m *Manager) GetAllItems() []ItemInfo {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var result []ItemInfo
+
+	// 按配置中的分组顺序输出
+	for _, g := range m.cfg.Groups {
+		// 收集该组内的项目
+		groupItems := m.collectGroupItems(g.Name)
+		result = append(result, groupItems...)
+	}
+
+	// 收集未分组/孤儿项目
+	existingGroups := make(map[string]bool, len(m.cfg.Groups))
+	for _, g := range m.cfg.Groups {
+		existingGroups[g.Name] = true
+	}
+	var ungrouped []ItemInfo
+	for path, gName := range m.cfg.DesktopItems {
+		if gName == "" || !existingGroups[gName] {
+			name := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+			ungrouped = append(ungrouped, ItemInfo{Path: path, Name: name, GroupName: gName})
+		}
+	}
+	sort.Slice(ungrouped, func(i, j int) bool {
+		return ungrouped[i].Name < ungrouped[j].Name
+	})
+	result = append(result, ungrouped...)
+
+	return result
+}
+
+// collectGroupItems 收集指定分组内的项目（按 itemOrder 或名称排序）
+func (m *Manager) collectGroupItems(groupName string) []ItemInfo {
+	itemMap := make(map[string]string)
+	for path, gName := range m.cfg.DesktopItems {
+		if gName == groupName {
+			name := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+			itemMap[path] = name
+		}
+	}
+
+	var items []ItemInfo
+	if order, ok := m.itemOrder[groupName]; ok && len(order) > 0 {
+		added := make(map[string]bool, len(order))
+		for _, path := range order {
+			if name, ok := itemMap[path]; ok {
+				items = append(items, ItemInfo{Path: path, Name: name, GroupName: groupName})
+				added[path] = true
+			}
+		}
+		for path, name := range itemMap {
+			if !added[path] {
+				items = append(items, ItemInfo{Path: path, Name: name, GroupName: groupName})
+			}
+		}
+	} else {
+		for path, name := range itemMap {
+			items = append(items, ItemInfo{Path: path, Name: name, GroupName: groupName})
+		}
+		sort.Slice(items, func(i, j int) bool {
+			return items[i].Name < items[j].Name
+		})
+	}
+	return items
+}
+
+// GetItemGroupPath 获取项目所属分组名（或空字符串）
+func (m *Manager) GetItemGroupPath(path string) string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.cfg.DesktopItems[path]
+}
+
 // CreateGroup 创建新分组
 func (m *Manager) CreateGroup(name, color string) {
 	m.mu.Lock()

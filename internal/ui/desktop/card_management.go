@@ -82,24 +82,22 @@ func (dm *DesktopMode) setupCardActions(card *ui.GroupCard, grp config.Group) {
 	card.SetOnSizeChanged(func(name string, w, h float64) {
 		dm.Manager.UpdateGroupSize(name, w, h)
 	})
-	card.SetOnIconDragStart(dm.IconDragState.OnCardIconDragStart)
-	card.SetOnIconDragMove(dm.IconDragState.OnCardIconDragMove)
-	card.SetOnIconDragEnd(dm.IconDragState.OnCardIconDragEnd)
+	card.SetOnIconLeftClick(func(c *ui.GroupCard, idx int, item group.GroupItem) {
+		// 清除其他所有卡片的选中
+		for _, c2 := range dm.Cards {
+			if c2 != c {
+				c2.ClearSelection()
+			}
+		}
+		c.SelectItem(idx)
+		dm.selectItem(item.Path)
+	})
 	card.SetOnIconRightClick(func(_ *ui.GroupCard, _ int, item group.GroupItem, screenX, screenY int) {
 		dm.ContextMenuState.ShowIconContextMenu(dm.MainWindow.Handle(), dm.Manager, dm.Executor, item, screenX, screenY)
 	})
-	card.SetOnMouseMove(func() {
-		for _, c := range dm.Cards {
-			if c != card {
-				c.ClearHover()
-			}
-		}
-	})
-	card.SetOnAnyLeftClick(func() {
-		// 点击卡片时清除桌面图标选中
-		if dm.SelectedFreeIdx != -1 {
-			dm.clearSelection()
-		}
+	card.SetOnCardBodyClick(func() {
+		card.ClearSelection()
+		dm.clearSelectedItem()
 	})
 	card.SetOnCardDragOutline(dm.CardDragOutline.OnCardDragOutline)
 	card.SetOnCardDragOutlineEnd(dm.CardDragOutline.OnCardDragOutlineEnd)
@@ -131,9 +129,6 @@ func (dm *DesktopMode) setupCardActions(card *ui.GroupCard, grp config.Group) {
 			}
 			dm.Refresh()
 		}
-	})
-	card.SetOnRefresh(func() {
-		dm.refreshDesktop()
 	})
 	card.SetOnResizeOutline(dm.ResizeOutlineState.OnCardResizeOutline)
 	card.SetOnResizeOutlineEnd(dm.ResizeOutlineState.OnCardResizeOutlineEnd)
