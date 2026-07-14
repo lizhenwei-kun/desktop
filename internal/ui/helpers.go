@@ -38,6 +38,9 @@ func TileWidth() int { return desktopIconItemWidth }
 // TileHeight 返回图标磁贴像素高度（动态计算）
 func TileHeight() int { return desktopIconItemHeight }
 
+// TileColWidth 返回图标磁贴列宽（磁贴宽度 + 间距）
+func TileColWidth() int { return desktopIconItemWidth + DesktopIconGap }
+
 // end用 Win32 GetTextExtentPoint32 真实测量文本尺寸，
 // 确保磁贴宽度能容纳 4 个汉字或 9 个西文字符（取较大值）。
 func EnsureTileSizeMeasured(_ *walk.Canvas) {

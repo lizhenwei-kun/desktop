@@ -720,7 +720,7 @@ func (gc *GroupCard) paintHeader(canvas *walk.Canvas, bounds walk.Rectangle) {
 func (gc *GroupCard) paintIconGrid(canvas *walk.Canvas, bounds walk.Rectangle) {
 	startY := bounds.Y + cardHeaderHeight + 4
 	startX := bounds.X + 4
-	colWidth := desktopIconItemWidth + 8 + 8
+	colWidth := TileColWidth()
 	if colWidth <= 0 {
 		return
 	}
@@ -817,7 +817,7 @@ func (gc *GroupCard) getItemIndexAt(x, y int) int {
 	bounds := gc.bodyWidget.ClientBoundsPixels()
 	startY := bounds.Y + cardHeaderHeight + 4
 	startX := bounds.X + 4
-	colWidth := desktopIconItemWidth + 8 + 8
+	colWidth := TileColWidth()
 	if colWidth <= 0 {
 		return -1
 	}
@@ -844,7 +844,7 @@ func (gc *GroupCard) getIconTileBounds(idx int) (x, y int) {
 	bounds := gc.bodyWidget.ClientBoundsPixels()
 	startY := cardHeaderHeight + 4
 	startX := 4
-	colWidth := desktopIconItemWidth + 8 + 8
+	colWidth := TileColWidth()
 	if colWidth <= 0 {
 		return 0, 0
 	}
