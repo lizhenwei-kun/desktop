@@ -354,3 +354,18 @@ func DrawSelectionRect(canvas *walk.Canvas, bounds walk.Rectangle) {
 		canvas.DrawBitmapWithOpacityPixels(bmp, bounds, 255)
 	}
 }
+
+// CreateColorBitmap 创建纯色 RGBA 位图（公开方法，供 desktop 包使用）
+func CreateColorBitmap(w, h int, r, g, b, a byte) *walk.Bitmap {
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			img.SetRGBA(x, y, color.RGBA{R: r, G: g, B: b, A: a})
+		}
+	}
+	bmp, err := walk.NewBitmapFromImage(img)
+	if err != nil {
+		return nil
+	}
+	return bmp
+}

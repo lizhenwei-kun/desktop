@@ -60,7 +60,7 @@ type UnifiedDragState struct {
 	LastClickTime time.Time
 	LastClickPath string
 
-	// 拖拽幽灵顶层窗口（在所有窗口之上绘制幽灵，不被卡片遮挡）
+	// 拖拽幽灵顶层窗口（裸 HWND，WS_EX_LAYERED|TOPMOST，GDI 绘制）
 	GhostHwnd win.HWND
 }
 

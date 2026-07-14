@@ -21,12 +21,11 @@ var (
 	procCreateWindowExW      = user32DLL.NewProc("CreateWindowExW")
 	procDestroyWindow        = user32DLL.NewProc("DestroyWindow")
 	procUpdateLayeredWindow  = user32DLL.NewProc("UpdateLayeredWindow")
-	procSetLayeredWindowAttributes = user32DLL.NewProc("SetLayeredWindowAttributes")
-		procLoadCursorW          = user32DLL.NewProc("LoadCursorW")
-		procDrawTextW            = user32DLL.NewProc("DrawTextW")
-		procFillRect             = user32DLL.NewProc("FillRect")
-		procGetDC                = user32DLL.NewProc("GetDC")
-		procReleaseDC            = user32DLL.NewProc("ReleaseDC")
+	procLoadCursorW          = user32DLL.NewProc("LoadCursorW")
+	procDrawTextW            = user32DLL.NewProc("DrawTextW")
+	procFillRect             = user32DLL.NewProc("FillRect")
+	procGetDC                = user32DLL.NewProc("GetDC")
+	procReleaseDC            = user32DLL.NewProc("ReleaseDC")
 	gdi32DLL                 = syscall.NewLazyDLL("gdi32.dll")
 	procCreateCompatibleDC   = gdi32DLL.NewProc("CreateCompatibleDC")
 	procDeleteDC             = gdi32DLL.NewProc("DeleteDC")
@@ -595,40 +594,49 @@ func (dm *DesktopMode) disposeDragGhost() {
 	dm.GhostBmp = nil
 }
 
-// createGhostWindow 创建小型顶层透明窗口用于拖拽幽灵
-// 使用 UpdateLayeredWindow + 32bpp alpha 位图实现逐像素透明
+// ghostWindowSize 返回幽灵窗口的宽度和高度（按选中状态计算，包含图标和全部文字行）
+func (dm *DesktopMode) ghostWindowSize() (int, int) {
+	tileW := ui.TileWidth()
+	displayName := dm.DragItemName
+	lines := ui.SplitTextToLines(displayName, 4)
+	tileH := ui.DesktopIconLabelTop + len(lines)*ui.DesktopIconLineHeight + 4
+	if tileH < ui.TileHeight() {
+		tileH = ui.TileHeight()
+	}
+	return tileW, tileH
+}
+
+// createGhostWindow 创建幽灵窗口（裸 POPUP 窗口 + UpdateLayeredWindow 绘制）
 func (dm *DesktopMode) createGhostWindow() {
 	if dm.GhostHwnd != 0 {
 		return
 	}
 	hInst := win.GetModuleHandle(nil)
-	className := syscall.StringToUTF16Ptr("DesktopGoGhost")
 
+	// 注册窗口类
+	className := syscall.StringToUTF16Ptr("DesktopGoGhost")
 	var wc win.WNDCLASSEX
 	wc.CbSize = uint32(unsafe.Sizeof(wc))
 	wc.Style = win.CS_HREDRAW | win.CS_VREDRAW
 	wc.LpfnWndProc = syscall.NewCallback(ghostWndProc)
 	wc.HInstance = hInst
-	cursorRet, _, _ := procLoadCursorW.Call(0, uintptr(win.IDC_ARROW))
-	wc.HCursor = win.HCURSOR(cursorRet)
-	wc.HbrBackground = win.HBRUSH(5) // HOLLOW_BRUSH
+	wc.HbrBackground = win.HBRUSH(win.GetStockObject(5)) // HOLLOW_BRUSH
 	wc.LpszClassName = className
 	win.RegisterClassEx(&wc)
 
 	exStyle := uint32(win.WS_EX_LAYERED | win.WS_EX_TRANSPARENT | win.WS_EX_TOPMOST | win.WS_EX_TOOLWINDOW)
 	style := uint32(win.WS_POPUP)
 
-	tileW := ui.TileWidth()
-	tileH := ui.TileHeight()
-	ghostX := dm.DragScreenX - tileW/2
-	ghostY := dm.DragScreenY - tileH/2
+	ghostW, ghostH := dm.ghostWindowSize()
+	ghostX := dm.DragScreenX - ghostW/2
+	ghostY := dm.DragScreenY - ghostH/2
 
 	hwnd, _, _ := procCreateWindowExW.Call(
 		uintptr(exStyle),
 		uintptr(unsafe.Pointer(className)),
 		0,
 		uintptr(style),
-		uintptr(ghostX), uintptr(ghostY), uintptr(tileW), uintptr(tileH),
+		uintptr(ghostX), uintptr(ghostY), uintptr(ghostW), uintptr(ghostH),
 		0, 0, uintptr(hInst), 0)
 	if hwnd == 0 {
 		return
@@ -636,12 +644,10 @@ func (dm *DesktopMode) createGhostWindow() {
 	dm.GhostHwnd = win.HWND(hwnd)
 
 	win.ShowWindow(win.HWND(hwnd), win.SW_SHOWNA)
-
-	// 创建时绘制一次内容（使用 UpdateLayeredWindow 逐像素透明）
-	dm.repaintGhostWindow()
+	dm.paintGhostIcon()
 }
 
-// destroyGhostWindow 销毁拖拽幽灵窗口
+// destroyGhostWindow 销毁幽灵窗口
 func (dm *DesktopMode) destroyGhostWindow() {
 	if dm.GhostHwnd != 0 {
 		procDestroyWindow.Call(uintptr(dm.GhostHwnd))
@@ -654,115 +660,139 @@ func (dm *DesktopMode) moveGhostWindow(screenX, screenY int) {
 	if dm.GhostHwnd == 0 {
 		return
 	}
-	tileW := ui.TileWidth()
-	tileH := ui.TileHeight()
-	ghostX := screenX - tileW/2
-	ghostY := screenY - tileH/2
+	ghostW, ghostH := dm.ghostWindowSize()
+	ghostX := screenX - ghostW/2
+	ghostY := screenY - ghostH/2
 	win.SetWindowPos(dm.GhostHwnd, 0, int32(ghostX), int32(ghostY), 0, 0,
 		win.SWP_NOSIZE|win.SWP_NOZORDER|win.SWP_NOACTIVATE)
 }
 
-// repaintGhostWindow 重绘幽灵窗口内容（用 BitBlt 普通拷贝，背景用粉红色做透明键）
-func (dm *DesktopMode) repaintGhostWindow() {
-	if dm.GhostHwnd == 0 {
+// paintGhostIcon 用 UpdateLayeredWindow 在幽灵窗口上绘制半透明图标和文字
+func (dm *DesktopMode) paintGhostIcon() {
+	if dm.GhostHwnd == 0 || dm.GhostBmp == nil {
 		return
 	}
 
-	hdc := win.GetDC(dm.GhostHwnd)
-	if hdc == 0 {
+	tileW, tileH := dm.ghostWindowSize()
+
+	bmp, err := walk.NewBitmapWithTransparentPixelsForDPI(walk.Size{Width: tileW, Height: tileH}, dm.MainWindow.DPI())
+	if err != nil || bmp == nil {
 		return
 	}
-	defer win.ReleaseDC(dm.GhostHwnd, hdc)
+	defer bmp.Dispose()
 
-	memDC := win.CreateCompatibleDC(hdc)
-	if memDC == 0 {
+	canvas, err := walk.NewCanvasFromImage(bmp)
+	if err != nil || canvas == nil {
 		return
 	}
-	defer win.DeleteDC(memDC)
+	defer canvas.Dispose()
 
-	tileW := int32(ui.TileWidth())
-	tileH := int32(ui.TileHeight())
-	hBmp := win.CreateCompatibleBitmap(hdc, tileW, tileH)
+	// 绘制图标（居中）
+	iconX := (tileW - ui.DesktopIconSize) / 2
+	iconY := ui.DesktopIconTop
+	canvas.DrawBitmapWithOpacityPixels(dm.GhostBmp,
+		walk.Rectangle{X: iconX, Y: iconY, Width: ui.DesktopIconSize, Height: ui.DesktopIconSize}, 255)
+
+	// 绘制文字（选中状态：显示所有行）
+	font := ui.GetIconFont()
+	if font != nil {
+		defer font.Dispose()
+		lines := ui.SplitTextToLines(dm.DragItemName, 4)
+		labelTop := ui.DesktopIconLabelTop
+		for i, line := range lines {
+			lineY := labelTop + i*ui.DesktopIconLineHeight
+			textBounds := walk.Rectangle{X: 0, Y: lineY, Width: tileW, Height: ui.DesktopIconLineHeight}
+			canvas.DrawTextPixels(line, font, walk.RGB(0xFF, 0xFF, 0xFF), textBounds, walk.TextCenter|walk.TextSingleLine)
+		}
+	}
+
+	img, err := bmp.ToImage()
+	if err != nil || img == nil {
+		return
+	}
+
+	hdcScreen := win.GetDC(0)
+	if hdcScreen == 0 {
+		return
+	}
+	defer win.ReleaseDC(0, hdcScreen)
+
+	hdcMem := win.CreateCompatibleDC(hdcScreen)
+	if hdcMem == 0 {
+		return
+	}
+	defer win.DeleteDC(hdcMem)
+
+	var bi win.BITMAPINFO
+	bi.BmiHeader.BiSize = uint32(unsafe.Sizeof(bi.BmiHeader))
+	bi.BmiHeader.BiWidth = int32(tileW)
+	bi.BmiHeader.BiHeight = -int32(tileH) // 顶向下
+	bi.BmiHeader.BiPlanes = 1
+	bi.BmiHeader.BiBitCount = 32
+	bi.BmiHeader.BiCompression = win.BI_RGB
+
+	var bits unsafe.Pointer
+	hBmp := win.CreateDIBSection(hdcMem, &bi.BmiHeader, win.DIB_RGB_COLORS, &bits, 0, 0)
 	if hBmp == 0 {
 		return
 	}
 	defer win.DeleteObject(win.HGDIOBJ(hBmp))
 
-	oldBmp := win.SelectObject(memDC, win.HGDIOBJ(hBmp))
-	defer win.SelectObject(memDC, oldBmp)
-
-	// 用透明键颜色填充背景（后续通过 SetLayeredWindowAttributes 设为透明）
-	transparentKey := win.RGB(0xFF, 0x00, 0xFF) // 亮粉红色
-	bgBrush, _, _ := procCreateSolidBrush.Call(uintptr(transparentKey))
-	if bgBrush != 0 {
-		bgRect := win.RECT{Right: tileW, Bottom: tileH}
-		procFillRect.Call(uintptr(memDC), uintptr(unsafe.Pointer(&bgRect)), bgBrush)
-		procDeleteObject.Call(bgBrush)
+	hOld := win.SelectObject(hdcMem, win.HGDIOBJ(hBmp))
+	if hOld == 0 {
+		return
 	}
+	defer win.SelectObject(hdcMem, hOld)
 
-	// 绘制图标
-	iconPath, _ := syscall.UTF16PtrFromString(dm.DragItemPath)
-	var hIcon win.HICON
-	procPrivateExtractIcons := syscall.NewLazyDLL("user32.dll").NewProc("PrivateExtractIconsW")
-	procPrivateExtractIcons.Call(
-		uintptr(unsafe.Pointer(iconPath)),
-		0, uintptr(ui.DesktopIconSize), uintptr(ui.DesktopIconSize),
-		uintptr(unsafe.Pointer(&hIcon)), 0, 1, 0)
-	if hIcon != 0 {
-		iconX := (tileW - int32(ui.DesktopIconSize)) / 2
-		iconY := int32(ui.DesktopIconTop)
-		win.DrawIconEx(memDC, iconX, iconY, hIcon,
-			int32(ui.DesktopIconSize), int32(ui.DesktopIconSize),
-			0, 0, win.DI_NORMAL)
-		win.DestroyIcon(hIcon)
-	}
-
-	// 绘制文字
-	displayName := dm.DragItemName
-	lines := ui.SplitTextToLines(displayName, 4)
-	font := ui.GetIconFont()
-	if font != nil {
-		lf := win.LOGFONT{}
-		lf.LfHeight = -win.MulDiv(int32(font.PointSize()), 96, 72)
-		lf.LfWeight = win.FW_NORMAL
-		lf.LfCharSet = win.DEFAULT_CHARSET
-		lf.LfQuality = win.CLEARTYPE_QUALITY
-		family := syscall.StringToUTF16(font.Family())
-		copy(lf.LfFaceName[:], family)
-		hFont := win.CreateFontIndirect(&lf)
-		font.Dispose()
-		if hFont != 0 {
-			oldFont := win.SelectObject(memDC, win.HGDIOBJ(hFont))
-			win.SetTextColor(memDC, win.RGB(0xFF, 0xFF, 0xFF))
-			win.SetBkMode(memDC, win.TRANSPARENT)
-			labelTop := int32(ui.DesktopIconLabelTop)
-			for i, line := range lines {
-				if i >= 2 {
-					break
+	// 将 walk.Bitmap 像素复制到 DIB，并预乘 alpha（UpdateLayeredWindow 要求 premultiplied alpha）
+	// GDI 在透明 DIB 上绘制文字时 alpha 可能为 0，对文字区域（y >= DesktopIconLabelTop）的非黑色像素强制不透明
+	pixels := (*[1 << 24]byte)(bits)
+	imgW := img.Bounds().Dx()
+	imgH := img.Bounds().Dy()
+	n := 0
+	for y := 0; y < tileH; y++ {
+		inTextArea := y >= ui.DesktopIconLabelTop
+		for x := 0; x < tileW; x++ {
+			if x >= imgW || y >= imgH {
+				pixels[n+0] = 0
+				pixels[n+1] = 0
+				pixels[n+2] = 0
+				pixels[n+3] = 0
+			} else {
+				c := img.RGBAAt(x, y)
+				a := c.A
+				// 文字区域：非黑色但 alpha 为 0 的像素，是被 GDI 错误标记的的文字，强制不透明
+				if inTextArea && a == 0 && (c.R != 0 || c.G != 0 || c.B != 0) {
+					a = 255
 				}
-				if i == 1 && len(lines) > 2 {
-					line = ui.TruncateText(line, 3)
-				}
-				text := syscall.StringToUTF16(line)
-				textRect := win.RECT{
-					Left: 0, Top: labelTop + int32(i)*int32(ui.DesktopIconLineHeight),
-					Right: tileW, Bottom: labelTop + int32(i+1)*int32(ui.DesktopIconLineHeight),
-				}
-				dtFlags := uintptr(win.DT_CENTER | win.DT_SINGLELINE | win.DT_VCENTER)
-				procDrawTextW.Call(uintptr(memDC), uintptr(unsafe.Pointer(&text[0])),
-					uintptr(len(line)), uintptr(unsafe.Pointer(&textRect)), dtFlags)
+				pixels[n+0] = byte(uint16(c.B) * uint16(a) / 255)
+				pixels[n+1] = byte(uint16(c.G) * uint16(a) / 255)
+				pixels[n+2] = byte(uint16(c.R) * uint16(a) / 255)
+				pixels[n+3] = a
 			}
-			win.SelectObject(memDC, oldFont)
-			win.DeleteObject(win.HGDIOBJ(hFont))
+			n += 4
 		}
 	}
 
-	// 拷贝到窗口 DC
-	win.BitBlt(hdc, 0, 0, tileW, tileH, memDC, 0, 0, win.SRCCOPY)
+	size := win.SIZE{CX: int32(tileW), CY: int32(tileH)}
+	ptSrc := win.POINT{X: 0, Y: 0}
+	blend := win.BLENDFUNCTION{
+		BlendOp:             0, // AC_SRC_OVER
+		BlendFlags:          0,
+		SourceConstantAlpha: 200,
+		AlphaFormat:         win.AC_SRC_ALPHA,
+	}
 
-	// 用粉红色做透明键
-	procSetLayeredWindowAttributes.Call(uintptr(dm.GhostHwnd),
-		uintptr(transparentKey), 0, 0x00000001) // LWA_COLORKEY
+	procUpdateLayeredWindow.Call(
+		uintptr(dm.GhostHwnd),
+		0,
+		0,
+		uintptr(unsafe.Pointer(&size)),
+		uintptr(hdcMem),
+		uintptr(unsafe.Pointer(&ptSrc)),
+		0,
+		uintptr(unsafe.Pointer(&blend)),
+		_ULW_ALPHA)
 }
 
 // ghostWndProc 幽灵窗口消息处理
