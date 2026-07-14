@@ -80,10 +80,16 @@ type CardDragOutline struct {
 	DragOutlineW    int
 	DragOutlineH    int
 
-	outlineInvalidate func()
+	// 弹出式边框窗口（替代 paintCanvas 方式）
+	dragOutline popupFrameOverlay
+	workX       int
+	workY       int
 }
 
-func (s *CardDragOutline) Inject(invalidate func()) { s.outlineInvalidate = invalidate }
+func (s *CardDragOutline) Inject(workX, workY int) {
+	s.workX = workX
+	s.workY = workY
+}
 
 // ResizeOutlineState 卡片缩放虚框状态
 type ResizeOutlineState struct {
@@ -98,7 +104,7 @@ type ResizeOutlineState struct {
 	PrevResizeH       int
 
 	// 弹出式边框窗口（替代 XOR 屏幕绘制）
-	OutlineHwnd win.HWND
+	resizeOutline popupFrameOverlay
 
 	resizeWorkX func() int
 	resizeWorkY func() int

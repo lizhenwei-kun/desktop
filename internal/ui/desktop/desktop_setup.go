@@ -33,7 +33,7 @@ func (dm *DesktopMode) Setup() error {
 		dm.MainWindow.DPI(), dm.WorkX, dm.WorkY, dm.WorkW, dm.WorkH)
 
 	// === 注入子结构体能力 ===
-	dm.CardDragOutline.Inject(func() { dm.BodyWidget.Invalidate() })
+	dm.CardDragOutline.Inject(dm.WorkX, dm.WorkY)
 	dm.ResizeOutlineState.Inject(dm.WorkX, dm.WorkY)
 
 	// 设置主窗口尺寸为工作区
@@ -203,7 +203,8 @@ func (dm *DesktopMode) delayedSetup() {
 func (dm *DesktopMode) exitDesktopMode() {
 	dm.Lifecycle.MarkClosing()
 	dm.Lifecycle.ExecuteCleanups()
-	dm.ResizeOutlineState.destroyOutlineWindow()
+	dm.ResizeOutlineState.resizeOutline.destroy()
+	dm.CardDragOutline.dragOutline.destroy()
 	hwnd := dm.MainWindow.Handle()
 	// 从桌面层脱离
 	dm.WinAPI.DetachFromDesktop(win.HWND(hwnd))
