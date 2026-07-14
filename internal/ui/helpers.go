@@ -253,75 +253,45 @@ func ClampInt(val, min, max int) int {
 
 // SplitTextToLines 将文本拆分为多行。
 //
-// 连续同类型字符段规则（全角2单位、半角1单位）：
-//   - 长度 >=7 且 <=9：按一行算
-//   - 长度 <6：合并到下一个段（追加到其头部），重新计算
-//   - 长度 >9：分行，每次取 9 个作为一行，剩余部分合并到下一个段
+// 使用视觉宽度感知的拆分方式：
+//   - ASCII/半角字符 = 1 个宽度单位，全角/CJK 字符 = 2 个宽度单位
+//   - maxCJK 表示一行最多容纳的 全角字符数（视觉宽度上限 = maxCJK × 2）
+//   - 例如 maxCJK=4 时：最多 4 个汉字，或 8 个半角字符，或混合搭配不超过视觉宽度 8
 func SplitTextToLines(text string, maxCJK int) []string {
 	if maxCJK <= 0 {
 		return nil
 	}
 	runes := []rune(text)
-
-	// 解析为连续同类型字符段（ASCII/半角 vs 全角）
-	const (
-		segASCII = iota
-		segFull
-	)
-	type segment struct {
-		typ   int
-		runes []rune
+	if len(runes) == 0 {
+		return nil
 	}
 
-	var segs []segment
-	for i := 0; i < len(runes); {
-		isAscii := runes[i] <= 0xFF
-		j := i
-		for j < len(runes) && (runes[j] <= 0xFF) == isAscii {
-			j++
+	charWidth := func(r rune) int {
+		if r <= 0xFF {
+			return 1
 		}
-		typ := segFull
-		if isAscii {
-			typ = segASCII
-		}
-		segs = append(segs, segment{typ: typ, runes: runes[i:j]})
-		i = j
+		return 2
 	}
 
 	var lines []string
-	for s := 0; s < len(segs); s++ {
-		seg := segs[s]
-		// 所有段统一按长度规则处理
-		l := len(seg.runes)
-		switch {
-		case l >= 7 && l <= 9:
-			lines = append(lines, string(seg.runes))
-		case l < 6:
-			if s+1 < len(segs) {
-				// 合并到下一个段，按前面规则重新计算
-				segs[s+1].runes = append(seg.runes, segs[s+1].runes...)
-			} else {
-				lines = append(lines, string(seg.runes))
-			}
-		case l > 9:
-			pos := 0
-			for pos < len(seg.runes) {
-				end := pos + 9
-				if end >= len(seg.runes) {
-					// 剩余部分合并到下一个段
-					if s+1 < len(segs) {
-						segs[s+1].runes = append(seg.runes[pos:], segs[s+1].runes...)
-					} else {
-						lines = append(lines, string(seg.runes[pos:]))
-					}
-					break
-				}
-				lines = append(lines, string(seg.runes[pos:end]))
-				pos = end
-			}
-		default: // l == 6，直接作为一行
-			lines = append(lines, string(seg.runes))
+	start := 0
+	currentWidth := 0
+
+	maxVisualWidth := maxCJK * 2
+	for i := 0; i < len(runes); i++ {
+		w := charWidth(runes[i])
+		if currentWidth+w > maxVisualWidth {
+			lines = append(lines, string(runes[start:i]))
+			start = i
+			currentWidth = w
+		} else {
+			currentWidth += w
 		}
+	}
+
+	// 剩余部分
+	if start < len(runes) {
+		lines = append(lines, string(runes[start:]))
 	}
 
 	return lines
