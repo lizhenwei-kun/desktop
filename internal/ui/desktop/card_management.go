@@ -135,6 +135,13 @@ func (dm *DesktopMode) setupCardActions(card *ui.GroupCard, grp config.Group) {
 
 	// 图标按下回调（通知 DesktopMode 通过 UnifiedDragState 统一管理拖拽）
 	card.SetOnIconPress(dm.handleCardIconPress)
+
+	// 图标释放回调（通知 DesktopMode 取消拖拽，防止点击变拖拽）
+	card.SetOnIconRelease(func() {
+		dm.DragPressed = false
+		dm.SourceCard = nil
+		dm.SourceItemIdx = -1
+	})
 }
 
 func (dm *DesktopMode) refreshCards() {

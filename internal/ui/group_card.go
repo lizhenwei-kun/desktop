@@ -100,6 +100,9 @@ type GroupCard struct {
 	// 图标按下回调（通知 DesktopMode，由 UnifiedDragState 统一管理拖拽延迟检测和状态）
 	onIconPress func(card *GroupCard, idx int, item group.GroupItem, clientX, clientY int)
 
+	// 图标释放回调（通知 DesktopMode 取消拖拽，防止点击变拖拽）
+	onIconRelease func()
+
 	// 卡片拖拽虚框位置更新回调（DesktopMode 在桌面层画虚框）
 	onCardDragOutline     func(card *GroupCard, newX, newY int)
 	onCardDragOutlineEnd  func(card *GroupCard)
@@ -279,8 +282,10 @@ func (gc *GroupCard) setupMouseEvents() {
 			return
 		}
 
-		// 图标拖拽释放由 DesktopMode 统一处理（通过 SetCapture 捕获的 BodyWidget MouseUp）
-		// 此处不处理任何拖拽逻辑
+		// 通知 DesktopMode 取消图标拖拽（避免点击变拖拽，因为 card MouseUp 不会传播到 desktop BodyWidget）
+		if gc.onIconRelease != nil {
+			gc.onIconRelease()
+		}
 
 		isDragEnd := gc.isDragging
 		gc.isPressed = false
@@ -1051,6 +1056,11 @@ func (gc *GroupCard) SetOnCardDragOutlineEnd(fn func(card *GroupCard)) {
 // SetOnIconPress 设置图标按下回调（通知 DesktopMode 统一管理拖拽）
 func (gc *GroupCard) SetOnIconPress(fn func(card *GroupCard, idx int, item group.GroupItem, clientX, clientY int)) {
 	gc.onIconPress = fn
+}
+
+// SetOnIconRelease 设置图标释放回调（通知 DesktopMode 取消拖拽）
+func (gc *GroupCard) SetOnIconRelease(fn func()) {
+	gc.onIconRelease = fn
 }
 
 // SetOnResizeOutline 设置缩放虚框回调（DesktopMode 在桌面层绘制边框）
