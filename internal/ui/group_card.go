@@ -795,13 +795,8 @@ func (gc *GroupCard) paintIconTile(canvas *walk.Canvas, item group.GroupItem, x,
 			}
 		} else {
 			// 非选中：最多显示2行，超出省略
-			for i, line := range lines {
-				if i >= 2 {
-					break
-				}
-				if i == 1 && len(lines) > 2 {
-					line = TruncateText(line, 3)
-				}
+			displayLines := GetIconDisplayLines(item.Name, 4)
+			for i, line := range displayLines {
 				lineY := labelTop + i*DesktopIconLineHeight
 				shadowBounds := walk.Rectangle{X: x + 1, Y: lineY + 1, Width: desktopIconItemWidth, Height: DesktopIconLineHeight}
 				canvas.DrawTextPixels(line, font, walk.RGB(0, 0, 0), shadowBounds, walk.TextCenter|walk.TextSingleLine)

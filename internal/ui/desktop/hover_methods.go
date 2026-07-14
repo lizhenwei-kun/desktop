@@ -113,13 +113,8 @@ func (dm *DesktopMode) paintAllIcons(canvas *walk.Canvas, bounds walk.Rectangle)
 				}
 			} else {
 				// 非选中：最多显示2行，超出省略
-				for i, line := range lines {
-					if i >= 2 {
-						break
-					}
-					if i == 1 && len(lines) > 2 {
-						line = ui.TruncateText(line, 3)
-					}
+				displayLines := ui.GetIconDisplayLines(displayName, 4)
+				for i, line := range displayLines {
 					lineY := labelTop + i*ui.DesktopIconLineHeight
 					textBounds := walk.Rectangle{X: px, Y: lineY, Width: ui.TileWidth(), Height: ui.DesktopIconLineHeight}
 					canvas.DrawTextPixels(line, font, walk.RGB(0xFF, 0xFF, 0xFF), textBounds, walk.TextCenter|walk.TextSingleLine)

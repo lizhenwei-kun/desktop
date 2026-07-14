@@ -102,15 +102,9 @@ func (dm *DesktopMode) paintDragGhost(canvas *walk.Canvas, _ walk.Rectangle) {
 	if font != nil {
 		defer font.Dispose()
 		displayName := dm.DragItemName
-		lines := ui.SplitTextToLines(displayName, 4)
+		lines := ui.GetIconDisplayLines(displayName, 4)
 		labelTop := ghostY + ui.DesktopIconLabelTop
 		for i, line := range lines {
-			if i >= 2 {
-				break
-			}
-			if i == 1 && len(lines) > 2 {
-				line = ui.TruncateText(line, 3)
-			}
 			lineY := labelTop + i*ui.DesktopIconLineHeight
 			textBounds := walk.Rectangle{X: ghostX, Y: lineY, Width: ui.TileWidth(), Height: ui.DesktopIconLineHeight}
 			canvas.DrawTextPixels(line, font, walk.RGB(0xFF, 0xFF, 0xFF), textBounds, walk.TextCenter|walk.TextSingleLine)

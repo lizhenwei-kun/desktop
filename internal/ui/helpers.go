@@ -21,9 +21,9 @@ const (
 	DesktopIconTop        = 2
 	DesktopIconLabelTop   = 52
 	DesktopIconLineHeight = 24
-	DesktopIconGap        = 8  // 图标磁贴间距
-	LongPressDragDelay    = 1 * time.Second  // 卡片拖拽延迟（标题栏长按）
-	IconDragDelay         = 300 * time.Millisecond  // 图标拖拽延迟（卡片内/未分组图标）
+	DesktopIconGap        = 8                      // 图标磁贴间距
+	LongPressDragDelay    = 1 * time.Second        // 卡片拖拽延迟（标题栏长按）
+	IconDragDelay         = 300 * time.Millisecond // 图标拖拽延迟（卡片内/未分组图标）
 )
 
 var (
@@ -297,13 +297,60 @@ func SplitTextToLines(text string, maxCJK int) []string {
 	return lines
 }
 
-// TruncateText 截断文字，超出部分用省略号
-func TruncateText(text string, maxRunes int) string {
+// TruncateText 按视觉宽度截断文字，超出部分用省略号。
+// CJK/全角字符计 2 个宽度单位，ASCII/半角字符计 1 个宽度单位。
+// maxWidth 为总视觉宽度上限（含省略号 "…"）。
+func TruncateText(text string, maxWidth int) string {
 	runes := []rune(text)
-	if len(runes) <= maxRunes {
+	if len(runes) == 0 {
 		return text
 	}
-	return string(runes[:maxRunes-1]) + "…"
+
+	charWidth := func(r rune) int {
+		if r <= 0xFF {
+			return 1
+		}
+		return 2
+	}
+
+	// 计算全文视觉宽度
+	totalWidth := 0
+	for _, r := range runes {
+		totalWidth += charWidth(r)
+	}
+	if totalWidth <= maxWidth {
+		return text
+	}
+
+	// 需要截断：为 "…"（宽度 2）预留空间
+	available := maxWidth - 2
+	if available <= 0 {
+		return "…"
+	}
+
+	width := 0
+	endIdx := 0
+	for i, r := range runes {
+		w := charWidth(r)
+		if width+w > available {
+			break
+		}
+		width += w
+		endIdx = i + 1
+	}
+
+	return string(runes[:endIdx]) + "…"
+}
+
+// GetIconDisplayLines 将图标名称拆分为至多 2 行显示文本。
+// 若超出 2 行，第 2 行末尾用省略号截断（非选中状态的通用展示逻辑）。
+func GetIconDisplayLines(name string, maxCJK int) []string {
+	lines := SplitTextToLines(name, maxCJK)
+	if len(lines) > 2 {
+		lines = lines[:2]
+		lines[1] = TruncateText(lines[1], 7)
+	}
+	return lines
 }
 
 // drawBorderedRect 创建填充+1px边框的 RGBA 图像
