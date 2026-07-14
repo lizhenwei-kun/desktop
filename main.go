@@ -11,6 +11,8 @@ import (
 
 	"desktop_go/internal/app"
 	"desktop_go/internal/logger"
+	"desktop_go/internal/resources"
+	"desktop_go/internal/ui"
 )
 
 var (
@@ -60,6 +62,9 @@ func main() {
 		// 已有实例在运行，直接退出
 		os.Exit(0)
 	}
+
+	// 注册嵌入的 ico 文件系统到 ui 包
+	ui.EmbeddedIcoFS = resources.GetIcoFS()
 
 	runner, err := app.NewRunner()
 	if err != nil {

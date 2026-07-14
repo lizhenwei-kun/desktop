@@ -12,10 +12,10 @@ import (
 
 // Manager 分组数据管理器
 type Manager struct {
-	cfg        *config.Config
-	mu         sync.RWMutex
-	onChange   func()
-	itemOrder  map[string][]string // groupName -> ordered path list (in-memory, for drag reorder)
+	cfg       *config.Config
+	mu        sync.RWMutex
+	onChange  func()
+	itemOrder map[string][]string // groupName -> ordered path list (in-memory, for drag reorder)
 }
 
 // NewManager 创建分组管理器
@@ -135,8 +135,62 @@ func (m *Manager) GetGroupItems(groupName string) []GroupItem {
 	return items
 }
 
+// GetSystemItems 获取系统桌面项（如"此电脑"），作为未分组项展示
+func (m *Manager) GetSystemItems() []GroupItem {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	items := make([]GroupItem, len(m.cfg.SystemItems))
+	for i, si := range m.cfg.SystemItems {
+		items[i] = GroupItem{Path: "shell:" + si.ID, Name: si.Name}
+	}
+	return items
+}
+
+// AddSystemItem 添加系统桌面项
+func (m *Manager) AddSystemItem(id, name string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for _, si := range m.cfg.SystemItems {
+		if si.ID == id {
+			return
+		}
+	}
+	m.cfg.SystemItems = append(m.cfg.SystemItems, config.SystemItem{ID: id, Name: name})
+	m.save()
+	m.notifyChange()
+}
+
+// HasSystemItem 检查系统桌面项是否已添加
+func (m *Manager) HasSystemItem(id string) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, si := range m.cfg.SystemItems {
+		if si.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+// RemoveSystemItem 移除系统桌面项
+func (m *Manager) RemoveSystemItem(id string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for i, si := range m.cfg.SystemItems {
+		if si.ID == id {
+			m.cfg.SystemItems = append(m.cfg.SystemItems[:i], m.cfg.SystemItems[i+1:]...)
+			break
+		}
+	}
+	m.save()
+	m.notifyChange()
+}
+
 // GetUngroupedItems 获取未分组的项目
-// 包括：gName 为空的项目，以及 gName 对应的 Group 卡片不存在的项目（孤儿项）
+// 包括：gName 为空的项目，以及 gName 对应的 Group 卡片不存在的项目（孤儿项），以及系统桌面项
 func (m *Manager) GetUngroupedItems() []GroupItem {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -154,6 +208,11 @@ func (m *Manager) GetUngroupedItems() []GroupItem {
 			name := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 			items = append(items, GroupItem{Path: path, Name: name})
 		}
+	}
+
+	// 追加系统桌面项
+	for _, si := range m.cfg.SystemItems {
+		items = append(items, GroupItem{Path: "shell:" + si.ID, Name: si.Name})
 	}
 
 	sort.Slice(items, func(i, j int) bool {
@@ -206,6 +265,15 @@ func (m *Manager) GetAllItems() []ItemInfo {
 		return ungrouped[i].Name < ungrouped[j].Name
 	})
 	result = append(result, ungrouped...)
+
+	// 追加系统桌面项
+	for _, si := range m.cfg.SystemItems {
+		result = append(result, ItemInfo{
+			Path:      "shell:" + si.ID,
+			Name:      si.Name,
+			GroupName: "",
+		})
+	}
 
 	return result
 }

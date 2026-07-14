@@ -251,9 +251,9 @@ func ClampInt(val, min, max int) int {
 	return val
 }
 
-// SplitTextToLines 将文本拆分为多行，优先在空格处换行，最大 maxRunes 个汉字/行
+// SplitTextToLines 将文本拆分为多行。
 //
-// ASCII 连续段规则（半角符号与英文字母）：
+// 连续同类型字符段规则（全角2单位、半角1单位）：
 //   - 长度 >=7 且 <=9：按一行算
 //   - 长度 <6：合并到下一个段（追加到其头部），重新计算
 //   - 长度 >9：分行，每次取 9 个作为一行，剩余部分合并到下一个段
@@ -261,7 +261,6 @@ func SplitTextToLines(text string, maxCJK int) []string {
 	if maxCJK <= 0 {
 		return nil
 	}
-	maxWidth := maxCJK * 2 // 全角2单位，半角1单位
 	runes := []rune(text)
 
 	// 解析为连续同类型字符段（ASCII/半角 vs 全角）
@@ -292,79 +291,36 @@ func SplitTextToLines(text string, maxCJK int) []string {
 	var lines []string
 	for s := 0; s < len(segs); s++ {
 		seg := segs[s]
-		if seg.typ == segASCII {
-			l := len(seg.runes)
-			switch {
-			case l >= 7 && l <= 9:
-				lines = append(lines, string(seg.runes))
-			case l < 6:
-				if s+1 < len(segs) {
-					// 合并到下一个段，按前面规则重新计算
-					segs[s+1].runes = append(seg.runes, segs[s+1].runes...)
-				} else {
-					lines = append(lines, string(seg.runes))
-				}
-			case l > 9:
-				pos := 0
-				for pos < len(seg.runes) {
-					end := pos + 9
-					if end >= len(seg.runes) {
-						// 剩余部分合并到下一个段
-						if s+1 < len(segs) {
-							segs[s+1].runes = append(seg.runes[pos:], segs[s+1].runes...)
-						} else {
-							lines = append(lines, string(seg.runes[pos:]))
-						}
-						break
-					}
-					lines = append(lines, string(seg.runes[pos:end]))
-					pos = end
-				}
-			default: // l == 6，直接作为一行
+		// 所有段统一按长度规则处理
+		l := len(seg.runes)
+		switch {
+		case l >= 7 && l <= 9:
+			lines = append(lines, string(seg.runes))
+		case l < 6:
+			if s+1 < len(segs) {
+				// 合并到下一个段，按前面规则重新计算
+				segs[s+1].runes = append(seg.runes, segs[s+1].runes...)
+			} else {
 				lines = append(lines, string(seg.runes))
 			}
-		} else {
-			// 全角字符段（可能混有合并进来的 ASCII）：按原始宽度逻辑处理
+		case l > 9:
 			pos := 0
 			for pos < len(seg.runes) {
-				width := 0
-				end := pos
-				lastSpace := -1
-
-				for end < len(seg.runes) {
-					r := seg.runes[end]
-					w := 2
-					if r <= 0xFF {
-						w = 1
-					}
-					if width+w > maxWidth {
-						break
-					}
-					width += w
-					end++
-					if r == ' ' || r == '\t' {
-						lastSpace = end - 1
-					}
-				}
-
+				end := pos + 9
 				if end >= len(seg.runes) {
-					lines = append(lines, string(seg.runes[pos:]))
+					// 剩余部分合并到下一个段
+					if s+1 < len(segs) {
+						segs[s+1].runes = append(seg.runes[pos:], segs[s+1].runes...)
+					} else {
+						lines = append(lines, string(seg.runes[pos:]))
+					}
 					break
 				}
-
-				if lastSpace >= pos {
-					lines = append(lines, string(seg.runes[pos:lastSpace]))
-					pos = lastSpace + 1
-				} else {
-					if end > pos {
-						lines = append(lines, string(seg.runes[pos:end]))
-						pos = end
-					} else {
-						lines = append(lines, string(seg.runes[pos:pos+1]))
-						pos++
-					}
-				}
+				lines = append(lines, string(seg.runes[pos:end]))
+				pos = end
 			}
+		default: // l == 6，直接作为一行
+			lines = append(lines, string(seg.runes))
 		}
 	}
 
@@ -380,20 +336,23 @@ func TruncateText(text string, maxRunes int) string {
 	return string(runes[:maxRunes-1]) + "…"
 }
 
-func DrawHoverRect(canvas *walk.Canvas, bounds walk.Rectangle) {
-	fillColor := color.RGBA{R: 0x00, G: 0x45, B: 0x8A, A: 0x15}
-	borderColor := color.RGBA{R: 0x00, G: 0x5A, B: 0xAD, A: 0x20}
-
+// drawBorderedRect 创建填充+1px边框的 RGBA 图像
+func drawBorderedRect(bounds walk.Rectangle, fill, border color.RGBA) *image.RGBA {
 	img := image.NewRGBA(image.Rect(0, 0, bounds.Width, bounds.Height))
 	for y := 0; y < bounds.Height; y++ {
 		for x := 0; x < bounds.Width; x++ {
 			if x == 0 || x == bounds.Width-1 || y == 0 || y == bounds.Height-1 {
-				img.SetRGBA(x, y, borderColor)
+				img.SetRGBA(x, y, border)
 			} else {
-				img.SetRGBA(x, y, fillColor)
+				img.SetRGBA(x, y, fill)
 			}
 		}
 	}
+	return img
+}
+
+// drawRGBAImage 将 RGBA 图像绘制到 canvas
+func drawRGBAImage(canvas *walk.Canvas, img *image.RGBA, bounds walk.Rectangle) {
 	bmp, err := walk.NewBitmapFromImage(img)
 	if err == nil {
 		defer bmp.Dispose()
@@ -401,37 +360,24 @@ func DrawHoverRect(canvas *walk.Canvas, bounds walk.Rectangle) {
 	}
 }
 
-// DrawSelectionRect 绘制选中高亮（深蓝色边框，半透明背景）
-func DrawSelectionRect(canvas *walk.Canvas, bounds walk.Rectangle) {
-	fillColor := color.RGBA{R: 0x00, G: 0x4D, B: 0x96, A: 0x18}
-	borderColor := color.RGBA{R: 0x00, G: 0x6B, B: 0xCC, A: 0x30}
+// DrawHoverRect 绘制悬停高亮（半透明背景，细边框）
+func DrawHoverRect(canvas *walk.Canvas, bounds walk.Rectangle) {
+	fillColor := color.RGBA{R: 0x00, G: 0x45, B: 0x8A, A: 0x15}
+	borderColor := color.RGBA{R: 0x00, G: 0x5A, B: 0xAD, A: 0x20}
+	img := drawBorderedRect(bounds, fillColor, borderColor)
+	drawRGBAImage(canvas, img, bounds)
+}
 
+// DrawSelectionRect 绘制选中高亮（半透明填充，无边框）
+func DrawSelectionRect(canvas *walk.Canvas, bounds walk.Rectangle) {
+	fillColor := color.RGBA{R: 0x00, G: 0x55, B: 0xAA, A: 0x80}
 	img := image.NewRGBA(image.Rect(0, 0, bounds.Width, bounds.Height))
 	for y := 0; y < bounds.Height; y++ {
 		for x := 0; x < bounds.Width; x++ {
-			if x == 0 || x == bounds.Width-1 || y == 0 || y == bounds.Height-1 {
-				img.SetRGBA(x, y, borderColor)
-			} else {
-				img.SetRGBA(x, y, fillColor)
-			}
+			img.SetRGBA(x, y, fillColor)
 		}
 	}
-	// 外边框更亮
-	outerBorder := color.RGBA{R: 0x00, G: 0x7D, B: 0xE0, A: 0x40}
-	for x := 0; x < bounds.Width; x++ {
-		img.SetRGBA(x, 0, outerBorder)
-		img.SetRGBA(x, bounds.Height-1, outerBorder)
-	}
-	for y := 0; y < bounds.Height; y++ {
-		img.SetRGBA(0, y, outerBorder)
-		img.SetRGBA(bounds.Width-1, y, outerBorder)
-	}
-
-	bmp, err := walk.NewBitmapFromImage(img)
-	if err == nil {
-		defer bmp.Dispose()
-		canvas.DrawBitmapWithOpacityPixels(bmp, bounds, 255)
-	}
+	drawRGBAImage(canvas, img, bounds)
 }
 
 // CreateColorBitmap 创建纯色 RGBA 位图（公开方法，供 desktop 包使用）

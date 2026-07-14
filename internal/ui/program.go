@@ -17,11 +17,30 @@ func NewProgramExecutor() *ProgramExecutor {
 
 // Execute 执行程序或打开文件
 func (pe *ProgramExecutor) Execute(path string) error {
+	// 系统桌面项（shell: 前缀）
+	if strings.HasPrefix(path, "shell:") {
+		return pe.executeSystemItem(path)
+	}
+
 	ext := strings.ToLower(filepath.Ext(path))
 	if ext == ".exe" {
 		return pe.executeExe(path)
 	}
 	return pe.openWithAssoc(path)
+}
+
+// executeSystemItem 执行系统桌面项
+func (pe *ProgramExecutor) executeSystemItem(path string) error {
+	clsid := systemIconCLSID(path)
+	if clsid == "" {
+		return nil
+	}
+	// 用 explorer.exe 打开系统文件夹
+	cmd := exec.Command("explorer.exe", clsid)
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		HideWindow: false,
+	}
+	return cmd.Start()
 }
 
 // executeExe 直接启动 exe 程序

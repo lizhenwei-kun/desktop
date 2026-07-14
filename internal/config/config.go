@@ -26,11 +26,18 @@ type Group struct {
 	Color    string   `json:"color"`
 }
 
+// SystemItem 系统桌面项（如"此电脑"）
+type SystemItem struct {
+	ID   string `json:"id"`   // 唯一标识，如 "MyComputer"
+	Name string `json:"name"` // 显示名称
+}
+
 // Config 表示应用配置
 type Config struct {
 	Groups             []Group           `json:"groups"`
 	DesktopItems       map[string]string `json:"desktop_items"`        // 桌面项路径 -> 分组名
 	UngroupedPositions map[string]Position `json:"ungrouped_positions"` // 未分组项路径 -> 相对位置
+	SystemItems        []SystemItem      `json:"system_items"`         // 系统桌面项
 	CardFontName       string            `json:"card_font_name"`
 	CardFontSize       int               `json:"card_font_size"`
 	IconFontName       string            `json:"icon_font_name"`
@@ -90,6 +97,9 @@ func Load() *Config {
 	}
 	if loaded.UngroupedPositions == nil {
 		loaded.UngroupedPositions = make(map[string]Position)
+	}
+	if loaded.SystemItems == nil {
+		loaded.SystemItems = []SystemItem{}
 	}
 
 	// 识别旧版默认配置并升级

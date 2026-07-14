@@ -58,6 +58,9 @@ func NewRunner() (*Runner, error) {
 	// 初始加载桌面项目
 	r.manager.ReloadDesktopItems()
 
+	// 初始化系统桌面项（首次运行自动添加）
+	r.initSystemItems()
+
 	return r, nil
 }
 
@@ -481,6 +484,13 @@ func (r *Runner) setupNotifyIcon() {
 			r.showTrayContextMenu()
 		}
 	})
+}
+
+// initSystemItems 初始化系统桌面项（首次运行自动添加）
+func (r *Runner) initSystemItems() {
+	if !r.manager.HasSystemItem("MyComputerFolder") {
+		r.manager.AddSystemItem("MyComputerFolder", "此电脑")
+	}
 }
 
 // createSolidImage 创建纯色图像
