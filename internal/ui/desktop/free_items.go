@@ -219,7 +219,10 @@ func (dm *DesktopMode) handleDesktopMouseDown(x, y int, button walk.MouseButton)
 				return
 			}
 
-			// 单击选中
+			// 单击选中（同时清除所有卡片选中，保证全局唯一）
+			for _, c := range dm.Cards {
+				c.ClearSelection()
+			}
 			dm.selectItem(item.Path)
 			dm.LastClickTime = time.Now()
 			dm.LastClickPath = item.Path
@@ -288,12 +291,9 @@ func (dm *DesktopMode) isInLabelArea(y, tileY int) bool {
 	return y >= labelStart && y < labelEnd
 }
 
-// selectItem 设置选中的项目路径（全局唯一）
+// selectItem 设置选中的项目路径（全局唯一，不操作卡片选中状态由调用方管理）
 func (dm *DesktopMode) selectItem(itemPath string) {
 	if dm.SelectedPath != itemPath {
-		for _, c := range dm.Cards {
-			c.ClearSelection()
-		}
 		dm.SelectedPath = itemPath
 		dm.BodyWidget.Invalidate()
 	}
