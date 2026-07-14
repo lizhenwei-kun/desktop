@@ -249,46 +249,122 @@ func ClampInt(val, min, max int) int {
 }
 
 // SplitTextToLines 将文本拆分为多行，优先在空格处换行，最大 maxRunes 个汉字/行
+//
+// ASCII 连续段规则（半角符号与英文字母）：
+//   - 长度 >=7 且 <=9：按一行算
+//   - 长度 <6：合并到下一个段（追加到其头部），重新计算
+//   - 长度 >9：分行，每次取 9 个作为一行，剩余部分合并到下一个段
 func SplitTextToLines(text string, maxCJK int) []string {
-	maxWidth := maxCJK * 2 // 全角2单位，半角1单位，最大宽度8（4中文/8英文）
+	if maxCJK <= 0 {
+		return nil
+	}
+	maxWidth := maxCJK * 2 // 全角2单位，半角1单位
 	runes := []rune(text)
 
+	// 解析为连续同类型字符段（ASCII/半角 vs 全角）
+	const (
+		segASCII = iota
+		segFull
+	)
+	type segment struct {
+		typ   int
+		runes []rune
+	}
+
+	var segs []segment
+	for i := 0; i < len(runes); {
+		isAscii := runes[i] <= 0xFF
+		j := i
+		for j < len(runes) && (runes[j] <= 0xFF) == isAscii {
+			j++
+		}
+		typ := segFull
+		if isAscii {
+			typ = segASCII
+		}
+		segs = append(segs, segment{typ: typ, runes: runes[i:j]})
+		i = j
+	}
+
 	var lines []string
-	pos := 0
-	for pos < len(runes) {
-		width := 0
-		end := pos
-		lastSpace := -1
-
-		for end < len(runes) {
-			r := runes[end]
-			w := 2               // 默认全角
-			if r <= 0xFF {       // ASCII 及半角符号
-				w = 1
+	for s := 0; s < len(segs); s++ {
+		seg := segs[s]
+		if seg.typ == segASCII {
+			l := len(seg.runes)
+			switch {
+			case l >= 7 && l <= 9:
+				lines = append(lines, string(seg.runes))
+			case l < 6:
+				if s+1 < len(segs) {
+					// 合并到下一个段，按前面规则重新计算
+					segs[s+1].runes = append(seg.runes, segs[s+1].runes...)
+				} else {
+					lines = append(lines, string(seg.runes))
+				}
+			case l > 9:
+				pos := 0
+				for pos < len(seg.runes) {
+					end := pos + 9
+					if end >= len(seg.runes) {
+						// 剩余部分合并到下一个段
+						if s+1 < len(segs) {
+							segs[s+1].runes = append(seg.runes[pos:], segs[s+1].runes...)
+						} else {
+							lines = append(lines, string(seg.runes[pos:]))
+						}
+						break
+					}
+					lines = append(lines, string(seg.runes[pos:end]))
+					pos = end
+				}
+			default: // l == 6，直接作为一行
+				lines = append(lines, string(seg.runes))
 			}
-			if width+w > maxWidth {
-				break
-			}
-			width += w
-			end++
-			if r == ' ' || r == '\t' {
-				lastSpace = end - 1
-			}
-		}
-
-		if end >= len(runes) {
-			lines = append(lines, string(runes[pos:]))
-			break
-		}
-
-		if lastSpace >= pos {
-			lines = append(lines, string(runes[pos:lastSpace]))
-			pos = lastSpace + 1 // 跳过分隔空格
 		} else {
-			lines = append(lines, string(runes[pos:end]))
-			pos = end
+			// 全角字符段（可能混有合并进来的 ASCII）：按原始宽度逻辑处理
+			pos := 0
+			for pos < len(seg.runes) {
+				width := 0
+				end := pos
+				lastSpace := -1
+
+				for end < len(seg.runes) {
+					r := seg.runes[end]
+					w := 2
+					if r <= 0xFF {
+						w = 1
+					}
+					if width+w > maxWidth {
+						break
+					}
+					width += w
+					end++
+					if r == ' ' || r == '\t' {
+						lastSpace = end - 1
+					}
+				}
+
+				if end >= len(seg.runes) {
+					lines = append(lines, string(seg.runes[pos:]))
+					break
+				}
+
+				if lastSpace >= pos {
+					lines = append(lines, string(seg.runes[pos:lastSpace]))
+					pos = lastSpace + 1
+				} else {
+					if end > pos {
+						lines = append(lines, string(seg.runes[pos:end]))
+						pos = end
+					} else {
+						lines = append(lines, string(seg.runes[pos:pos+1]))
+						pos++
+					}
+				}
+			}
 		}
 	}
+
 	return lines
 }
 
