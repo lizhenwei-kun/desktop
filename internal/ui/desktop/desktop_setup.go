@@ -203,6 +203,7 @@ func (dm *DesktopMode) delayedSetup() {
 func (dm *DesktopMode) exitDesktopMode() {
 	dm.Lifecycle.MarkClosing()
 	dm.Lifecycle.ExecuteCleanups()
+	dm.ResizeOutlineState.destroyOutlineWindow()
 	hwnd := dm.MainWindow.Handle()
 	// 从桌面层脱离
 	dm.WinAPI.DetachFromDesktop(win.HWND(hwnd))

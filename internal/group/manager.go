@@ -428,6 +428,30 @@ func (m *Manager) RemoveItemFromGroup(groupName, itemPath string) {
 	m.notifyChange()
 }
 
+// RemoveItem 从所有记录中完全移除项目（文件已删除时调用）
+func (m *Manager) RemoveItem(itemPath string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// 从 DesktopItems 中移除
+	delete(m.cfg.DesktopItems, itemPath)
+
+	// 从 UngroupedPositions 中移除
+	delete(m.cfg.UngroupedPositions, itemPath)
+
+	// 从所有分组的 order 中移除
+	for groupName, order := range m.itemOrder {
+		for i, p := range order {
+			if p == itemPath {
+				m.itemOrder[groupName] = append(order[:i], order[i+1:]...)
+				break
+			}
+		}
+	}
+	m.save()
+	m.notifyChange()
+}
+
 // MoveItemToGroup 移动项目到指定分组
 func (m *Manager) MoveItemToGroup(itemPath, groupName string) {
 	m.mu.Lock()

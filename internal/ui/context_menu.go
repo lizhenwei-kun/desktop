@@ -611,8 +611,8 @@ type iShellFolder struct {
 // 图标操作辅助函数
 // ============================================================
 
-// cutFileToClipboard 剪切文件到剪贴板
-func cutFileToClipboard(path string) {
+// CutFileToClipboard 剪切文件到剪贴板
+func CutFileToClipboard(path string) {
 	win.OpenClipboard(0)
 	win.EmptyClipboard()
 
@@ -632,8 +632,8 @@ func cutFileToClipboard(path string) {
 	win.CloseClipboard()
 }
 
-// copyFileToClipboard 复制文件到剪贴板
-func copyFileToClipboard(path string) {
+// CopyFileToClipboard 复制文件到剪贴板
+func CopyFileToClipboard(path string) {
 	win.OpenClipboard(0)
 	win.EmptyClipboard()
 
@@ -653,12 +653,8 @@ func copyFileToClipboard(path string) {
 	win.CloseClipboard()
 }
 
-// deleteFileToRecycleBin 将文件移动到回收站
-func deleteFileToRecycleBin(path string) {
-	// 使用 cmd 的 Recycle 命令
-	exec.Command("cmd", "/c", "start", "", "shell:RecycleBinFolder").Start()
-
-	// 标准方式：使用 SHEmptyRecycleBin 或 SHFileOperation
+// DeleteFileToRecycleBin 将文件移动到回收站
+func DeleteFileToRecycleBin(path string) {
 	// 使用 PowerShell 方式移动文件到回收站
 	psCmd := fmt.Sprintf(`
 $shell = New-Object -ComObject Shell.Application

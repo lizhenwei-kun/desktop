@@ -97,6 +97,9 @@ type ResizeOutlineState struct {
 	PrevResizeW       int
 	PrevResizeH       int
 
+	// 弹出式边框窗口（替代 XOR 屏幕绘制）
+	OutlineHwnd win.HWND
+
 	resizeWorkX func() int
 	resizeWorkY func() int
 }

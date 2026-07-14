@@ -398,6 +398,9 @@ func (gc *GroupCard) startResize(x, y int, edge ResizeEdge) {
 	gc.resizeNewY = int(gc.position.Y * float64(gc.workH))
 	gc.resizeNewW = gc.resizeStartW
 	gc.resizeNewH = gc.resizeStartH
+
+	// 捕获鼠标，确保拖出 bodyWidget 后仍能收到 MouseMove/MouseUp 事件
+	win.SetCapture(gc.bodyWidget.Handle())
 }
 
 // handleResize 处理缩放（仅更新边框位置，不实际改变容器/body尺寸）
@@ -461,6 +464,9 @@ func (gc *GroupCard) handleResize(x, y int) {
 // endResize 结束缩放：实际应用容器/body尺寸
 func (gc *GroupCard) endResize() {
 	gc.isResizing = false
+
+	// 释放鼠标捕获
+	win.ReleaseCapture()
 
 	// 清除 DesktopMode 上的缩放边框
 	if gc.onResizeOutlineEnd != nil {
