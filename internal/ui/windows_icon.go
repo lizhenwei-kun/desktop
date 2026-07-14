@@ -17,10 +17,12 @@ import (
 )
 
 var (
-	shell32            = syscall.NewLazyDLL("shell32.dll")
-	procSHGetFileInfoW = shell32.NewProc("SHGetFileInfoW")
-	procSHGetImageList = shell32.NewProc("SHGetImageList")
-	procExtractIconExW = shell32.NewProc("ExtractIconExW")
+	shell32                    = syscall.NewLazyDLL("shell32.dll")
+	procSHGetFileInfoW         = shell32.NewProc("SHGetFileInfoW")
+	procSHGetImageList         = shell32.NewProc("SHGetImageList")
+	procExtractIconExW         = shell32.NewProc("ExtractIconExW")
+	procSHGetKnownFolderIDList = shell32.NewProc("SHGetKnownFolderIDList")
+	procSHQueryRecycleBinW     = shell32.NewProc("SHQueryRecycleBinW")
 
 	ole32                  = syscall.NewLazyDLL("ole32.dll")
 
@@ -31,9 +33,10 @@ var (
 	procDeleteDC           = gdi32.NewProc("DeleteDC")
 	procDeleteObject       = gdi32.NewProc("DeleteObject")
 
-	user32Icon      = syscall.NewLazyDLL("user32.dll")
-	procGetIconInfo = user32Icon.NewProc("GetIconInfo")
-	procDestroyIcon = user32Icon.NewProc("DestroyIcon")
+	user32Icon          = syscall.NewLazyDLL("user32.dll")
+	procGetIconInfo     = user32Icon.NewProc("GetIconInfo")
+	procDestroyIcon     = user32Icon.NewProc("DestroyIcon")
+	procLoadImageW      = user32Icon.NewProc("LoadImageW")
 )
 
 const (
@@ -50,6 +53,9 @@ const (
 	SHIL_JUMBO      = 4 // 256x256
 
 	ILD_TRANSPARENT = 0x00000001
+
+	IMAGE_ICON      = 1
+	LR_LOADFROMFILE = 0x00000010
 )
 
 // IID_IImageList GUID
@@ -67,6 +73,13 @@ type SHFILEINFOW struct {
 	DwAttributes  uint32
 	SzDisplayName [260]uint16
 	SzTypeName    [80]uint16
+}
+
+// SHQUERYRBINFO SHQueryRecycleBinW 结构体
+type SHQUERYRBINFO struct {
+	CbSize     uint32
+	II64Size   int64
+	II64NumItems int64
 }
 
 // ICONINFO GetIconInfo 结构体
@@ -374,27 +387,55 @@ func (ie *IconExtractor) extractIconExtraLarge(filePath string) (image.Image, er
 	return ie.hIconToImage(hIcon)
 }
 
+// ExtractIcoFile 从 .ico 文件中提取指定尺寸的图标（默认 48x48）
+// 使用 LoadImageW 直接读取文件，避免 SHGetImageList 取到通用图标
+func (ie *IconExtractor) ExtractIcoFile(filePath string) image.Image {
+	pathPtr, _ := syscall.UTF16PtrFromString(filePath)
+	hIcon, _, _ := procLoadImageW.Call(
+		0,
+		uintptr(unsafe.Pointer(pathPtr)),
+		IMAGE_ICON,
+		DesktopIconSize, // 目标宽度 48
+		DesktopIconSize, // 目标高度 48
+		LR_LOADFROMFILE,
+	)
+	if hIcon == 0 {
+		logger.Warn("ExtractIcoFile: LoadImageW failed for %q, fallback to ExtractIconExW", filePath)
+		// 回退到 ExtractIconExW
+		var hIconLarge uintptr
+		ret, _, _ := procExtractIconExW.Call(
+			uintptr(unsafe.Pointer(pathPtr)),
+			0,
+			uintptr(unsafe.Pointer(&hIconLarge)),
+			0,
+			1,
+		)
+		if ret == 0 || hIconLarge == 0 {
+			logger.Warn("ExtractIcoFile: ExtractIconExW also failed for %q", filePath)
+			return nil
+		}
+		defer procDestroyIcon.Call(hIconLarge)
+		img, err := ie.hIconToImage(hIconLarge)
+		if err != nil {
+			return nil
+		}
+		logger.Debug("ExtractIcoFile: ExtractIconExW fallback ok, size=%dx%d", img.Bounds().Dx(), img.Bounds().Dy())
+		return img
+	}
+	defer procDestroyIcon.Call(hIcon)
+
+	img, err := ie.hIconToImage(hIcon)
+	if err != nil {
+		logger.Warn("ExtractIcoFile: hIconToImage failed for %q: %v", filePath, err)
+		return nil
+	}
+	logger.Debug("ExtractIcoFile: LoadImageW ok, file=%q size=%dx%d", filePath, img.Bounds().Dx(), img.Bounds().Dy())
+	return img
+}
+
 // extractIconEx 使用 ExtractIconExW 提取图标（对 exe/dll/ico 文件有效）
 func (ie *IconExtractor) extractIconEx(filePath string) image.Image {
-	pathPtr, _ := syscall.UTF16PtrFromString(filePath)
-	var hIconLarge uintptr
-	ret, _, _ := procExtractIconExW.Call(
-		uintptr(unsafe.Pointer(pathPtr)),
-		0, // 第一个图标
-		uintptr(unsafe.Pointer(&hIconLarge)),
-		0, // 不需要小图标
-		1, // 提取1个图标
-	)
-	if ret == 0 || hIconLarge == 0 {
-		return nil
-	}
-	defer procDestroyIcon.Call(hIconLarge)
-
-	img, err := ie.hIconToImage(hIconLarge)
-	if err != nil {
-		return nil
-	}
-	return img
+	return ie.ExtractIcoFile(filePath)
 }
 
 // hIconToImage 将 HICON 转换为 image.Image
@@ -433,8 +474,10 @@ func (ie *IconExtractor) hIconToImage(hIcon uintptr) (image.Image, error) {
 	width := int(bmp.BmWidth)
 	height := int(bmp.BmHeight)
 	if width == 0 || height == 0 {
+		logger.Debug("hIconToImage: zero dimensions (w=%d h=%d)", width, height)
 		return nil, os.ErrNotExist
 	}
+	logger.Debug("hIconToImage: source HICON size=%dx%d", width, height)
 
 	// 准备 DIB
 	bmi := BITMAPINFOHEADER{
@@ -602,30 +645,35 @@ func (ie *IconExtractor) getFallbackIcon(filePath string) image.Image {
 	return ie.createFileIcon(filepath.Ext(filePath))
 }
 
-// GetSystemIconImage 获取系统文件夹图标（如"此电脑"），使用 CLSID 路径
-// 使用 SHParseDisplayName 将 CLSID 转为 PIDL，再用 SHGetFileInfoW 获取系统原生图标
-func (ie *IconExtractor) GetSystemIconImage(clsidPath string) (image.Image, error) {
-	// 用 SHParseDisplayName 将 CLSID 路径转为 PIDL
-	pathPtr, _ := syscall.UTF16PtrFromString(clsidPath)
-	var pidl uintptr
-	hr, _, _ := procSHParseDisplayName.Call(
-		uintptr(unsafe.Pointer(pathPtr)),
-		0,                                  // pbc (NULL)
-		uintptr(unsafe.Pointer(&pidl)),     // ppidl (输出)
-		0,                                  // sfgaoIn
-		0,                                  // psfgaoOut (NULL)
-	)
-	if hr != 0 || pidl == 0 {
-		// 回退：直接使用路径字符串
-		return ie.extractIconExtraLargeFS(clsidPath)
-	}
-	defer procCoTaskMemFree.Call(pidl)
-
-	// 用 PIDL 获取 48x48 高清图标（SHGetImageList）
+// GetSystemIconImage 获取系统图标（如"此电脑"），使用 SHGetKnownFolderIDList + SHGetImageList
+// 通过 KNOWNFOLDERID 获取系统文件夹 PIDL，从系统图标列表提取 48x48 高清图标
+func (ie *IconExtractor) GetSystemIconImage() (image.Image, error) {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 	ComInitThread()
 
+	// FOLDERID_ComputerFolder = {0AC0837C-BBF8-452A-850D-79D08E667CA7}
+	folderID := [...]byte{
+		0x7C, 0x83, 0xC0, 0x0A,
+		0xF8, 0xBB,
+		0x2A, 0x45,
+		0x85, 0x0D,
+		0x79, 0xD0, 0x8E, 0x66, 0x7C, 0xA7,
+	}
+	var pidl uintptr
+	hr, _, _ := procSHGetKnownFolderIDList.Call(
+		uintptr(unsafe.Pointer(&folderID[0])),
+		0, // dwFlags
+		0, // hToken (NULL)
+		uintptr(unsafe.Pointer(&pidl)),
+	)
+	if hr != 0 || pidl == 0 {
+		logger.Warn("GetSystemIconImage: SHGetKnownFolderIDList failed hr=0x%X", hr)
+		return nil, os.ErrNotExist
+	}
+	defer procCoTaskMemFree.Call(pidl)
+
+	// 通过 PIDL 获取系统图标列表索引
 	var shfi SHFILEINFOW
 	ret, _, _ := procSHGetFileInfoW.Call(
 		pidl,
@@ -635,10 +683,13 @@ func (ie *IconExtractor) GetSystemIconImage(clsidPath string) (image.Image, erro
 		SHGFI_SYSICONINDEX|SHGFI_PIDL,
 	)
 	if ret == 0 {
+		logger.Warn("GetSystemIconImage: SHGetFileInfoW SYSICONINDEX failed")
 		return nil, os.ErrNotExist
 	}
 	iconIndex := shfi.IIcon
+	logger.Debug("GetSystemIconImage: iconIndex=%d", iconIndex)
 
+	// 从 SHIL_EXTRALARGE (48x48) 图标列表提取
 	var pImageList uintptr
 	hr2, _, _ := procSHGetImageList.Call(
 		SHIL_EXTRALARGE,
@@ -646,7 +697,8 @@ func (ie *IconExtractor) GetSystemIconImage(clsidPath string) (image.Image, erro
 		uintptr(unsafe.Pointer(&pImageList)),
 	)
 	if hr2 != 0 || pImageList == 0 {
-		// 回退到 SHGetFileInfoW 直接获取图标
+		logger.Warn("GetSystemIconImage: SHGetImageList failed hr=0x%X", hr2)
+		// 回退：SHGetFileInfoW 直接获取 32x32 图标
 		var shfi2 SHFILEINFOW
 		ret2, _, _ := procSHGetFileInfoW.Call(
 			pidl,
@@ -666,10 +718,17 @@ func (ie *IconExtractor) GetSystemIconImage(clsidPath string) (image.Image, erro
 	var hIcon uintptr
 	hr3, _, _ := syscall.SyscallN(vtable[10], pImageList, uintptr(iconIndex), ILD_TRANSPARENT, uintptr(unsafe.Pointer(&hIcon)))
 	if hr3 != 0 || hIcon == 0 {
+		logger.Warn("GetSystemIconImage: GetIcon failed hr=0x%X idx=%d", hr3, iconIndex)
 		return nil, os.ErrNotExist
 	}
 	defer procDestroyIcon.Call(hIcon)
-	return ie.hIconToImage(hIcon)
+
+	img, err := ie.hIconToImage(hIcon)
+	if err != nil {
+		return nil, err
+	}
+	logger.Debug("GetSystemIconImage: ok size=%dx%d", img.Bounds().Dx(), img.Bounds().Dy())
+	return img, nil
 }
 
 // extractIconExtraLargeFS 使用路径字符串方式提取系统图标（回退方案）

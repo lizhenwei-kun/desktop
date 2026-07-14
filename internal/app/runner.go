@@ -491,6 +491,12 @@ func (r *Runner) initSystemItems() {
 	if !r.manager.HasSystemItem("MyComputerFolder") {
 		r.manager.AddSystemItem("MyComputerFolder", "此电脑")
 	}
+	if !r.manager.HasSystemItem("NetworkFolder") {
+		r.manager.AddSystemItem("NetworkFolder", "网络")
+	}
+	if !r.manager.HasSystemItem("RecycleBinFolder") {
+		r.manager.AddSystemItem("RecycleBinFolder", "回收站")
+	}
 }
 
 // createSolidImage 创建纯色图像
