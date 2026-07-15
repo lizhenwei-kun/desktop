@@ -14,6 +14,7 @@ import (
 
 	"desktop_go/internal/config"
 	"desktop_go/internal/desktop"
+	"desktop_go/internal/dowork"
 	"desktop_go/internal/group"
 	"desktop_go/internal/logger"
 	"desktop_go/internal/ui"
@@ -34,6 +35,7 @@ type Runner struct {
 	lifecycle *ui.LifecycleManager
 	mw        *walk.MainWindow
 	ni        *walk.NotifyIcon
+	work      *dowork.GoWork // 定时器工作器
 }
 
 // NewRunner 创建应用运行器
@@ -153,6 +155,9 @@ func (r *Runner) runDesktopMode() error {
 		}
 	})
 
+	// 启动定时器（在清理时优先停止）
+	r.startTimer()
+
 	mw.Run()
 	return nil
 }
@@ -188,6 +193,9 @@ func (r *Runner) runWindowMode() error {
 	})
 
 	r.lifecycle.MarkReady()
+
+	// 启动定时器（在清理时优先停止）
+	r.startTimer()
 
 	mw.Run()
 	return nil
@@ -497,6 +505,26 @@ func (r *Runner) initSystemItems() {
 	if !r.manager.HasSystemItem("RecycleBinFolder") {
 		r.manager.AddSystemItem("RecycleBinFolder", "回收站")
 	}
+}
+
+// startTimer 启动定时器，注册清理时优先停止
+func (r *Runner) startTimer() {
+	r.work = dowork.NewGoWork()
+	r.work.Run()
+
+	// 示例定时器：每 5 秒打印一次日志
+	r.work.AddTimer(5000, func() {
+		logger.Debug("定时器触发: 已运行 5 秒")
+	})
+
+	// 注册清理（后注册先执行，确保定时器优先停止）
+	r.lifecycle.RegisterCleanup(func() {
+		if r.work != nil {
+			logger.Debug("停止定时器...")
+			r.work.Stop()
+			r.work = nil
+		}
+	})
 }
 
 // createSolidImage 创建纯色图像
