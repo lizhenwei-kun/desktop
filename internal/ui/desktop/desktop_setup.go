@@ -204,7 +204,7 @@ func (dm *DesktopMode) exitDesktopMode() {
 	dm.Lifecycle.MarkClosing()
 	dm.Lifecycle.ExecuteCleanups()
 	dm.ResizeOutlineState.resizeOutline.destroy()
-	dm.CardDragOutline.dragOutline.destroy()
+	dm.CardDragOutline.destroyDragGhost()
 	hwnd := dm.MainWindow.Handle()
 	// 从桌面层脱离
 	dm.WinAPI.DetachFromDesktop(win.HWND(hwnd))

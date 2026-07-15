@@ -2,6 +2,7 @@ package desktop
 
 import (
 	"time"
+	"unsafe"
 
 	"github.com/lxn/walk"
 	"github.com/lxn/win"
@@ -80,10 +81,14 @@ type CardDragOutline struct {
 	DragOutlineW    int
 	DragOutlineH    int
 
-	// 弹出式边框窗口（替代 paintCanvas 方式）
-	dragOutline popupFrameOverlay
-	workX       int
-	workY       int
+	// 拖拽幽灵窗口（WS_EX_LAYERED 显示卡片快照）
+	DragGhostHwnd   win.HWND
+	DragGhostDib    win.HBITMAP
+	DragGhostDibBits unsafe.Pointer
+	DragGhostW      int
+	DragGhostH      int
+	workX           int
+	workY           int
 }
 
 func (s *CardDragOutline) Inject(workX, workY int) {
