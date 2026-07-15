@@ -1,7 +1,7 @@
 //go:build ignore
 // +build ignore
 
-// 生成应用图标 app.ico，供 rsrc 嵌入到 exe 中
+// 生成应用图标 internal/resources/app.ico，供 rsrc 嵌入到 exe 中
 package main
 
 import (
@@ -14,7 +14,7 @@ import (
 
 func main() {
 	img := createAppIcon(64)
-	saveICO(img, "app.ico")
+	saveICO(img, "internal/resources/app.ico")
 }
 
 func createAppIcon(size int) *image.RGBA {
