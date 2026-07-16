@@ -22,7 +22,7 @@ var (
 	procSHGetImageList         = shell32.NewProc("SHGetImageList")
 	procExtractIconExW         = shell32.NewProc("ExtractIconExW")
 	procSHGetKnownFolderIDList = shell32.NewProc("SHGetKnownFolderIDList")
-	procSHQueryRecycleBinW     = shell32.NewProc("SHQueryRecycleBinW")
+	ProcSHQueryRecycleBinW     = shell32.NewProc("SHQueryRecycleBinW")
 
 	ole32                  = syscall.NewLazyDLL("ole32.dll")
 

@@ -1,10 +1,12 @@
 package ui
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"syscall"
@@ -1092,3 +1094,151 @@ $Shortcut.Save()
 		logger.Warn("createShortcut failed: %v", err)
 	}
 }
+
+// ============================================================
+// 图标右键菜单缓存（供 desktop 包定时刷新用）
+// ============================================================
+
+// QueryIconMenuItems 通过 COM IContextMenu 查询文件的右键菜单项
+// 使用 explorer.exe 作为通用测试文件，获取完整的 Shell 菜单，
+// 包含注册表项 + COM 扩展处理器（如 7-Zip、VS Code 等第三方软件的菜单）。
+// 导出供 desktop 包定时缓存使用。
+func QueryIconMenuItems() ([]RegistryShellItem, bool) {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	ComInitThread()
+	defer procCoUninitialize.Call()
+
+	filePath := "C:\\Windows\\explorer.exe"
+	pathPtr, _ := syscall.UTF16PtrFromString(filePath)
+
+	var pidl uintptr
+	hr, _, _ := procSHParseDisplayName.Call(uintptr(unsafe.Pointer(pathPtr)), 0, uintptr(unsafe.Pointer(&pidl)), 0, 0)
+	if hr != 0 || pidl == 0 {
+		logger.Warn("QueryIconMenuItems: SHParseDisplayName failed for %q", filePath)
+		return nil, false
+	}
+	defer procILFree.Call(pidl)
+
+	var pShellFolder uintptr
+	var pidlChild uintptr
+	hr, _, _ = procSHBindToParent.Call(pidl, uintptr(unsafe.Pointer(&IID_IShellFolder)), uintptr(unsafe.Pointer(&pShellFolder)), uintptr(unsafe.Pointer(&pidlChild)))
+	if hr != 0 || pShellFolder == 0 {
+		logger.Warn("QueryIconMenuItems: SHBindToParent failed")
+		return nil, false
+	}
+	sf := (*iShellFolder)(unsafe.Pointer(pShellFolder))
+	defer syscall.SyscallN(sf.vtbl.Release, pShellFolder)
+
+	var pContextMenu uintptr
+	hr, _, _ = syscall.SyscallN(sf.vtbl.GetUIObjectOf, pShellFolder, 0, 1, uintptr(unsafe.Pointer(&pidlChild)), uintptr(unsafe.Pointer(&IID_IContextMenu)), 0, uintptr(unsafe.Pointer(&pContextMenu)))
+	if hr != 0 || pContextMenu == 0 {
+		logger.Warn("QueryIconMenuItems: GetUIObjectOf failed")
+		return nil, false
+	}
+	cm := (*iContextMenu)(unsafe.Pointer(pContextMenu))
+	defer syscall.SyscallN(cm.vtbl.Release, pContextMenu)
+
+	hMenu := createPopupMenu()
+	if hMenu == 0 {
+		return nil, false
+	}
+	defer destroyMenu(hMenu)
+
+	const CMF_NORMAL = 0x00000000
+	const CMF_EXPLORE = 0x00000004
+	hr, _, _ = syscall.SyscallN(cm.vtbl.QueryContextMenu, pContextMenu, uintptr(hMenu), 0, 1, 0x7FFF, CMF_NORMAL|CMF_EXPLORE)
+	if int32(hr) < 0 {
+		return nil, false
+	}
+
+	itemCount := getMenuItemCount(hMenu)
+	if itemCount <= 0 {
+		return nil, false
+	}
+
+	var items []RegistryShellItem
+	cmdID := 0x5000
+
+	for i := 0; i < itemCount; i++ {
+		var buf [256]uint16
+		var info struct {
+			cbSize        uint32
+			fMask         uint32
+			fType         uint32
+			fState        uint32
+			wID           uint32
+			hSubMenu      uintptr
+			hbmpChecked   uintptr
+			hbmpUnchecked uintptr
+			dwItemData    uintptr
+			dwTypeData    uintptr
+			cch           uint32
+			hbmpItem      uintptr
+		}
+		info.cbSize = uint32(unsafe.Sizeof(info))
+		info.fMask = 0x00000040 // MIIM_STRING
+		info.dwTypeData = uintptr(unsafe.Pointer(&buf[0]))
+		info.cch = uint32(len(buf))
+
+		ret, _, _ := procGetMenuItemInfoW.Call(uintptr(hMenu), uintptr(i), 1, uintptr(unsafe.Pointer(&info)))
+		if ret == 0 || info.wID == 0 {
+			continue
+		}
+
+		itemName := syscall.UTF16ToString(buf[:])
+
+		if itemName == "" || itemName == "-" {
+			continue
+		}
+
+		verbStr := getVerbFromContextMenu(cm, uintptr(info.wID-1))
+
+		items = append(items, RegistryShellItem{
+			Verb:    verbStr,
+			Name:    itemName,
+			Command: verbStr,
+			CmdID:   cmdID,
+		})
+		cmdID++
+	}
+
+	return items, true
+}
+
+// getVerbFromContextMenu 从 IContextMenu 获取指定命令的 verb 名称
+func getVerbFromContextMenu(cm *iContextMenu, cmdOffset uintptr) string {
+	verbA := make([]byte, 512)
+	hrA, _, _ := syscall.SyscallN(cm.vtbl.GetCommandString, uintptr(unsafe.Pointer(cm)), cmdOffset, 0x0004, 0, uintptr(unsafe.Pointer(&verbA[0])), uintptr(len(verbA)))
+	if int32(hrA) >= 0 {
+		if len(verbA) >= 2 {
+			_ = verbA[1]
+		}
+		verbW := unsafe.Slice((*uint16)(unsafe.Pointer(&verbA[0])), len(verbA)/2)
+		verbName := syscall.UTF16ToString(verbW)
+		if verbName != "" {
+			return verbName
+		}
+		n := bytes.IndexByte(verbA, 0)
+		if n < 0 {
+			n = len(verbA)
+		}
+		if n > 0 {
+			return string(verbA[:n])
+		}
+	}
+
+	verbW2 := make([]uint16, 256)
+	hrW, _, _ := syscall.SyscallN(cm.vtbl.GetCommandString, uintptr(unsafe.Pointer(cm)), cmdOffset, 0x0044, 0, uintptr(unsafe.Pointer(&verbW2[0])), uintptr(len(verbW2)))
+	if int32(hrW) >= 0 {
+		return syscall.UTF16ToString(verbW2)
+	}
+
+	return ""
+}
+
+// Win32 API（供 QueryIconMenuItems 使用）
+var (
+	user32MenuInfo       = syscall.NewLazyDLL("user32.dll")
+	procGetMenuItemInfoW = user32MenuInfo.NewProc("GetMenuItemInfoW")
+)

@@ -178,7 +178,7 @@ func recycleBinIcoPath() string {
 	// 用 SHQueryRecycleBinW 检测回收站状态
 	var state SHQUERYRBINFO
 	state.CbSize = uint32(unsafe.Sizeof(state))
-	procSHQueryRecycleBinW.Call(0, uintptr(unsafe.Pointer(&state)))
+	ProcSHQueryRecycleBinW.Call(0, uintptr(unsafe.Pointer(&state)))
 	if state.II64Size > 0 || state.II64NumItems > 0 {
 		return "ico/imageres_00050_1.ico" // 有内容
 	}

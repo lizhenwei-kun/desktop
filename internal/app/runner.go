@@ -36,6 +36,7 @@ type Runner struct {
 	mw        *walk.MainWindow
 	ni        *walk.NotifyIcon
 	work      *dowork.GoWork // 定时器工作器
+	dm        *desktopmode.DesktopMode // 桌面模式 UI（仅桌面模式非 nil）
 }
 
 // NewRunner 创建应用运行器
@@ -133,7 +134,10 @@ func (r *Runner) runDesktopMode() error {
 	})
 
 	// 设置桌面模式 UI
-	dm := desktopmode.NewDesktopMode(mw, r.manager, r.winAPI, r.lifecycle)
+	r.work = dowork.NewGoWork()
+
+	dm := desktopmode.NewDesktopMode(mw, r.manager, r.winAPI, r.lifecycle, r.work)
+	r.dm = dm
 	if err := dm.Setup(); err != nil {
 		return err
 	}
@@ -509,13 +513,10 @@ func (r *Runner) initSystemItems() {
 
 // startTimer 启动定时器，注册清理时优先停止
 func (r *Runner) startTimer() {
-	r.work = dowork.NewGoWork()
+	if r.work == nil {
+		r.work = dowork.NewGoWork()
+	}
 	r.work.Run()
-
-	// 示例定时器：每 5 秒打印一次日志
-	r.work.AddTimer(5000, func() {
-		logger.Debug("定时器触发: 已运行 5 秒")
-	})
 
 	// 注册清理（后注册先执行，确保定时器优先停止）
 	r.lifecycle.RegisterCleanup(func() {

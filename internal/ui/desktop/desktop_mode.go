@@ -8,6 +8,7 @@ import (
 	"github.com/lxn/win"
 
 	"desktop_go/internal/desktop"
+	"desktop_go/internal/dowork"
 	"desktop_go/internal/group"
 	"desktop_go/internal/logger"
 	"desktop_go/internal/ui"
@@ -132,6 +133,11 @@ type ContextMenuState struct {
 	CachedFileRegItems       []ui.RegistryShellItem
 	CachedFileRegCmdStart    int
 
+	// CachedIconMenuItems 缓存的图标右键菜单项（通过 COM IContextMenu 获取）
+	// 包含注册表项 + COM 扩展处理器（如 7-Zip、VS Code 等第三方软件的菜单）
+	CachedIconMenuItems    []ui.RegistryShellItem
+	CachedIconMenuCmdStart int
+
 	RClickCB uintptr // 右键窗口子类化回调地址
 
 	registryCacheTime time.Time // 注册表上次读取时间，用于缓存
@@ -149,6 +155,7 @@ type ContextMenuState struct {
 	rclickClientX    int
 	rclickClientY    int
 	rclickHitItem    *group.GroupItem // 非 nil 表示点击在图标上
+	rclickIsIconMenu bool             // 当前显示的是图标菜单（true）还是桌面菜单（false）
 }
 
 // DesktopMode 桌面模式 UI 管理器
@@ -159,6 +166,7 @@ type DesktopMode struct {
 	Executor   *ui.ProgramExecutor
 	WinAPI     *desktop.WindowsAPI
 	Lifecycle  *ui.LifecycleManager
+	Work       *dowork.GoWork    // 定时器工作器
 	Cards      []*ui.GroupCard
 	BodyWidget *walk.CustomWidget
 
@@ -169,10 +177,12 @@ type DesktopMode struct {
 	CardDragOutline     // 卡片拖拽虚框
 	ResizeOutlineState  // 缩放虚框
 	ContextMenuState    // 右键菜单状态
+	RecycleBinState     // 回收站状态
+	DesktopWatcherState // 桌面目录文件变更监听
 }
 
 // NewDesktopMode 创建桌面模式
-func NewDesktopMode(mw *walk.MainWindow, mgr *group.Manager, winAPI *desktop.WindowsAPI, lifecycle *ui.LifecycleManager) *DesktopMode {
+func NewDesktopMode(mw *walk.MainWindow, mgr *group.Manager, winAPI *desktop.WindowsAPI, lifecycle *ui.LifecycleManager, work *dowork.GoWork) *DesktopMode {
 	screenW, screenH := winAPI.GetScreenSize()
 	left, top, right, bottom := winAPI.GetWorkAreaRect()
 	dm := &DesktopMode{
@@ -181,6 +191,7 @@ func NewDesktopMode(mw *walk.MainWindow, mgr *group.Manager, winAPI *desktop.Win
 		Executor:   ui.NewProgramExecutor(),
 		WinAPI:     winAPI,
 		Lifecycle:  lifecycle,
+		Work:       work,
 		ScreenInfo: ScreenInfo{
 			ScreenW: screenW,
 			ScreenH: screenH,

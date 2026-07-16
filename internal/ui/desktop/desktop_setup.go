@@ -141,6 +141,15 @@ func (dm *DesktopMode) Setup() error {
 		ui.GlobalIconBmpCache.LoadAll(freePaths)
 	}
 
+	// 启动回收站状态定时监测
+	dm.initRecycleBinMonitor()
+
+	// 启动桌面目录文件变更监听
+	dm.initDesktopWatcher()
+
+	// 启动右键菜单缓存定时更新
+	dm.initContextMenuCache()
+
 	go dm.delayedSetup()
 	return nil
 }
@@ -205,6 +214,8 @@ func (dm *DesktopMode) exitDesktopMode() {
 	dm.Lifecycle.ExecuteCleanups()
 	dm.ResizeOutlineState.resizeOutline.destroy()
 	dm.CardDragOutline.destroyDragGhost()
+	// 停止桌面目录监听
+	dm.stopDesktopWatcher()
 	hwnd := dm.MainWindow.Handle()
 	// 从桌面层脱离
 	dm.WinAPI.DetachFromDesktop(win.HWND(hwnd))

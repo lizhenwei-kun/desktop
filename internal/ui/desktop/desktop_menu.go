@@ -12,6 +12,7 @@ import (
 const (
 	rclickSubclassID = 2
 	rclickMsgID      = 0x8000 + 100 // WM_APP + 100，用于异步投递右键菜单
+	rclickCmdMsgID   = 0x8000 + 101 // WM_APP + 101，后台 goroutine 返回菜单命令结果
 
 	MF_STRING       = 0x00000000
 	MF_POPUP        = 0x00000010
@@ -47,8 +48,14 @@ func appendMenuSeparator(menu hMenu) {
 }
 
 func trackPopupMenu(menu hMenu, flags uintptr, x, y int, hwnd win.HWND) uintptr {
+	// 使用 TPM_RETURNCMD 让 TrackPopupMenu 返回命令 ID
 	ret, _, _ := procTrackPopupMenu.Call(uintptr(menu), flags, uintptr(x), uintptr(y), 0, uintptr(hwnd), 0)
 	return ret
+}
+
+func trackPopupMenuNoReturn(menu hMenu, flags uintptr, x, y int, hwnd win.HWND) {
+	// 不带 TPM_RETURNCMD，通过 WM_COMMAND 消息获取结果
+	procTrackPopupMenu.Call(uintptr(menu), uintptr(flags&^TPM_RETURNCMD), uintptr(x), uintptr(y), 0, uintptr(hwnd), 0)
 }
 
 func checkMenuItem(menu hMenu, id uintptr, flags uintptr) {

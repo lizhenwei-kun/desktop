@@ -93,7 +93,8 @@ func (dm *DesktopMode) setupCardActions(card *ui.GroupCard, grp config.Group) {
 		dm.selectItem(item.Path)
 	})
 	card.SetOnIconRightClick(func(_ *ui.GroupCard, _ int, item group.GroupItem, screenX, screenY int) {
-		dm.ContextMenuState.ShowIconContextMenu(dm.MainWindow.Handle(), dm.Manager, dm.Executor, item, screenX, screenY)
+		// UI 主线程实时 COM 获取图标右键菜单
+		showIconContextMenuReal(dm.MainWindow.Handle(), dm.Executor, item, screenX, screenY)
 	})
 	card.SetOnCardBodyClick(func() {
 		card.ClearSelection()
