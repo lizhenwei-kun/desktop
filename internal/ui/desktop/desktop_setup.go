@@ -96,6 +96,9 @@ func (dm *DesktopMode) Setup() error {
 		dm.addNewCard,
 	)
 
+	// 注册外部文件拖放（从桌面/资源管理器拖文件到应用）
+	dm.RegisterExternalDropTarget()
+
 	dm.BodyWidget.MouseMove().Attach(func(x, y int, button walk.MouseButton) {
 		if dm.DragActive {
 			dm.DragMouseX = x
@@ -122,11 +125,33 @@ func (dm *DesktopMode) Setup() error {
 			return
 		}
 		win.ReleaseCapture()
-		var screenPt win.POINT
-		screenPt.X = int32(x)
-		screenPt.Y = int32(y)
-		win.ClientToScreen(dm.BodyWidget.Handle(), &screenPt)
-		dm.handleIconDrop(int(screenPt.X), int(screenPt.Y))
+
+		// 使用 GetMessagePos 获取鼠标释放时的屏幕坐标（比 ClientToScreen 更可靠）
+		msgPos, _, _ := procGetMessagePos.Call()
+		screenX := int(int16(msgPos & 0xFFFF))
+		screenY := int(int16((msgPos >> 16) & 0xFFFF))
+
+		// 检测释放位置是否在应用窗口外部
+		mwHwnd := dm.MainWindow.Handle()
+		var mwRect win.RECT
+		win.GetWindowRect(mwHwnd, &mwRect)
+
+		isOutside := screenX < int(mwRect.Left) || screenX > int(mwRect.Right) ||
+			screenY < int(mwRect.Top) || screenY > int(mwRect.Bottom)
+
+		if isOutside {
+			// 拖到应用外部：将文件路径复制到剪贴板（CF_HDROP），供外部程序粘贴
+			// 应用内保留原图标，不移动文件
+			ui.CopyFilesToClipboard([]string{dm.DragItemPath})
+			logger.Debug("MouseUp: dropped outside app(%d,%d-%dx%d) at screen(%d,%d), copied %s to clipboard",
+				mwRect.Left, mwRect.Top, mwRect.Right-mwRect.Left, mwRect.Bottom-mwRect.Top,
+				screenX, screenY, dm.DragItemPath)
+			dm.clearDragState()
+			dm.BodyWidget.Invalidate()
+		} else {
+			// 在应用内部释放：正常内部拖放逻辑
+			dm.handleIconDrop(screenX, screenY)
+		}
 	})
 
 	// 创建卡片
@@ -216,6 +241,8 @@ func (dm *DesktopMode) exitDesktopMode() {
 	dm.CardDragOutline.destroyDragGhost()
 	// 停止桌面目录监听
 	dm.stopDesktopWatcher()
+	// 注销外部文件拖放
+	dm.UnregisterExternalDropTarget()
 	hwnd := dm.MainWindow.Handle()
 	// 从桌面层脱离
 	dm.WinAPI.DetachFromDesktop(win.HWND(hwnd))

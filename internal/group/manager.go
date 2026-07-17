@@ -503,6 +503,22 @@ func (m *Manager) MoveItemToDesktop(itemPath string) {
 	m.notifyChange()
 }
 
+// AddItemToDesktop 添加新项目到未分组桌面
+func (m *Manager) AddItemToDesktop(itemPath, itemName string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// 如果已存在则跳过
+	if _, exists := m.cfg.DesktopItems[itemPath]; exists {
+		return
+	}
+
+	m.cfg.DesktopItems[itemPath] = ""
+	m.cfg.UngroupedPositions[itemPath] = config.Position{X: -1, Y: -1} // 标记为待分配
+	m.save()
+	m.notifyChange()
+}
+
 // MoveItemWithinGroup 在分组内移动项目到新位置（拖拽排序）
 func (m *Manager) MoveItemWithinGroup(groupName, itemPath string, newIndex int) {
 	m.mu.Lock()

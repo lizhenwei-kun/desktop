@@ -179,6 +179,10 @@ type DesktopMode struct {
 	ContextMenuState    // 右键菜单状态
 	RecycleBinState     // 回收站状态
 	DesktopWatcherState // 桌面目录文件变更监听
+
+	// 外部拖放状态
+	ExternalDropRegistered bool // 是否已注册 DragAcceptFiles
+	ExternalDropHwnd       win.HWND // 被子类化的窗口句柄
 }
 
 // NewDesktopMode 创建桌面模式

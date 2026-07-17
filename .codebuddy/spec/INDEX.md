@@ -21,6 +21,7 @@
 | [spec-logger.md](./spec-logger.md) | 日志封装规范 | P1 |
 | [spec-tile-size-measurement.md](./spec-tile-size-measurement.md) | 磁贴尺寸测量重构经验总结 | - |
 | [spec-context-menu.md](./spec-context-menu.md) | 桌面右键菜单 / 注册表 Shell 集成 | P0 |
+| [spec-cross-process-dragdrop.md](./spec-cross-process-dragdrop.md) | 进程间拖放 / 外部文件拖入与拖出 | P1 |
 
 ## 全局数据流
 
