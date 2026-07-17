@@ -648,21 +648,29 @@ func (m *Manager) RenameItem(oldPath, newName string) (string, error) {
 }
 
 // ReloadDesktopItems 从 Windows 桌面目录重新同步内容
+// 以系统桌面目录为主：添加桌面中存在但配置中缺失的项，删除配置中存在但桌面中已不存在的项
 func (m *Manager) ReloadDesktopItems() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// 收集桌面路径
+	// 收集桌面目录中的所有文件/文件夹
 	desktopPaths := collectDesktopPaths()
 
-	// 移除不再存在的项目
+	// 构建桌面实际路径集合
+	desktopSet := make(map[string]bool, len(desktopPaths))
+	for _, item := range desktopPaths {
+		desktopSet[item.Path] = true
+	}
+
+	// 删除配置中存在但桌面目录中已不存在的项（以系统桌面目录为准）
 	for path := range m.cfg.DesktopItems {
-		if _, err := os.Stat(path); os.IsNotExist(err) {
+		if !desktopSet[path] {
 			delete(m.cfg.DesktopItems, path)
+			delete(m.cfg.UngroupedPositions, path)
 		}
 	}
 
-	// 添加新发现的项目
+	// 添加桌面目录中存在但配置中缺失的项
 	for _, item := range desktopPaths {
 		if _, exists := m.cfg.DesktopItems[item.Path]; !exists {
 			groupName := m.groupForPath(item.Path, item.Name, item.IsDir)

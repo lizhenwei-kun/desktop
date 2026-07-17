@@ -89,11 +89,12 @@ var (
 	procInsertMenuW        = user32Menu.NewProc("InsertMenuW")
 
 	// shell32 COM
-	shell32Menu            = syscall.NewLazyDLL("shell32.dll")
-	procSHParseDisplayName = shell32Menu.NewProc("SHParseDisplayName")
-	procSHBindToParent     = shell32Menu.NewProc("SHBindToParent")
-	procILFree             = shell32Menu.NewProc("ILFree")
-	procSHGetDesktopFolder = shell32Menu.NewProc("SHGetDesktopFolder")
+	shell32Menu                   = syscall.NewLazyDLL("shell32.dll")
+	procSHParseDisplayName        = shell32Menu.NewProc("SHParseDisplayName")
+	procSHBindToParent            = shell32Menu.NewProc("SHBindToParent")
+	procILFree                    = shell32Menu.NewProc("ILFree")
+	procSHGetDesktopFolder        = shell32Menu.NewProc("SHGetDesktopFolder")
+	procSHGetKnownFolderIDList    = shell32Menu.NewProc("SHGetKnownFolderIDList")
 
 	// ole32
 	ole32Menu          = syscall.NewLazyDLL("ole32.dll")
@@ -268,9 +269,23 @@ func (dm *DesktopMode) autoArrangeIcons() {
 	}
 }
 
-// refreshDesktop 刷新桌面
+// refreshDesktop 刷新桌面（整体刷新：壁纸 + 桌面项同步 + 重建卡片 + 图标缓存 + 重绘）
 func (dm *DesktopMode) refreshDesktop() {
-	dm.WallpaperState.LoadWallpaper(dm.MainWindow.DPI, dm.WorkW, dm.WorkH)
+	// 重新同步桌面项（以系统桌面目录为准）
 	dm.Manager.ReloadDesktopItems()
-	dm.BodyWidget.Invalidate()
+
+	// 重新加载壁纸
+	dm.WallpaperState.LoadWallpaper(dm.MainWindow.DPI, dm.WorkW, dm.WorkH)
+
+	// 预加载未分组图标缓存
+	freePaths := make([]string, 0)
+	for _, item := range dm.Manager.GetUngroupedItems() {
+		freePaths = append(freePaths, item.Path)
+	}
+	if len(freePaths) > 0 {
+		ui.GlobalIconBmpCache.LoadAll(freePaths)
+	}
+
+	// 重建卡片（销毁旧卡片并重新创建）
+	dm.refreshCards()
 }

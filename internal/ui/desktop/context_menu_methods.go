@@ -1,6 +1,7 @@
 package desktop
 
 import (
+	"strings"
 	"syscall"
 	"unsafe"
 
@@ -101,33 +102,16 @@ func (s *ContextMenuState) deferredShowContextMenu() {
 	logger.Debug("rightClick: deferredShowContextMenu, hwnd=%v, client=(%d,%d) screen=(%d,%d)",
 		hwnd, s.rclickClientX, s.rclickClientY, s.rclickScreenX, s.rclickScreenY)
 
-	// 命中检测
-	allItems := manager.GetAllItems()
+	// 命中检测：优先检测未分组图标（与 paintAllIcons 使用相同的位置计算）
 	s.rclickHitItem = nil
-	for _, item := range allItems {
-		var ix, iy int
-		if item.GroupName == "" {
-			ungrouped := manager.GetUngroupedItems()
-			for i, ui := range ungrouped {
-				if ui.Path == item.Path {
-					ix, iy = s.rclickGetPixelPos(item.Path, i)
-					break
-				}
-			}
-		} else {
-			for _, card := range s.rclickGetCards() {
-				if card.GroupName() == item.GroupName {
-					sb := card.ScreenBounds()
-					ix = sb.X
-					iy = sb.Y
-					break
-				}
-			}
-		}
+	ungrouped := manager.GetUngroupedItems()
+	for i, item := range ungrouped {
+		ix, iy := s.rclickGetPixelPos(item.Path, i)
 		if s.rclickClientX >= ix && s.rclickClientX <= ix+ui.TileWidth() &&
 			s.rclickClientY >= iy && s.rclickClientY <= iy+ui.TileHeight() {
 			itemCopy := group.GroupItem{Path: item.Path, Name: item.Name}
 			s.rclickHitItem = &itemCopy
+			logger.Debug("rightClick: hit ungrouped item %q at (%d,%d)", item.Name, ix, iy)
 			break
 		}
 	}
@@ -148,16 +132,27 @@ func (s *ContextMenuState) deferredShowContextMenu() {
 // showIconContextMenuReal 在 UI 主线程中执行实时 COM 图标右键菜单
 func showIconContextMenuReal(hwnd win.HWND, executor *ui.ProgramExecutor, item group.GroupItem, x, y int) {
 	filePath := item.Path
-	pathPtr, _ := syscall.UTF16PtrFromString(filePath)
+
 	var pidl uintptr
-	hr, _, _ := procSHParseDisplayName.Call(uintptr(unsafe.Pointer(pathPtr)), 0, uintptr(unsafe.Pointer(&pidl)), 0, 0)
-	if hr != 0 || pidl == 0 {
+	if strings.HasPrefix(filePath, "shell:") {
+		// 系统桌面项（如"此电脑"、"回收站"），通过 KNOWNFOLDERID 获取 PIDL
+		pidl = pidlFromKnownFolder(filePath[len("shell:"):])
+	} else {
+		// 普通文件，通过 SHParseDisplayName 获取 PIDL
+		pathPtr, _ := syscall.UTF16PtrFromString(filePath)
+		hr, _, _ := procSHParseDisplayName.Call(uintptr(unsafe.Pointer(pathPtr)), 0, uintptr(unsafe.Pointer(&pidl)), 0, 0)
+		if hr != 0 || pidl == 0 {
+			return
+		}
+	}
+	if pidl == 0 {
 		return
 	}
 	defer procILFree.Call(pidl)
+
 	var pShellFolder uintptr
 	var pidlChild uintptr
-	hr, _, _ = procSHBindToParent.Call(pidl, uintptr(unsafe.Pointer(&IID_IShellFolder)), uintptr(unsafe.Pointer(&pShellFolder)), uintptr(unsafe.Pointer(&pidlChild)))
+	hr, _, _ := procSHBindToParent.Call(pidl, uintptr(unsafe.Pointer(&IID_IShellFolder)), uintptr(unsafe.Pointer(&pShellFolder)), uintptr(unsafe.Pointer(&pidlChild)))
 	if hr != 0 || pShellFolder == 0 {
 		return
 	}
@@ -195,6 +190,31 @@ func showIconContextMenuReal(hwnd win.HWND, executor *ui.ProgramExecutor, item g
 	ici.nShow = 1
 	ici.lpDirectory = 0
 	syscall.SyscallN(cm.vtbl.InvokeCommand, pContextMenu, uintptr(unsafe.Pointer(&ici)))
+}
+
+// knownFolderIDs 已知系统文件夹的 KNOWNFOLDERID 映射
+var knownFolderIDs = map[string][16]byte{
+	"MyComputerFolder": {0xAC, 0x08, 0x3C, 0x0A, 0xF8, 0xBB, 0x2A, 0x45, 0x85, 0x0D, 0x79, 0xD0, 0x8E, 0x66, 0x7C, 0xA7},
+	"NetworkFolder":    {0xC5, 0x40, 0x46, 0xD2, 0x86, 0x78, 0x33, 0x4F, 0x9D, 0x38, 0xAD, 0x80, 0xF8, 0xE5, 0x70, 0x88},
+	"RecycleBinFolder": {0xB7, 0x55, 0xB5, 0x94, 0x76, 0xDC, 0xE6, 0x4B, 0x97, 0x91, 0x8D, 0x15, 0xD3, 0x42, 0x57, 0x95},
+}
+
+// pidlFromKnownFolder 通过 KNOWNFOLDERID 获取系统文件夹的 PIDL
+func pidlFromKnownFolder(folderKey string) uintptr {
+	folderID, ok := knownFolderIDs[folderKey]
+	if !ok {
+		return 0
+	}
+	var pidl uintptr
+	hr, _, _ := procSHGetKnownFolderIDList.Call(
+		uintptr(unsafe.Pointer(&folderID[0])),
+		0, 0,
+		uintptr(unsafe.Pointer(&pidl)),
+	)
+	if hr != 0 || pidl == 0 {
+		return 0
+	}
+	return pidl
 }
 
 // showCachedDesktopContextMenu 使用缓存的菜单数据显示桌面右键菜单（UI 主线程）

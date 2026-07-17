@@ -429,7 +429,9 @@ func (r *Runner) showTrayContextMenu() {
 			r.mw.SetVisible(false)
 		} else {
 			r.mw.SetVisible(true)
-			if r.mode != ModeDesktop {
+			if r.mode == ModeDesktop {
+				r.showDesktopMode()
+			} else {
 				r.winAPI.ForceShowAndRaise(r.mw.Handle())
 			}
 		}
@@ -484,7 +486,9 @@ func (r *Runner) setupNotifyIcon() {
 	r.ni.MouseDown().Attach(func(x, y int, button walk.MouseButton) {
 		if button == walk.LeftButton {
 			r.mw.SetVisible(true)
-			if r.mode != ModeDesktop {
+			if r.mode == ModeDesktop {
+				r.showDesktopMode()
+			} else {
 				r.winAPI.ForceShowAndRaise(r.mw.Handle())
 			}
 		}
@@ -509,6 +513,27 @@ func (r *Runner) initSystemItems() {
 	if !r.manager.HasSystemItem("RecycleBinFolder") {
 		r.manager.AddSystemItem("RecycleBinFolder", "回收站")
 	}
+}
+
+// showDesktopMode 桌面模式下窗口从隐藏变为可见时触发整体重绘
+func (r *Runner) showDesktopMode() {
+	if r.dm == nil {
+		return
+	}
+	dm := r.dm
+	hwnd := r.mw.Handle()
+
+	// 确保窗口位置正确（嵌入式桌面可能需要重新定位）
+	r.winAPI.MoveWindow(hwnd, dm.WorkX, dm.WorkY, dm.WorkW, dm.WorkH)
+
+	// 重新设置 Container 和 BodyWidget 的 bounds（确保布局正确）
+	clientBounds := r.mw.ClientBoundsPixels()
+	fullH := clientBounds.Y + clientBounds.Height
+	dm.Container.SetBoundsPixels(walk.Rectangle{X: 0, Y: 0, Width: dm.WorkW, Height: fullH})
+	dm.BodyWidget.SetBoundsPixels(walk.Rectangle{X: 0, Y: 0, Width: dm.WorkW, Height: fullH})
+
+	// 重新应用卡片位置
+	dm.ReapplyCardPositionsAndRefresh()
 }
 
 // startTimer 启动定时器，注册清理时优先停止

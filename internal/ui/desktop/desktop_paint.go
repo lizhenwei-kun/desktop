@@ -5,6 +5,7 @@ import (
 	"image/color"
 
 	"github.com/lxn/walk"
+	"github.com/lxn/win"
 
 	"desktop_go/internal/logger"
 	"desktop_go/internal/ui"
@@ -115,4 +116,23 @@ func (dm *DesktopMode) Refresh() {
 		card.Refresh()
 	}
 	dm.BodyWidget.Invalidate()
+}
+
+// ReapplyCardPositionsAndRefresh 重新应用卡片位置并强制完全重绘
+// 用于窗口从隐藏变为可见后的完整刷新
+func (dm *DesktopMode) ReapplyCardPositionsAndRefresh() {
+	// 重新应用卡片位置和 Z 序
+	dm.reapplyCardPositions()
+	// 刷新所有卡片内容
+	for _, card := range dm.Cards {
+		card.Refresh()
+	}
+	// 使 BodyWidget 无效化，触发重绘
+	dm.WinAPI.InvalidateRect(win.HWND(dm.BodyWidget.Handle()))
+	// 发送 WM_SIZE 让 walk 重新布局
+	dm.WinAPI.SendWMSize(win.HWND(dm.BodyWidget.Handle()))
+	// 强制立即重绘（不等待消息队列）
+	dm.WinAPI.UpdateWindow(win.HWND(dm.BodyWidget.Handle()))
+	// 同时强制主窗口立即重绘
+	dm.WinAPI.UpdateWindow(win.HWND(dm.MainWindow.Handle()))
 }

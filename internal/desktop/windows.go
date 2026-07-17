@@ -37,6 +37,8 @@ var (
 	procSetWindowSubclass    = comctl32.NewProc("SetWindowSubclass")
 	procRemoveWindowSubclass = comctl32.NewProc("RemoveWindowSubclass")
 	procDefSubclassProc      = comctl32.NewProc("DefSubclassProc")
+	procUpdateWindow         = user32.NewProc("UpdateWindow")
+	procInvalidateRect       = user32.NewProc("InvalidateRect")
 
 )
 
@@ -407,6 +409,16 @@ func (api *WindowsAPI) SendWMSize(hwnd win.HWND) {
 	// 发送 WM_SIZE, wParam=0 (SIZE_RESTORED), lParam=MAKELPARAM(w, h)
 	lParam := uintptr(uint32(w) | uint32(h)<<16)
 	procSendMessageW2.Call(uintptr(hwnd), WM_SIZE, 0, lParam)
+}
+
+// UpdateWindow 强制窗口立即重绘（发送 WM_PAINT）
+func (api *WindowsAPI) UpdateWindow(hwnd win.HWND) {
+	procUpdateWindow.Call(uintptr(hwnd))
+}
+
+// InvalidateRect 使窗口整个客户区无效化，触发重绘
+func (api *WindowsAPI) InvalidateRect(hwnd win.HWND) {
+	procInvalidateRect.Call(uintptr(hwnd), 0, 1)
 }
 
 // SetWindowFullScreen 设置窗口全屏（合并操作减少闪烁）
