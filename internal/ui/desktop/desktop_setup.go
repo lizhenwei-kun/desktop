@@ -217,6 +217,14 @@ func (dm *DesktopMode) delayedSetup() {
 		dm.WallpaperState.LoadWallpaper(dm.MainWindow.DPI, dm.WorkW, dm.WorkH)
 		dm.BodyWidget.Invalidate()
 
+		// 注册系统事件回调（电源恢复、显示变更等自动刷新桌面）
+		dm.WinAPI.SetOnSystemEvent(func() {
+			dm.Post(func() {
+				logger.Debug("system event: refreshing desktop")
+				dm.refreshDesktop()
+			})
+		})
+
 		logger.Debug("delayedSetup done: window=(%d,%d,%dx%d)", clientBounds.X, clientBounds.Y, clientBounds.Width, clientBounds.Height)
 		dm.Lifecycle.MarkReady()
 

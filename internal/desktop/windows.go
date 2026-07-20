@@ -88,8 +88,14 @@ const (
 
 	SC_MINIMIZE = 0xF020
 
-	WM_SIZE        = 0x0005
-	WM_SYSCOMMAND  = 0x0112
+	WM_SIZE            = 0x0005
+	WM_SYSCOMMAND      = 0x0112
+	WM_POWERBROADCAST  = 0x0218
+	WM_DISPLAYCHANGE   = 0x007E
+
+	// WM_POWERBROADCAST wParam 值
+	PBT_APMRESUMEAUTOMATIC = 0x0012
+	PBT_APMRESUMESUSPEND   = 0x0007
 
 	subclassID = 1
 )
@@ -152,13 +158,13 @@ func (api *WindowsAPI) FindShellWorkerW() win.HWND {
 		return 0
 	}
 
-	// 发送 0x052C 消息确保 WorkerW 存在
+	// 发送 0x052C 消息确保 WorkerW 存在（超时 500ms，避免长时间卡死）
 	var result uintptr
 	ret, _, err := procSendMessageW.Call(
 		uintptr(progman),
 		0x052C,
 		0xD, 1,
-		0, uintptr(1000),
+		0, uintptr(500),
 		uintptr(unsafe.Pointer(&result)),
 	)
 	logger.Debug("FindShellWorkerW: SendMessage 0x052C ret=%v, result=%v, err=%v", ret, result, err)
@@ -479,11 +485,38 @@ func negIntToUintptr(v int) uintptr {
 	return uintptr(v)
 }
 
-// subclassProc 子类化回调：拦截 WM_SYSCOMMAND SC_MINIMIZE，忽略最小化请求
+// 全局系统事件回调（电源恢复、显示变更等）
+var (
+	systemEventCallback func()
+	subclassHwnd        win.HWND
+)
+
+// SetOnSystemEvent 设置系统事件回调（电源恢复、显示变更等触发）
+func (api *WindowsAPI) SetOnSystemEvent(fn func()) {
+	systemEventCallback = fn
+}
+
+// subclassProc 子类化回调：拦截 WM_SYSCOMMAND SC_MINIMIZE + 监听电源/显示事件
 func subclassProc(hwnd uintptr, msg uint32, wParam, lParam, uIDSubclass, dwRefData uintptr) uintptr {
-	if msg == WM_SYSCOMMAND && (wParam&0xFFF0) == SC_MINIMIZE {
-		// 吞掉最小化消息，不传递给原 WndProc
-		return 0
+	switch msg {
+	case WM_SYSCOMMAND:
+		if (wParam & 0xFFF0) == SC_MINIMIZE {
+			return 0
+		}
+	case WM_POWERBROADCAST:
+		if wParam == PBT_APMRESUMEAUTOMATIC || wParam == PBT_APMRESUMESUSPEND {
+			// 系统从睡眠/休眠恢复，触发刷新回调
+			logger.Debug("subclassProc: power resume event (wParam=0x%X)", wParam)
+			if systemEventCallback != nil {
+				systemEventCallback()
+			}
+		}
+	case WM_DISPLAYCHANGE:
+		// 显示分辨率/状态变更，触发刷新回调
+		logger.Debug("subclassProc: display change event (new size=%dx%d)", int(lParam&0xFFFF), int((lParam>>16)&0xFFFF))
+		if systemEventCallback != nil {
+			systemEventCallback()
+		}
 	}
 	ret, _, _ := procDefSubclassProc.Call(hwnd, uintptr(msg), wParam, lParam)
 	return ret
@@ -493,6 +526,7 @@ var subclassCB = syscall.NewCallback(subclassProc)
 
 // InstallMinimizeBlock 安装子类化拦截最小化消息（仅影响本窗口）
 func (api *WindowsAPI) InstallMinimizeBlock(hwnd win.HWND) {
+	subclassHwnd = hwnd
 	procSetWindowSubclass.Call(
 		uintptr(hwnd),
 		subclassCB,

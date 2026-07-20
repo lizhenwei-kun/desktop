@@ -543,6 +543,30 @@ func (r *Runner) startTimer() {
 	}
 	r.work.Run()
 
+	// 桌面模式下添加定时自检恢复（每 30 秒检测窗口状态）
+	if r.mode == ModeDesktop && r.dm != nil {
+		r.work.AddTimer(30*1000, func() {
+			r.dm.Post(func() {
+				hwnd := r.mw.Handle()
+				if !r.winAPI.IsWindowVisible(hwnd) {
+					logger.Debug("healthcheck: window not visible, restoring...")
+					r.mw.SetVisible(true)
+					r.winAPI.MoveWindow(hwnd, r.dm.WorkX, r.dm.WorkY, r.dm.WorkW, r.dm.WorkH)
+					r.dm.ReapplyCardPositionsAndRefresh()
+				}
+				// 检测父窗口是否仍是 WorkerW
+				parent := win.GetParent(hwnd)
+				shellWorkerW := r.winAPI.FindShellWorkerW()
+				if shellWorkerW != 0 && parent != shellWorkerW {
+					logger.Debug("healthcheck: parent changed, re-embedding...")
+					r.winAPI.SetAsDesktopChild(hwnd)
+					r.winAPI.MoveWindow(hwnd, r.dm.WorkX, r.dm.WorkY, r.dm.WorkW, r.dm.WorkH)
+					r.dm.ReapplyCardPositionsAndRefresh()
+				}
+			})
+		})
+	}
+
 	// 注册清理（后注册先执行，确保定时器优先停止）
 	r.lifecycle.RegisterCleanup(func() {
 		if r.work != nil {
