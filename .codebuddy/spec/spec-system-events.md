@@ -97,3 +97,41 @@ dm.WinAPI.SetOnSystemEvent(func() {
 - [ ] 定时自检发现窗口不可见时自动恢复
 - [ ] 定时自检发现父窗口变更时重新嵌入
 - [ ] 0x052C 消息超时合理，不会导致卡死
+
+## 已知问题
+
+### 1. refreshDesktop() 触发 ReloadDesktopItems 导致桌面项分组变更
+
+**问题描述**：`refreshDesktop()` 调用 `ReloadDesktopItems()`，而 `ReloadDesktopItems` 会扫描桌面目录并添加新文件。
+在旧逻辑中，新文件通过 `groupForPath` 被自动分配到默认分组（如 `.lnk` → "快捷方式"），
+导致这些文件从未分组图标区域"消失"，用户以为图标丢失。
+
+**触发路径**：
+
+```
+系统事件回调 / healthcheck 父窗口变更
+  └── refreshDesktop()
+        └── ReloadDesktopItems()
+              └── 新文件 → groupForPath → 分配到默认分组
+                    └── 不再显示为未分组图标
+```
+
+**修复**：新文件默认保持未分组（`gName=""`），用户自行拖入分组。
+见 `internal/group/manager.go` `ReloadDesktopItems()` 第 673-678 行。
+
+**影响范围**：
+- 系统事件回调（电源恢复、显示变更）触发 `refreshDesktop()` 时
+- healthcheck 检测到父窗口变更触发 `ReapplyCardPositionsAndRefresh()` 时
+- 程序启动 `NewRunner()` 首次调用 `ReloadDesktopItems()` 时
+
+### 2. healthcheck 频繁 re-embedding
+
+**问题描述**：`FindShellWorkerW()` 中 `SendMessage 0x052C` 会触发 WorkerW 重建，
+导致每次 healthcheck 都检测到 `parent != shellWorkerW`，触发 `SetAsDesktopChild` 重新嵌入。
+日志显示 8 小时内执行了约 960 次 re-embedding。
+
+**影响**：WorkerW 频繁重建可能导致 Explorer 不稳定。
+
+**建议优化**：
+- 检测到 parent 变更后，比较 WorkerW 句柄是否真的变化了（缓存上次的 shellWorkerW）
+- 如果 WorkerW 没有变化但 parent 变了，可能是 0x052C 消息本身导致了重建，应减少检测频率或增加去抖

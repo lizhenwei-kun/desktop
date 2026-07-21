@@ -67,3 +67,5 @@ flowchart TB
 | TODO-4 | P2 | 卡片操作按钮（重命名、颜色、删除）尚未绑定点击事件 | ✅ 已实现 |
 | TODO-5 | P2 | 双击打开项目（分组内）尚未实现 | ✅ 已实现 |
 | TODO-6 | P2 | SPEC.md 中 GUI 框架写为 Fyne，实际为 lxn/walk | 待修正 |
+| TODO-7 | P1 | healthcheck 频繁 re-embedding（8h 约 960 次），WorkerW 频繁重建可能影响 Explorer 稳定性 | 待优化 |
+| TODO-8 | P1 | `refreshDesktop()` 触发 `ReloadDesktopItems` 可能导致桌面项分组意外变更 | ✅ 已修复 |

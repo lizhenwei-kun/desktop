@@ -49,6 +49,9 @@ type desktopItemInfo struct {
 
 ## 自动分类规则 (groupForPath)
 
+`groupForPath` 目前仅作为备用分类参考，`ReloadDesktopItems` 不再调用它。
+新文件默认未分组，由用户手动拖入分组。
+
 | 条件 | 分组 |
 |------|------|
 | 扩展名 .lnk / .url / .exe | 快捷方式 |
@@ -71,7 +74,10 @@ ReloadDesktopItems()
 │   └── C:\Users\Public\Desktop
 │   └── 跳过 desktop.ini
 ├── 清理: 移除 DesktopItems 中已不存在的文件记录
-├── 新增: 对新文件通过 groupForPath 自动分类
+├── 新增: 新文件默认未分组（gName=""），不再调用 groupForPath 自动分类
+│   └── 背景: 旧逻辑对新文件调用 groupForPath 分配到默认分组，
+│       导致用户桌面文件"消失"（从未分组区域进入分组卡片）
+│       详见 spec-system-events.md 已知问题
 └── Save + notifyChange
 ```
 
@@ -81,3 +87,4 @@ ReloadDesktopItems()
 - [ ] 删除分组时项目不会丢失（回到未分组）
 - [ ] 启动时 ReloadDesktopItems 正确同步
 - [ ] 并发安全（读写锁覆盖所有操作）
+- [ ] 新文件默认未分组，不自动分配到分组
