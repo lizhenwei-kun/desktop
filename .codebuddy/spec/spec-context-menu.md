@@ -233,6 +233,35 @@ handleDesktopMouseDown(x, y, RightButton)
 │       └── nShow = SW_SHOWNORMAL
 ```
 
+### 系统桌面项（此电脑/回收站/网络）右键菜单
+
+系统桌面项（路径以 `shell:` 开头）通过 `showIconContextMenuReal` 处理，与普通文件不同：
+
+```
+showIconContextMenuReal(hwnd, executor, item, x, y)
+├── 路径以 "shell:" 开头?
+│   └── pidlFromKnownFolder(folderKey)
+│       ├── knownFolderIDs[folderKey] → KNOWNFOLDERID GUID
+│       └── SHGetKnownFolderIDList → PIDL
+├── 普通文件?
+│   └── SHParseDisplayName → PIDL
+├── SHBindToParent → IShellFolder + pidlChild
+├── GetUIObjectOf → IContextMenu
+└── QueryContextMenu + TrackPopupMenu + InvokeCommand
+```
+
+**KNOWNFOFOLDERID GUID 映射**（`knownFolderIDs`）：
+
+| 系统桌面项 | KNOWNFOLDERID | GUID |
+|-----------|---------------|------|
+| 此电脑 (MyComputerFolder) | `FOLDERID_ComputerFolder` | `{0AC0837C-BBF8-452A-850D-79D08E667CA7}` |
+| 网络 (NetworkFolder) | `FOLDERID_NetworkFolder` | `{D20BEEC4-5CA8-4905-AE3B-BF251EA09B53}` |
+| 回收站 (RecycleBinFolder) | `FOLDERID_RecycleBinFolder` | `{B7534046-3ECB-4C18-BE4E-64CD4CB7D6AC}` |
+
+**历史问题**：`f29c294`（7月17日）引入 `knownFolderIDs` 时三个 GUID 全部写错，
+导致 `SHGetKnownFolderIDList` 失败，右键点击系统桌面项无菜单弹出。
+`d141319` 从 MSDN 官方文档确认正确值后修复。
+
 ## 执行命令逻辑
 
 ### 注册表命令执行

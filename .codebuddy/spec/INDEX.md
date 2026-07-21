@@ -69,3 +69,4 @@ flowchart TB
 | TODO-6 | P2 | SPEC.md 中 GUI 框架写为 Fyne，实际为 lxn/walk | 待修正 |
 | TODO-7 | P1 | healthcheck 频繁 re-embedding（8h 约 960 次），WorkerW 频繁重建可能影响 Explorer 稳定性 | 待优化 |
 | TODO-8 | P1 | `refreshDesktop()` 触发 `ReloadDesktopItems` 可能导致桌面项分组意外变更 | ✅ 已修复 |
+| TODO-9 | P1 | `knownFolderIDs` 中系统桌面项 GUID 写错，导致右键菜单不显示（`f29c294` 引入，`d141319` 修复） | ✅ 已修复 |
