@@ -217,7 +217,7 @@ func (dm *DesktopMode) delayedSetup() {
 		dm.WallpaperState.LoadWallpaper(dm.MainWindow.DPI, dm.WorkW, dm.WorkH)
 		dm.BodyWidget.Invalidate()
 
-		// 注册系统事件回调（电源恢复、显示变更等自动刷新桌面）
+		// 注册系统事件回调（电源恢复、显示变更、会话结束等自动刷新桌面）
 		dm.WinAPI.SetOnSystemEvent(func() {
 			dm.Post(func() {
 				logger.Debug("system event: refreshing desktop")

@@ -670,11 +670,10 @@ func (m *Manager) ReloadDesktopItems() {
 		}
 	}
 
-	// 添加桌面目录中存在但配置中缺失的项
+	// 添加桌面目录中存在但配置中缺失的项（默认未分组）
 	for _, item := range desktopPaths {
 		if _, exists := m.cfg.DesktopItems[item.Path]; !exists {
-			groupName := m.groupForPath(item.Path, item.Name, item.IsDir)
-			m.cfg.DesktopItems[item.Path] = groupName
+			m.cfg.DesktopItems[item.Path] = ""
 		}
 	}
 

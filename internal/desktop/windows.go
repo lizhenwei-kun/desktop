@@ -89,9 +89,11 @@ const (
 	SC_MINIMIZE = 0xF020
 
 	WM_SIZE            = 0x0005
-	WM_SYSCOMMAND      = 0x0112
-	WM_POWERBROADCAST  = 0x0218
-	WM_DISPLAYCHANGE   = 0x007E
+	WM_SYSCOMMAND          = 0x0112
+	WM_POWERBROADCAST      = 0x0218
+	WM_DISPLAYCHANGE       = 0x007E
+	WM_QUERYENDSESSION     = 0x0011
+	WM_ENDSESSION          = 0x0016
 
 	// WM_POWERBROADCAST wParam 值
 	PBT_APMRESUMEAUTOMATIC = 0x0012
@@ -496,7 +498,7 @@ func (api *WindowsAPI) SetOnSystemEvent(fn func()) {
 	systemEventCallback = fn
 }
 
-// subclassProc 子类化回调：拦截 WM_SYSCOMMAND SC_MINIMIZE + 监听电源/显示事件
+// subclassProc 子类化回调：拦截 WM_SYSCOMMAND SC_MINIMIZE + 监听电源/显示/会话结束事件
 func subclassProc(hwnd uintptr, msg uint32, wParam, lParam, uIDSubclass, dwRefData uintptr) uintptr {
 	switch msg {
 	case WM_SYSCOMMAND:
@@ -516,6 +518,22 @@ func subclassProc(hwnd uintptr, msg uint32, wParam, lParam, uIDSubclass, dwRefDa
 		logger.Debug("subclassProc: display change event (new size=%dx%d)", int(lParam&0xFFFF), int((lParam>>16)&0xFFFF))
 		if systemEventCallback != nil {
 			systemEventCallback()
+		}
+	case WM_QUERYENDSESSION:
+		// 系统请求结束会话（注销/关机），记录日志并允许关机
+		logger.Debug("subclassProc: WM_QUERYENDSESSION (lParam=0x%X)", lParam)
+		logger.Sync()
+		// 返回 TRUE 允许系统继续关机流程
+		return 1
+	case WM_ENDSESSION:
+		// 会话正在结束（注销/关机），记录日志后退出
+		if wParam != 0 { // wParam=TRUE 表示会话确实结束
+			logger.Debug("subclassProc: WM_ENDSESSION: system session ending, exiting gracefully")
+			logger.Sync()
+			// 通知系统事件回调执行清理（如从桌面层脱离、恢复桌面图标）
+			if systemEventCallback != nil {
+				systemEventCallback()
+			}
 		}
 	}
 	ret, _, _ := procDefSubclassProc.Call(hwnd, uintptr(msg), wParam, lParam)

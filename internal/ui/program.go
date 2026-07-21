@@ -7,6 +7,12 @@ import (
 	"syscall"
 )
 
+// Windows 进程创建标志
+const (
+	CREATE_NEW_CONSOLE      = 0x00000010
+	CREATE_NEW_PROCESS_GROUP = 0x00000200
+)
+
 // ProgramExecutor 程序执行器
 type ProgramExecutor struct{}
 
@@ -48,7 +54,8 @@ func (pe *ProgramExecutor) executeExe(path string) error {
 	cmd := exec.Command(path)
 	cmd.Dir = filepath.Dir(path)
 	cmd.SysProcAttr = &syscall.SysProcAttr{
-		HideWindow: true,
+		HideWindow:    true,
+		CreationFlags: CREATE_NEW_CONSOLE | CREATE_NEW_PROCESS_GROUP,
 	}
 	return cmd.Start()
 }
@@ -57,7 +64,8 @@ func (pe *ProgramExecutor) executeExe(path string) error {
 func (pe *ProgramExecutor) openWithAssoc(path string) error {
 	cmd := exec.Command("cmd", "/c", "start", "", path)
 	cmd.SysProcAttr = &syscall.SysProcAttr{
-		HideWindow: true,
+		HideWindow:    true,
+		CreationFlags: CREATE_NEW_CONSOLE | CREATE_NEW_PROCESS_GROUP,
 	}
 	return cmd.Start()
 }

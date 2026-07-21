@@ -558,8 +558,10 @@ func (r *Runner) startTimer() {
 				parent := win.GetParent(hwnd)
 				shellWorkerW := r.winAPI.FindShellWorkerW()
 				if shellWorkerW != 0 && parent != shellWorkerW {
-					logger.Debug("healthcheck: parent changed, re-embedding...")
-					r.winAPI.SetAsDesktopChild(hwnd)
+					logger.Debug("healthcheck: parent changed (parent=%v, shellWorkerW=%v), re-embedding...", parent, shellWorkerW)
+					if !r.winAPI.SetAsDesktopChild(hwnd) {
+						logger.Error("healthcheck: SetAsDesktopChild failed, cannot re-embed into WorkerW")
+					}
 					r.winAPI.MoveWindow(hwnd, r.dm.WorkX, r.dm.WorkY, r.dm.WorkW, r.dm.WorkH)
 					r.dm.ReapplyCardPositionsAndRefresh()
 				}

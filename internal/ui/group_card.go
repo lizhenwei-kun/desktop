@@ -104,8 +104,8 @@ type GroupCard struct {
 	onIconRelease func()
 
 	// 卡片拖拽虚框位置更新回调（DesktopMode 在桌面层画虚框）
-	onCardDragOutline     func(card *GroupCard, newX, newY int)
-	onCardDragOutlineEnd  func(card *GroupCard)
+	onCardDragOutline    func(card *GroupCard, newX, newY int)
+	onCardDragOutlineEnd func(card *GroupCard)
 	// 缩放虚框回调（DesktopMode 在桌面层画边框）
 	onResizeOutline    func(card *GroupCard, newX, newY, newW, newH int)
 	onResizeOutlineEnd func(card *GroupCard)
@@ -226,9 +226,18 @@ func (gc *GroupCard) setupMouseEvents() {
 		if y < cardHeaderHeight {
 			if btn := gc.getActionButtonAt(x); btn != "" {
 				switch btn {
-				case "rename": if gc.onRename != nil { gc.onRename(gc.groupName) }
-				case "color": if gc.onColor != nil { gc.onColor(gc.groupName) }
-				case "delete": if gc.onDelete != nil { gc.onDelete(gc.groupName) }
+				case "rename":
+					if gc.onRename != nil {
+						gc.onRename(gc.groupName)
+					}
+				case "color":
+					if gc.onColor != nil {
+						gc.onColor(gc.groupName)
+					}
+				case "delete":
+					if gc.onDelete != nil {
+						gc.onDelete(gc.groupName)
+					}
 				}
 				return
 			}
@@ -650,7 +659,6 @@ func (gc *GroupCard) paintDragOutline(canvas *walk.Canvas, bounds walk.Rectangle
 	canvas.DrawLinePixels(pen, walk.Point{X: bounds.Width - 1, Y: 0}, walk.Point{X: bounds.Width - 1, Y: bounds.Height})
 }
 
-
 // paintBackground 绘制卡片背景（半透明颜色）
 func (gc *GroupCard) paintBackground(canvas *walk.Canvas, bounds walk.Rectangle) {
 	bgBmp := gc.createColorBitmap(bounds.Width, bounds.Height, gc.groupColor)
@@ -686,9 +694,9 @@ func (gc *GroupCard) paintHeader(canvas *walk.Canvas, bounds walk.Rectangle) {
 			x     int
 		}
 		btns := []btnDef{
-			{"×", btnRight - actionBtnWidth},                                       // 删除
-			{"色", btnRight - (actionBtnWidth+actionBtnGap)*2 + actionBtnGap},      // 颜色
-			{"✎", btnRight - (actionBtnWidth+actionBtnGap)*3 + actionBtnGap*2},     // 重命名
+			{"×", btnRight - actionBtnWidth},                                   // 删除
+			{"色", btnRight - (actionBtnWidth+actionBtnGap)*2 + actionBtnGap},   // 颜色
+			{"✎", btnRight - (actionBtnWidth+actionBtnGap)*3 + actionBtnGap*2}, // 重命名
 		}
 
 		for _, b := range btns {
@@ -740,7 +748,7 @@ func (gc *GroupCard) paintIconGrid(canvas *walk.Canvas, bounds walk.Rectangle) {
 		row := i / maxCols
 
 		x := startX + col*colWidth
-		y := startY + row * desktopIconItemHeight
+		y := startY + row*desktopIconItemHeight
 
 		if y+desktopIconItemHeight > bounds.Y+bounds.Height {
 			break
@@ -1002,13 +1010,13 @@ func (gc *GroupCard) ReapplyBounds() {
 	gc.bodyWidget.Invalidate()
 
 	// 验证实际 bounds
-	actualContainer := gc.container.BoundsPixels()
-	actualBody := gc.bodyWidget.BoundsPixels()
-	logger.Debug("ReapplyBounds: %q container=(%d,%d,%dx%d) body=(%d,%d,%dx%d) visible=%v",
-		gc.groupName,
-		actualContainer.X, actualContainer.Y, actualContainer.Width, actualContainer.Height,
-		actualBody.X, actualBody.Y, actualBody.Width, actualBody.Height,
-		gc.container.Visible())
+	// actualContainer := gc.container.BoundsPixels()
+	// actualBody := gc.bodyWidget.BoundsPixels()
+	// logger.Debug("ReapplyBounds: %q container=(%d,%d,%dx%d) body=(%d,%d,%dx%d) visible=%v",
+	// 	gc.groupName,
+	// 	actualContainer.X, actualContainer.Y, actualContainer.Width, actualContainer.Height,
+	// 	actualBody.X, actualBody.Y, actualBody.Width, actualBody.Height,
+	// 	gc.container.Visible())
 }
 
 // SetIsDropTarget 设置是否为当前拖放目标（绘制高亮边框）

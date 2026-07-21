@@ -16,8 +16,9 @@ import (
 )
 
 var (
-	kernel32         = syscall.NewLazyDLL("kernel32.dll")
-	procCreateMutexW = kernel32.NewProc("CreateMutexW")
+	kernel32             = syscall.NewLazyDLL("kernel32.dll")
+	procCreateMutexW     = kernel32.NewProc("CreateMutexW")
+	procSetConsoleCtrlHandler = kernel32.NewProc("SetConsoleCtrlHandler")
 )
 
 const ERROR_ALREADY_EXISTS = 183
@@ -57,6 +58,17 @@ func main() {
 			os.Exit(2)
 		}
 	}()
+
+	// 注册控制台 Ctrl 事件处理函数，防止子进程崩溃时波及本进程
+	// 即使使用 -H windowsgui 编译，子进程崩溃仍可能发送 Ctrl 信号到父进程
+	procSetConsoleCtrlHandler.Call(
+		uintptr(syscall.NewCallback(func(ctrlType uint32) uintptr {
+			// CTRL_CLOSE_EVENT=2: 忽略控制台关闭事件，防止子进程崩溃触发本进程退出
+			// CTRL_C_EVENT=0, CTRL_BREAK_EVENT=1: 同样忽略
+			return 1 // TRUE: 已处理，系统不会调用 ExitProcess
+		})),
+		1, // Add handler
+	)
 
 	if !ensureSingleInstance() {
 		// 已有实例在运行，直接退出
