@@ -137,6 +137,9 @@ func (dm *DesktopMode) Refresh() {
 func (dm *DesktopMode) ReapplyCardPositionsAndRefresh() {
 	// 重新应用卡片位置和 Z 序
 	dm.reapplyCardPositions()
+	// 把 BodyWidget 在 Z 序中置顶，确保其上绘制的未分组图标不被卡片覆盖
+	win.SetWindowPos(dm.BodyWidget.Handle(), win.HWND_TOP, 0, 0, 0, 0,
+		win.SWP_NOMOVE|win.SWP_NOSIZE|win.SWP_NOACTIVATE)
 	// 刷新所有卡片内容
 	for _, card := range dm.Cards {
 		card.Refresh()

@@ -536,7 +536,7 @@ func (r *Runner) showDesktopMode() {
 	// 重新加载桌面项目（同步隐藏期间可能错过的文件变更）
 	r.manager.ReloadDesktopItems()
 
-	// 重新应用卡片位置并完整刷新
+	// 重新应用卡片位置并完整刷新（内部已处理 BodyWidget Z 序置顶）
 	dm.ReapplyCardPositionsAndRefresh()
 }
 
