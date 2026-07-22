@@ -6,6 +6,7 @@ import (
 	"image/color"
 	"os"
 	"syscall"
+	"time"
 	"unsafe"
 
 	"github.com/lxn/walk"
@@ -538,6 +539,15 @@ func (r *Runner) showDesktopMode() {
 
 	// 重新应用卡片位置并完整刷新（内部已处理 BodyWidget Z 序置顶）
 	dm.ReapplyCardPositionsAndRefresh()
+
+	// 延迟 100ms 再次确保 BodyWidget Z 序置顶，避免 walk 布局系统后续重排覆盖
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		dm.Post(func() {
+			win.SetWindowPos(dm.BodyWidget.Handle(), win.HWND_TOP, 0, 0, 0, 0,
+				win.SWP_NOMOVE|win.SWP_NOSIZE|win.SWP_NOACTIVATE)
+		})
+	}()
 }
 
 // startTimer 启动定时器，注册清理时优先停止

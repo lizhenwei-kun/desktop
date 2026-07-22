@@ -160,4 +160,8 @@ func (dm *DesktopMode) ReapplyCardPositionsAndRefresh() {
 	dm.WinAPI.UpdateWindow(win.HWND(dm.BodyWidget.Handle()))
 	// 同时强制主窗口立即重绘
 	dm.WinAPI.UpdateWindow(win.HWND(dm.MainWindow.Handle()))
+
+	// 再次确保 BodyWidget Z 序置顶（重绘和布局后可能被覆盖）
+	win.SetWindowPos(dm.BodyWidget.Handle(), win.HWND_TOP, 0, 0, 0, 0,
+		win.SWP_NOMOVE|win.SWP_NOSIZE|win.SWP_NOACTIVATE)
 }
