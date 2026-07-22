@@ -1,11 +1,43 @@
 package ui
 
 import (
-	"image"
-	"image/color"
+	"syscall"
+	"unsafe"
 
 	"github.com/lxn/walk"
 	. "github.com/lxn/walk/declarative"
+	"github.com/lxn/win"
+)
+
+// Windows CHOOSECOLOR 相关定义
+const (
+	ccRGBInit    = 0x00000001
+	ccFullOpen   = 0x00000002
+	ccEnableHook = 0x00000010
+	ccAnyColor   = 0x00000100
+
+	swpNoSize     = 0x0001
+	swpNoZOrder   = 0x0004
+	swpNoActivate = 0x0010
+
+	spiGetWorkArea = 0x0030
+)
+
+type chooseColorW struct {
+	lStructSize    uint32
+	hwndOwner      win.HWND
+	hInstance      win.HINSTANCE
+	rgbResult      uint32
+	lpCustColors   *uint32
+	flags          uint32
+	lCustData      uintptr
+	lpfnHook       uintptr
+	lpTemplateName *uint16
+}
+
+var (
+	modComdlg32             = syscall.NewLazyDLL("comdlg32.dll")
+	procChooseColorW        = modComdlg32.NewProc("ChooseColorW")
 )
 
 // ShowInputDialog 显示文本输入对话框
@@ -59,106 +91,67 @@ func ShowConfirmDialog(owner walk.Form, title, message string) bool {
 	return result == walk.DlgCmdYes
 }
 
-// ShowColorDialog 显示颜色选择对话框
+// ShowColorDialog 显示系统颜色选择对话框（ChooseColorW）
 func ShowColorDialog(owner walk.Form, title string, presetColors []string) (string, bool) {
-	var dlg *walk.Dialog
-	var result string
-	var accepted bool
-	var customEdit *walk.LineEdit
-
-	// 颜色方块（使用 CustomWidget 绘制实际颜色，避免 Composite.OnMouseDown 在对话框中的潜在问题）
-	const squareSize = 48
-
-	var colorWidgets []Widget
-	for _, c := range presetColors {
-		colorStr := c
-		parsed := ParseHexColor(c)
-
-		swatch := CustomWidget{
-			MinSize:     Size{Width: squareSize, Height: squareSize},
-			MaxSize:     Size{Width: squareSize, Height: squareSize},
-			ToolTipText: colorStr,
-			PaintPixels: func(canvas *walk.Canvas, updateBounds walk.Rectangle) error {
-				// 与 group_card.go/createColorBitmap 同样的方式：创建纯色 RGBA 图像
-				rect := canvas.Bounds()
-				if rect.Width <= 0 || rect.Height <= 0 {
-					rect = walk.Rectangle{Width: squareSize, Height: squareSize}
-				}
-				img := image.NewRGBA(image.Rect(0, 0, rect.Width, rect.Height))
-				for y := 0; y < rect.Height; y++ {
-					for x := 0; x < rect.Width; x++ {
-						img.SetRGBA(x, y, color.RGBA{R: parsed.R, G: parsed.G, B: parsed.B, A: 255})
-					}
-				}
-				bmp, err := walk.NewBitmapFromImage(img)
-				if err != nil {
-					return err
-				}
-				defer bmp.Dispose()
-				canvas.DrawBitmapWithOpacityPixels(bmp, rect, 255)
-				return nil
-			},
-			OnMouseDown: func(x, y int, button walk.MouseButton) {
-				if button == walk.LeftButton {
-					result = colorStr
-					accepted = true
-					dlg.Accept()
-				}
-			},
-		}
-		colorWidgets = append(colorWidgets, swatch)
+	// 初始化自定义颜色数组（16 个 COLORREF，初始为白色）
+	var custColors [16]uint32
+	for i := range custColors {
+		custColors[i] = 0x00FFFFFF
 	}
 
-	Dialog{
-		AssignTo:   &dlg,
-		Title:      title,
-		MinSize:    Size{Width: 340, Height: 260},
-		Background: SolidColorBrush{Color: walk.RGB(0x1A, 0x1A, 0x2E)},
-		Layout:     VBox{Margins: Margins{Left: 20, Top: 20, Right: 20, Bottom: 20}, Spacing: 16},
-		Children: []Widget{
-			Label{
-				Text:      "选择颜色",
-				TextColor: walk.RGB(0xFF, 0xFF, 0xFF),
-				Font:      Font{Family: "Microsoft YaHei", PointSize: 14, Bold: true},
-			},
-			Composite{
-				Layout:   Flow{Spacing: 12},
-				Children: colorWidgets,
-			},
-			VSpacer{},
-			Composite{
-				Layout: HBox{Spacing: 8},
-				Children: []Widget{
-					LineEdit{
-						AssignTo:    &customEdit,
-						Text:        "#RRGGBBAA",
-						TextColor:   walk.RGB(0xFF, 0xFF, 0xFF),
-						Background:  SolidColorBrush{Color: walk.RGB(0x30, 0x34, 0x3C)},
-						MinSize:     Size{Width: 180, Height: 32},
-						ToolTipText: "输入自定义颜色值，如 #276BA6B8",
-					},
-					PushButton{
-						Text: "自定义",
-						OnClicked: func() {
-							if customEdit != nil {
-								result = customEdit.Text()
-								accepted = true
-								dlg.Accept()
-							}
-						},
-					},
-					HSpacer{},
-					PushButton{
-						Text:      "取消",
-						OnClicked: func() { dlg.Cancel() },
-					},
-				},
-			},
-		},
-	}.Create(owner)
+	// 如果有预设颜色，取第一个作为初始选中颜色
+	var initColor uint32
+	if len(presetColors) > 0 {
+		c := ParseHexColor(presetColors[0])
+		initColor = uint32(c.R) | uint32(c.G)<<8 | uint32(c.B)<<16
+	}
 
-	dlg.Run()
-	return result, accepted
+	var hwndOwner win.HWND
+	if owner != nil {
+		hwndOwner = owner.Handle()
+	}
+
+	// 钩子回调：WM_INITDIALOG 中将对话框居中于屏幕中央
+	hookProc := syscall.NewCallback(func(hDlg win.HWND, msg uint32, wParam, lParam uintptr) uintptr {
+		if msg == 0x0110 /* WM_INITDIALOG */ {
+			var dlgRect, desktopRect win.RECT
+			win.GetWindowRect(hDlg, &dlgRect)
+			win.GetWindowRect(win.GetDesktopWindow(), &desktopRect)
+
+			dlgW := dlgRect.Right - dlgRect.Left
+			dlgH := dlgRect.Bottom - dlgRect.Top
+
+			x := (desktopRect.Right - dlgW) / 2
+			y := (desktopRect.Bottom - dlgH) / 2
+
+			win.SetWindowPos(hDlg, 0, x, y, 0, 0,
+				swpNoSize|swpNoZOrder)
+		}
+		return 0
+	})
+
+	cc := chooseColorW{
+		lStructSize:    uint32(unsafe.Sizeof(chooseColorW{})),
+		hwndOwner:      hwndOwner,
+		hInstance:      0,
+		rgbResult:      initColor,
+		lpCustColors:   &custColors[0],
+		flags:          ccRGBInit | ccFullOpen | ccAnyColor | ccEnableHook,
+		lCustData:      0,
+		lpfnHook:       hookProc,
+		lpTemplateName: nil,
+	}
+
+	ret, _, _ := procChooseColorW.Call(uintptr(unsafe.Pointer(&cc)))
+	if ret == 0 {
+		return "", false
+	}
+
+	// 将 COLORREF (0x00BBGGRR) 转换为 #RRGGBBAA 格式
+	r := byte(cc.rgbResult & 0xFF)
+	g := byte((cc.rgbResult >> 8) & 0xFF)
+	b := byte((cc.rgbResult >> 16) & 0xFF)
+	return "#" + hexByte(r) + hexByte(g) + hexByte(b) + "FF", true
 }
 
 // PresetColors 预设颜色方案
