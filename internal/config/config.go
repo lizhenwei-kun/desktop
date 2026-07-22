@@ -45,15 +45,15 @@ var CardFontPresets = map[string]struct {
 
 // Config 表示应用配置
 type Config struct {
-	Groups             []Group           `json:"groups"`
-	DesktopItems       map[string]string `json:"desktop_items"`        // 桌面项路径 -> 分组名
-	UngroupedPositions map[string]Position `json:"ungrouped_positions"` // 未分组项路径 -> 相对位置
-	SystemItems        []SystemItem      `json:"system_items"`         // 系统桌面项
-	CardFontName       string            `json:"card_font_name"`
-	CardFontSize       int               `json:"card_font_size"`
-	CardFontPreset     string            `json:"card_font_preset"` // 预设: "consolas" / "segoeui" / "yahei" / "custom"
-	IconFontName       string            `json:"icon_font_name"`
-	IconFontSize       int               `json:"icon_font_size"`
+	Groups            []Group           `json:"groups"`
+	DesktopItems      map[string]string `json:"desktop_items"`   // 桌面项路径 -> 分组名
+	UngroupedIndices  map[string]int    `json:"ungrouped_indices"` // 未分组项路径 -> 网格索引（列优先：从上到下，再从左到右），-1 表示待分配
+	SystemItems       []SystemItem      `json:"system_items"`    // 系统桌面项
+	CardFontName      string            `json:"card_font_name"`
+	CardFontSize      int               `json:"card_font_size"`
+	CardFontPreset    string            `json:"card_font_preset"` // 预设: "consolas" / "segoeui" / "yahei" / "custom"
+	IconFontName      string            `json:"icon_font_name"`
+	IconFontSize      int               `json:"icon_font_size"`
 }
 
 // DefaultGroups 返回默认分组配置（相对坐标，基于1920x1040工作区计算的比例）
@@ -81,14 +81,14 @@ func configPath() string {
 // Load 加载配置，不存在则使用默认值
 func Load() *Config {
 	cfg := &Config{
-		Groups:             DefaultGroups(),
-		DesktopItems:       make(map[string]string),
-		UngroupedPositions: make(map[string]Position),
-		CardFontName:       "Consolas",
-		CardFontSize:       14,
-		CardFontPreset:     "consolas",
-		IconFontName:       "宋体",
-		IconFontSize:       11,
+		Groups:           DefaultGroups(),
+		DesktopItems:     make(map[string]string),
+		UngroupedIndices: make(map[string]int),
+		CardFontName:     "Consolas",
+		CardFontSize:     14,
+		CardFontPreset:   "consolas",
+		IconFontName:     "宋体",
+		IconFontSize:     11,
 	}
 
 	data, err := os.ReadFile(configPath())
@@ -101,6 +101,60 @@ func Load() *Config {
 		return cfg
 	}
 
+	// 读取旧版字段 ungrouped_positions（路径 -> {X,Y} 相对坐标），迁移到 ungrouped_indices
+	// 旧版使用相对坐标 + 网格密度反算索引；新版直接存网格索引（列优先：从上到下、从左到右）
+	type legacyPosition struct {
+		X float64 `json:"x"`
+		Y float64 `json:"y"`
+	}
+	var legacy struct {
+		UngroupedPositions map[string]legacyPosition `json:"ungrouped_positions"`
+	}
+	if json.Unmarshal(data, &legacy) == nil && len(legacy.UngroupedPositions) > 0 {
+		if loaded.UngroupedIndices == nil {
+			loaded.UngroupedIndices = make(map[string]int)
+		}
+		// 旧版网格参数（与迁移前的 free_items.go 保持一致）
+		// 磁贴宽度 132（desktopIconItemWidth 默认值）、高度 104、间距 8、网格起点 (20,60)
+		// 参考工作区 1920x1040（旧版默认）
+		const (
+			legacyFreeGridLeft = 20
+			legacyFreeGridTop  = 60
+			legacyIconGap      = 8
+			legacyTileW        = 132 // desktopIconItemWidth（迁移前默认值）
+			legacyTileH        = 104 // desktopIconItemHeight（迁移前默认值）
+			legacyRefW         = 1920.0
+			legacyRefH         = 1040.0
+		)
+		legacyCellW := legacyTileW + legacyIconGap
+		legacyCellH := legacyTileH + legacyIconGap
+		legacyMaxRow := int((legacyRefH - legacyFreeGridTop) / float64(legacyCellH))
+		if legacyMaxRow < 1 {
+			legacyMaxRow = 1
+		}
+		for path, pos := range legacy.UngroupedPositions {
+			if _, exists := loaded.UngroupedIndices[path]; exists {
+				continue
+			}
+			if pos.X < 0 || pos.Y < 0 {
+				loaded.UngroupedIndices[path] = -1
+				continue
+			}
+			px := int(pos.X * legacyRefW)
+			py := int(pos.Y * legacyRefH)
+			col := (px - legacyFreeGridLeft) / legacyCellW
+			row := (py - legacyFreeGridTop) / legacyCellH
+			if col < 0 {
+				col = 0
+			}
+			if row < 0 {
+				row = 0
+			}
+			// 列优先索引：index = col * maxRow + row
+			loaded.UngroupedIndices[path] = col*legacyMaxRow + row
+		}
+	}
+
 	// 验证加载的配置
 	if len(loaded.Groups) == 0 {
 		loaded.Groups = DefaultGroups()
@@ -108,8 +162,8 @@ func Load() *Config {
 	if loaded.DesktopItems == nil {
 		loaded.DesktopItems = make(map[string]string)
 	}
-	if loaded.UngroupedPositions == nil {
-		loaded.UngroupedPositions = make(map[string]Position)
+	if loaded.UngroupedIndices == nil {
+		loaded.UngroupedIndices = make(map[string]int)
 	}
 	if loaded.SystemItems == nil {
 		loaded.SystemItems = []SystemItem{}

@@ -9,7 +9,6 @@ import (
 	"github.com/lxn/walk"
 	"github.com/lxn/win"
 
-	"desktop_go/internal/config"
 	"desktop_go/internal/group"
 	"desktop_go/internal/logger"
 	"desktop_go/internal/ui"
@@ -48,6 +47,7 @@ func gridToPixel(col, row int) (int, int) {
 	return freeGridLeft + col*freeCellW(), freeGridTop + row*freeCellH()
 }
 
+// pixelToGrid 将像素坐标转换为网格（列, 行），不会做越界裁剪
 func pixelToGrid(px, py int) (int, int) {
 	col := (px - freeGridLeft + freeCellW()/2) / freeCellW()
 	row := (py - freeGridTop + freeCellH()/2) / freeCellH()
@@ -60,49 +60,78 @@ func pixelToGrid(px, py int) (int, int) {
 	return col, row
 }
 
-// posToGrid 保留在 DesktopMode，grid helpers 被多处调用
-func (dm *DesktopMode) posToGrid(pos config.Position) (int, int) {
-	px := int(pos.X * float64(dm.WorkW))
-	py := int(pos.Y * float64(dm.WorkH))
-	return pixelToGrid(px, py)
-}
-
-// gridToRel 保留在 DesktopMode
-func (dm *DesktopMode) gridToRel(col, row int) config.Position {
-	px, py := gridToPixel(col, row)
-	return config.Position{
-		X: float64(px) / float64(dm.WorkW),
-		Y: float64(py) / float64(dm.WorkH),
+// maxGridRows 返回当前工作区可容纳的最大行数（列优先布局：先填满一列再换下一列）
+func (dm *DesktopMode) maxGridRows() int {
+	bounds := dm.BodyWidget.ClientBoundsPixels()
+	h := bounds.Height
+	if h < 100 {
+		h = dm.WorkH
 	}
+	maxRow := (h - freeGridTop) / freeCellH()
+	if maxRow < 1 {
+		maxRow = 1
+	}
+	return maxRow
 }
 
-// getOccupiedCells 保留在 DesktopMode
-func (dm *DesktopMode) getOccupiedCells(exceptPath string) map[[2]int]bool {
+// maxGridCols 返回当前工作区可容纳的最大列数
+func (dm *DesktopMode) maxGridCols() int {
+	bounds := dm.BodyWidget.ClientBoundsPixels()
+	w := bounds.Width
+	if w < 100 {
+		w = dm.WorkW
+	}
+	maxCol := (w - freeGridLeft) / freeCellW()
+	if maxCol < 1 {
+		maxCol = 1
+	}
+	return maxCol
+}
+
+// indexToGrid 将列优先的网格索引转换为 (列, 行)
+// 布局顺序：从上到下填满一列，再从左到右换下一列
+func (dm *DesktopMode) indexToGrid(idx int) (int, int) {
+	if idx < 0 {
+		return 0, 0
+	}
+	maxRow := dm.maxGridRows()
+	col := idx / maxRow
+	row := idx % maxRow
+	return col, row
+}
+
+// gridToIndex 将 (列, 行) 转换为列优先的网格索引
+func (dm *DesktopMode) gridToIndex(col, row int) int {
+	maxRow := dm.maxGridRows()
+	return col*maxRow + row
+}
+
+// getOccupiedIndices 返回所有已分配网格索引的集合（排除 exceptPath）
+func (dm *DesktopMode) getOccupiedIndices(exceptPath string) map[int]bool {
 	items := dm.Manager.GetUngroupedItems()
-	cells := make(map[[2]int]bool)
+	occupied := make(map[int]bool, len(items))
 	for _, item := range items {
 		if item.Path == exceptPath {
 			continue
 		}
-		pos := dm.Manager.GetFreeItemPosition(item.Path)
-		col, row := dm.posToGrid(pos)
-		if col < 0 || row < 0 {
+		idx := dm.Manager.GetFreeItemIndex(item.Path)
+		if idx < 0 {
 			continue
 		}
-		cell := [2]int{col, row}
-		if !cells[cell] {
-			cells[cell] = true
-		}
+		occupied[idx] = true
 	}
-	return cells
+	return occupied
 }
 
-// getFreeItemPixelPos 保留在 DesktopMode
+// getFreeItemPixelPos 返回未分组项的像素坐标
+// 若该项尚未分配索引（-1），则自动分配一个空闲格子并持久化
+// fallbackIdx 用于在尺寸未就绪时的兜底分配
 func (dm *DesktopMode) getFreeItemPixelPos(path string, fallbackIdx int) (int, int) {
-	pos := dm.Manager.GetFreeItemPosition(path)
-	if pos.X < 0 || pos.Y < 0 {
+	idx := dm.Manager.GetFreeItemIndex(path)
+	if idx < 0 {
 		bounds := dm.BodyWidget.ClientBoundsPixels()
 		if bounds.Width < 100 || bounds.Height < 100 {
+			// 尺寸未就绪，用 fallbackIdx 兜底（列优先）
 			maxRow := dm.WorkH / freeCellH()
 			if maxRow < 1 {
 				maxRow = 1
@@ -111,42 +140,33 @@ func (dm *DesktopMode) getFreeItemPixelPos(path string, fallbackIdx int) (int, i
 			row := fallbackIdx % maxRow
 			return gridToPixel(col, row)
 		}
-		col, row := dm.findFreeGridCell("", 0, fallbackIdx)
-		relPos := dm.gridToRel(col, row)
-		dm.Manager.SetFreeItemPosition(path, relPos)
-		return gridToPixel(col, row)
+		idx = dm.findFreeIndex("", fallbackIdx)
+		dm.Manager.SetFreeItemIndex(path, idx)
 	}
-	col, row := dm.posToGrid(pos)
+	col, row := dm.indexToGrid(idx)
 	return gridToPixel(col, row)
 }
 
-// findFreeGridCell 保留在 DesktopMode
-func (dm *DesktopMode) findFreeGridCell(exceptPath string, wantCol, wantRow int) (int, int) {
-	occupied := dm.getOccupiedCells(exceptPath)
-	bounds := dm.BodyWidget.ClientBoundsPixels()
-	maxCol := bounds.Width / freeCellW()
-	if maxCol < 1 {
-		maxCol = 1
+// findFreeIndex 从 wantIdx 开始查找一个未被占用的网格索引（列优先顺序）
+func (dm *DesktopMode) findFreeIndex(exceptPath string, wantIdx int) int {
+	occupied := dm.getOccupiedIndices(exceptPath)
+	maxRow := dm.maxGridRows()
+	maxCol := dm.maxGridCols()
+	total := maxCol * maxRow
+	if wantIdx < 0 {
+		wantIdx = 0
 	}
-	maxRow := bounds.Height / freeCellH()
-	if maxRow < 1 {
-		maxRow = 1
-	}
-	for attempt := 0; attempt < 500; attempt++ {
-		cell := [2]int{wantCol, wantRow}
-		if !occupied[cell] {
-			return wantCol, wantRow
+	for attempt := 0; attempt < total+10; attempt++ {
+		if !occupied[wantIdx] {
+			return wantIdx
 		}
-		wantRow++
-		if wantRow >= maxRow {
-			wantRow = 0
-			wantCol++
-		}
-		if wantCol >= maxCol {
-			wantCol = 0
+		wantIdx++
+		// 超出网格范围则回到 0 重新查找
+		if wantIdx >= total {
+			wantIdx = 0
 		}
 	}
-	return wantCol, wantRow
+	return wantIdx
 }
 
 // findItemByPath 通过路径在所有项目中查找项目信息
@@ -698,12 +718,7 @@ func (dm *DesktopMode) paintGhostIcon() {
 	if font != nil {
 		defer font.Dispose()
 		lines := ui.SplitTextToLines(dm.DragItemName, 4)
-		labelTop := ui.DesktopIconLabelTop
-		for i, line := range lines {
-			lineY := labelTop + i*ui.DesktopIconLineHeight
-			textBounds := walk.Rectangle{X: 0, Y: lineY, Width: tileW, Height: ui.DesktopIconLineHeight}
-			canvas.DrawTextPixels(line, font, walk.RGB(0xFF, 0xFF, 0xFF), textBounds, walk.TextCenter|walk.TextSingleLine)
-		}
+		drawIconLabel(canvas, font, lines, 0, ui.DesktopIconLabelTop, tileW)
 	}
 
 	img, err := bmp.ToImage()
@@ -886,9 +901,9 @@ func (dm *DesktopMode) handleIconDrop(screenX, screenY int) {
 		px := int(pt.X) - ui.TileWidth()/2
 		py := int(pt.Y) - ui.TileHeight()/2
 		wantCol, wantRow := pixelToGrid(px, py)
-		col, row := dm.findFreeGridCell(dm.DragItemPath, wantCol, wantRow)
-		relPos := dm.gridToRel(col, row)
-		dm.Manager.SetFreeItemPosition(dm.DragItemPath, relPos)
+		wantIdx := dm.gridToIndex(wantCol, wantRow)
+		idx := dm.findFreeIndex(dm.DragItemPath, wantIdx)
+		dm.Manager.SetFreeItemIndex(dm.DragItemPath, idx)
 		if sourceCard != nil {
 			sourceCard.Refresh()
 		}

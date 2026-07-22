@@ -102,11 +102,39 @@ func (dm *DesktopMode) paintDragGhost(canvas *walk.Canvas, _ walk.Rectangle) {
 		displayName := dm.DragItemName
 		lines := ui.GetIconDisplayLines(displayName, 4)
 		labelTop := ghostY + ui.DesktopIconLabelTop
-		for i, line := range lines {
-			lineY := labelTop + i*ui.DesktopIconLineHeight
-			textBounds := walk.Rectangle{X: ghostX, Y: lineY, Width: ui.TileWidth(), Height: ui.DesktopIconLineHeight}
-			canvas.DrawTextPixels(line, font, walk.RGB(0xFF, 0xFF, 0xFF), textBounds, walk.TextCenter|walk.TextSingleLine)
+		drawIconLabel(canvas, font, lines, ghostX, labelTop, ui.TileWidth())
+	}
+}
+
+// drawIconLabel 绘制带阴影的图标文字标签（白字 + 8 方向 1px 黑色阴影，模拟 Windows 原生桌面图标文字效果）
+// x: 文本块左上角 X；labelTop: 第一行 Y；tileWidth: 文本块宽度
+func drawIconLabel(canvas *walk.Canvas, font *walk.Font, lines []string, x, labelTop, tileWidth int) {
+	if font == nil {
+		return
+	}
+	// 8 个方向的阴影偏移：水平/垂直 + 对角线
+	shadowOffsets := [8]struct{ dx, dy int }{
+		{-1, -1}, {0, -1}, {1, -1},
+		{-1, 0}, {1, 0},
+		{-1, 1}, {0, 1}, {1, 1},
+	}
+	for i, line := range lines {
+		lineY := labelTop + i*ui.DesktopIconLineHeight
+		textBounds := walk.Rectangle{X: x, Y: lineY, Width: tileWidth, Height: ui.DesktopIconLineHeight}
+		// 8 方向阴影各画 2 遍（加深、消除锯齿造成的浅灰感）
+		for pass := 0; pass < 2; pass++ {
+			for _, off := range shadowOffsets {
+				shadowBounds := walk.Rectangle{
+					X:      textBounds.X + off.dx,
+					Y:      textBounds.Y + off.dy,
+					Width:  textBounds.Width,
+					Height: textBounds.Height,
+				}
+				canvas.DrawTextPixels(line, font, walk.RGB(0, 0, 0), shadowBounds, walk.TextCenter|walk.TextSingleLine)
+			}
 		}
+		// 最后画白色正文
+		canvas.DrawTextPixels(line, font, walk.RGB(0xFF, 0xFF, 0xFF), textBounds, walk.TextCenter|walk.TextSingleLine)
 	}
 }
 

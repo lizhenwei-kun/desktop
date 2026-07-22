@@ -258,14 +258,12 @@ func (dm *DesktopMode) sortAndRefresh() {
 	dm.BodyWidget.Invalidate()
 }
 
-// autoArrangeIcons 自动排列图标
+// autoArrangeIcons 自动排列图标（列优先：从上到下、从左到右）
 func (dm *DesktopMode) autoArrangeIcons() {
 	items := dm.Manager.GetUngroupedItems()
 	for i, item := range items {
-		col := i % 8
-		row := i / 8
-		relPos := dm.gridToRel(col, row)
-		dm.Manager.SetFreeItemPosition(item.Path, relPos)
+		// 直接按列表顺序分配索引 0,1,2,...（列优先布局）
+		dm.Manager.SetFreeItemIndex(item.Path, i)
 	}
 }
 

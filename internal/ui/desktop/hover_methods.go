@@ -104,22 +104,14 @@ func (dm *DesktopMode) paintAllIcons(canvas *walk.Canvas, bounds walk.Rectangle)
 		if font != nil {
 			defer font.Dispose()
 			labelTop := py + ui.DesktopIconLabelTop
-			if isSelected {
-				// 选中状态：显示所有行，不加省略号
-				for i, line := range lines {
-					lineY := labelTop + i*ui.DesktopIconLineHeight
-					textBounds := walk.Rectangle{X: px, Y: lineY, Width: ui.TileWidth(), Height: ui.DesktopIconLineHeight}
-					canvas.DrawTextPixels(line, font, walk.RGB(0xFF, 0xFF, 0xFF), textBounds, walk.TextCenter|walk.TextSingleLine)
-				}
-			} else {
-				// 非选中：最多显示2行，超出省略
-				displayLines := ui.GetIconDisplayLines(displayName, 4)
-				for i, line := range displayLines {
-					lineY := labelTop + i*ui.DesktopIconLineHeight
-					textBounds := walk.Rectangle{X: px, Y: lineY, Width: ui.TileWidth(), Height: ui.DesktopIconLineHeight}
-					canvas.DrawTextPixels(line, font, walk.RGB(0xFF, 0xFF, 0xFF), textBounds, walk.TextCenter|walk.TextSingleLine)
-				}
-			}
+		if isSelected {
+			// 选中状态：显示所有行，不加省略号
+			drawIconLabel(canvas, font, lines, px, labelTop, ui.TileWidth())
+		} else {
+			// 非选中：最多显示2行，超出省略
+			displayLines := ui.GetIconDisplayLines(displayName, 4)
+			drawIconLabel(canvas, font, displayLines, px, labelTop, ui.TileWidth())
+		}
 		}
 	}
 }

@@ -123,29 +123,30 @@ func (m *Manager) SetOnChange(fn func()) {
 	m.onChange = fn
 }
 
-// SetFreeItemPosition 设置未分组项的相对位置
-func (m *Manager) SetFreeItemPosition(path string, pos config.Position) {
+// SetFreeItemIndex 设置未分组项的网格索引（列优先：从上到下、从左到右）
+// idx 为 -1 表示待分配（稍后由 DesktopMode 自动分配空闲格子）
+func (m *Manager) SetFreeItemIndex(path string, idx int) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.cfg.UngroupedPositions[path] = pos
+	m.cfg.UngroupedIndices[path] = idx
 	config.Save(m.cfg)
 }
 
-// GetFreeItemPosition 获取未分组项的相对位置，不存在则返回 {-1,-1} 表示待分配
-func (m *Manager) GetFreeItemPosition(path string) config.Position {
+// GetFreeItemIndex 获取未分组项的网格索引，不存在则返回 -1 表示待分配
+func (m *Manager) GetFreeItemIndex(path string) int {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	if pos, ok := m.cfg.UngroupedPositions[path]; ok {
-		return pos
+	if idx, ok := m.cfg.UngroupedIndices[path]; ok {
+		return idx
 	}
-	return config.Position{X: -1, Y: -1}
+	return -1
 }
 
-// RemoveFreeItemPosition 删除未分组项的位置记录（移入分组时调用）
-func (m *Manager) RemoveFreeItemPosition(path string) {
+// RemoveFreeItemIndex 删除未分组项的索引记录（移入分组时调用）
+func (m *Manager) RemoveFreeItemIndex(path string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	delete(m.cfg.UngroupedPositions, path)
+	delete(m.cfg.UngroupedIndices, path)
 	config.Save(m.cfg)
 }
 
@@ -459,12 +460,12 @@ func (m *Manager) DeleteGroup(name string) {
 	}
 	m.cfg.Groups = newGroups
 
-	// 将该分组的项目标记为未分组，并分配位置标记
+	// 将该分组的项目标记为未分组，并分配索引标记
 	for path, gName := range m.cfg.DesktopItems {
 		if gName == name {
 			m.cfg.DesktopItems[path] = ""
-			if _, exists := m.cfg.UngroupedPositions[path]; !exists {
-				m.cfg.UngroupedPositions[path] = config.Position{X: -1, Y: -1}
+			if _, exists := m.cfg.UngroupedIndices[path]; !exists {
+				m.cfg.UngroupedIndices[path] = -1
 			}
 		}
 	}
@@ -539,8 +540,8 @@ func (m *Manager) RemoveItem(itemPath string) {
 	// 从 DesktopItems 中移除
 	delete(m.cfg.DesktopItems, itemPath)
 
-	// 从 UngroupedPositions 中移除
-	delete(m.cfg.UngroupedPositions, itemPath)
+	// 从 UngroupedIndices 中移除
+	delete(m.cfg.UngroupedIndices, itemPath)
 
 	// 从所有分组的 order 中移除
 	for groupName, order := range m.itemOrder {
@@ -571,8 +572,8 @@ func (m *Manager) MoveItemToGroup(itemPath, groupName string) {
 		}
 	}
 
-	// 清除未分组位置记录
-	delete(m.cfg.UngroupedPositions, itemPath)
+	// 清除未分组索引记录
+	delete(m.cfg.UngroupedIndices, itemPath)
 
 	m.cfg.DesktopItems[itemPath] = groupName
 	// 追加到新分组 order
@@ -598,9 +599,9 @@ func (m *Manager) MoveItemToDesktop(itemPath string) {
 	}
 
 	m.cfg.DesktopItems[itemPath] = ""
-	// 确保未分组项有默认位置（使用0表示稍后在DesktopMode中分配）
-	if _, exists := m.cfg.UngroupedPositions[itemPath]; !exists {
-		m.cfg.UngroupedPositions[itemPath] = config.Position{X: -1, Y: -1} // 标记为待分配
+	// 确保未分组项有默认索引（-1 表示稍后在 DesktopMode 中分配）
+	if _, exists := m.cfg.UngroupedIndices[itemPath]; !exists {
+		m.cfg.UngroupedIndices[itemPath] = -1 // 标记为待分配
 	}
 	m.save()
 	m.notifyChange()
@@ -617,7 +618,7 @@ func (m *Manager) AddItemToDesktop(itemPath, itemName string) {
 	}
 
 	m.cfg.DesktopItems[itemPath] = ""
-	m.cfg.UngroupedPositions[itemPath] = config.Position{X: -1, Y: -1} // 标记为待分配
+	m.cfg.UngroupedIndices[itemPath] = -1 // 标记为待分配
 	m.save()
 	m.notifyChange()
 }
@@ -729,10 +730,10 @@ func (m *Manager) RenameItem(oldPath, newName string) (string, error) {
 		m.cfg.DesktopItems[newPath] = gName
 	}
 
-	// 更新 UngroupedPositions
-	if pos, ok := m.cfg.UngroupedPositions[oldPath]; ok {
-		delete(m.cfg.UngroupedPositions, oldPath)
-		m.cfg.UngroupedPositions[newPath] = pos
+	// 更新 UngroupedIndices
+	if idx, ok := m.cfg.UngroupedIndices[oldPath]; ok {
+		delete(m.cfg.UngroupedIndices, oldPath)
+		m.cfg.UngroupedIndices[newPath] = idx
 	}
 
 	// 更新 itemOrder
@@ -769,7 +770,7 @@ func (m *Manager) ReloadDesktopItems() {
 	for path := range m.cfg.DesktopItems {
 		if !desktopSet[path] {
 			delete(m.cfg.DesktopItems, path)
-			delete(m.cfg.UngroupedPositions, path)
+			delete(m.cfg.UngroupedIndices, path)
 		}
 	}
 
