@@ -1,6 +1,7 @@
 package group
 
 import (
+	"encoding/binary"
 	"os"
 	"path/filepath"
 	"sort"
@@ -9,6 +10,94 @@ import (
 
 	"desktop_go/internal/config"
 )
+
+// selfExePath 缓存程序自身可执行文件路径（规范化），运行时初始化
+var selfExePath string
+
+func init() {
+	// 获取并缓存程序自身路径，后续过滤使用
+	if exe, err := os.Executable(); err == nil {
+		// 清理路径分隔符，统一为小写便于比较
+		selfExePath = strings.ToLower(filepath.Clean(exe))
+	}
+}
+
+// isSelfOrShortcutToSelf 检查文件是否指向程序自身。
+// 返回 true 表示应该被过滤（不处理）。
+func isSelfOrShortcutToSelf(fullPath string) bool {
+	lower := strings.ToLower(fullPath)
+
+	// 1) 直接匹配可执行文件本身
+	if lower == selfExePath {
+		return true
+	}
+
+	// 2) 检查 .lnk 快捷方式的目标
+	if strings.HasSuffix(lower, ".lnk") {
+		target := parseLnkTarget(fullPath)
+		if target != "" {
+			targetLower := strings.ToLower(filepath.Clean(target))
+			if targetLower == selfExePath {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// parseLnkTarget 解析 LNK 快捷方式文件，提取 LocalBasePath（目标路径）。
+// 这是 windows_icon.go 中同名方法的轻量独立版本，避免循环依赖。
+func parseLnkTarget(lnkPath string) string {
+	data, err := os.ReadFile(lnkPath)
+	if err != nil || len(data) < 76 {
+		return ""
+	}
+
+	// 验证 LNK 魔数 0x4C 0x00 0x00 0x00
+	if data[0] != 0x4C || data[1] != 0x00 || data[2] != 0x00 || data[3] != 0x00 {
+		return ""
+	}
+
+	// Flags 在偏移 0x14
+	flags := binary.LittleEndian.Uint32(data[0x14:0x18])
+	hasTargetIDList := (flags & 0x01) != 0
+	hasLinkInfo := (flags & 0x02) != 0
+
+	offset := 0x4C // header 大小
+
+	// 跳过 TargetIDList
+	if hasTargetIDList {
+		if offset+2 > len(data) {
+			return ""
+		}
+		idListSize := int(binary.LittleEndian.Uint16(data[offset : offset+2]))
+		offset += 2 + idListSize
+	}
+
+	// 解析 LinkInfo
+	if hasLinkInfo && offset+4 <= len(data) {
+		linkInfoSize := int(binary.LittleEndian.Uint32(data[offset : offset+4]))
+		if linkInfoSize > 0 && offset+linkInfoSize <= len(data) {
+			linkInfo := data[offset : offset+linkInfoSize]
+			if len(linkInfo) >= 28 {
+				localBasePathOffset := int(binary.LittleEndian.Uint32(linkInfo[16:20]))
+				if localBasePathOffset > 0 && localBasePathOffset < len(linkInfo) {
+					end := localBasePathOffset
+					for end < len(linkInfo) && linkInfo[end] != 0 {
+						end++
+					}
+					target := string(linkInfo[localBasePathOffset:end])
+					if target != "" {
+						return target
+					}
+				}
+			}
+		}
+	}
+
+	return ""
+}
 
 // Manager 分组数据管理器
 type Manager struct {
@@ -759,6 +848,12 @@ func collectDesktopPaths() []desktopItemInfo {
 				continue
 			}
 			fullPath := filepath.Join(dir, name)
+
+			// 过滤掉程序自身及指向自身的快捷方式
+			if isSelfOrShortcutToSelf(fullPath) {
+				continue
+			}
+
 			items = append(items, desktopItemInfo{
 				Path:  fullPath,
 				Name:  strings.TrimSuffix(name, filepath.Ext(name)),
