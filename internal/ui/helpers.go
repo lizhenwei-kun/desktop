@@ -148,7 +148,7 @@ var (
 	iconFontSize = 11
 	iconFontMu   sync.RWMutex
 
-	cardFontName = "宋体"
+	cardFontName = "Consolas"
 	cardFontSize = 14
 	cardFontMu   sync.RWMutex
 )
@@ -201,12 +201,12 @@ func GetCardTitleFont() *walk.Font {
 	size := cardFontSize
 	cardFontMu.RUnlock()
 
-	font, err := walk.NewFont(name, size, walk.FontBold)
-	if err != nil && name != "宋体" && name != "SimSun" {
-		font, err = walk.NewFont("宋体", size, walk.FontBold)
+	font, err := walk.NewFont(name, size, 0)
+	if err != nil && name != "Consolas" {
+		font, err = walk.NewFont("Consolas", size, 0)
 	}
 	if err != nil {
-		font, _ = walk.NewFont("宋体", 14, walk.FontBold)
+		font, _ = walk.NewFont("Consolas", 14, 0)
 	}
 	return font
 }

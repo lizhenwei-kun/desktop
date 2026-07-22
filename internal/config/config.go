@@ -72,7 +72,7 @@ func Load() *Config {
 		Groups:             DefaultGroups(),
 		DesktopItems:       make(map[string]string),
 		UngroupedPositions: make(map[string]Position),
-		CardFontName:       "宋体",
+		CardFontName:       "Consolas",
 		CardFontSize:       14,
 		IconFontName:       "宋体",
 		IconFontSize:       11,
