@@ -142,6 +142,11 @@ type ContextMenuState struct {
 
 	registryCacheTime time.Time // 注册表上次读取时间，用于缓存
 
+	// 缓存上一次读取的结果，用于比较是否发生变化
+	lastDesktopRegItems []ui.RegistryShellItem
+	lastFileRegItems    []ui.RegistryShellItem
+	lastIconMenuItems   []ui.RegistryShellItem
+
 	// 异步右键菜单：在 WM_RBUTTONDOWN 中只记录信息，PostMessage 延迟弹出
 	rclickMainWindow win.HWND
 	rclickManager    *group.Manager
@@ -183,6 +188,10 @@ type DesktopMode struct {
 	// 外部拖放状态
 	ExternalDropRegistered bool // 是否已注册 DragAcceptFiles
 	ExternalDropHwnd       win.HWND // 被子类化的窗口句柄
+
+	// Healthcheck 状态缓存，避免每次轮询都执行耗时检测
+	healthLastVisible bool      // 上次检测时的窗口可见性
+	healthLastParent  win.HWND  // 上次检测时的父窗口句柄
 }
 
 // NewDesktopMode 创建桌面模式
@@ -214,3 +223,15 @@ func NewDesktopMode(mw *walk.MainWindow, mgr *group.Manager, winAPI *desktop.Win
 func (dm *DesktopMode) Post(fn func()) {
 	dm.MainWindow.Synchronize(fn)
 }
+
+// HealthLastVisible 返回上次 healthcheck 检测到的窗口可见性
+func (dm *DesktopMode) HealthLastVisible() bool { return dm.healthLastVisible }
+
+// SetHealthLastVisible 设置上次 healthcheck 检测到的窗口可见性
+func (dm *DesktopMode) SetHealthLastVisible(v bool) { dm.healthLastVisible = v }
+
+// HealthLastParent 返回上次 healthcheck 检测到的父窗口句柄
+func (dm *DesktopMode) HealthLastParent() win.HWND { return dm.healthLastParent }
+
+// SetHealthLastParent 设置上次 healthcheck 检测到的父窗口句柄
+func (dm *DesktopMode) SetHealthLastParent(h win.HWND) { dm.healthLastParent = h }

@@ -2,6 +2,7 @@ package desktop
 
 import (
 	"syscall"
+	"time"
 	"unsafe"
 
 	"desktop_go/internal/logger"
@@ -10,6 +11,7 @@ import (
 
 var (
 	user32               = syscall.NewLazyDLL("user32.dll")
+	kernel32             = syscall.NewLazyDLL("kernel32.dll")
 	comctl32             = syscall.NewLazyDLL("comctl32.dll")
 
 	procFindWindowW      = user32.NewProc("FindWindowW")
@@ -39,6 +41,8 @@ var (
 	procDefSubclassProc      = comctl32.NewProc("DefSubclassProc")
 	procUpdateWindow         = user32.NewProc("UpdateWindow")
 	procInvalidateRect       = user32.NewProc("InvalidateRect")
+	procGetLastInputInfo     = user32.NewProc("GetLastInputInfo")
+	procGetTickCount         = kernel32.NewProc("GetTickCount")
 
 )
 
@@ -429,6 +433,30 @@ func (api *WindowsAPI) InvalidateRect(hwnd win.HWND) {
 	procInvalidateRect.Call(uintptr(hwnd), 0, 1)
 }
 
+// IdleDuration 返回系统自上次用户输入（键盘/鼠标）以来的空闲时间
+// 返回 0 表示无法获取
+func (api *WindowsAPI) IdleDuration() time.Duration {
+	type LASTINPUTINFO struct {
+		CbSize uint32
+		DwTime uint32
+	}
+	var info LASTINPUTINFO
+	info.CbSize = uint32(unsafe.Sizeof(info))
+	ret, _, _ := procGetLastInputInfo.Call(uintptr(unsafe.Pointer(&info)))
+	if ret == 0 {
+		return 0
+	}
+	// GetTickCount 返回系统启动以来的毫秒数
+	tickCount, _, _ := procGetTickCount.Call()
+	// DwTime 是上次输入时的 tick count
+	if info.DwTime > uint32(tickCount) {
+		// 处理 tick count 回绕（约 49.7 天）
+		return 0
+	}
+	elapsed := time.Duration(uint32(tickCount)-info.DwTime) * time.Millisecond
+	return elapsed
+}
+
 // SetWindowFullScreen 设置窗口全屏（合并操作减少闪烁）
 func (api *WindowsAPI) SetWindowFullScreen(hwnd win.HWND, x, y, w, h int) {
 	api.SetBorderlessAndPosition(hwnd, x, y, w, h)
@@ -609,6 +637,9 @@ func winEventProc(hWinEventHook, event, hwnd, idObject, idChild, dwEventThread, 
 var winEventCB = syscall.NewCallback(winEventProc)
 
 // InstallWinEventHook 安装事件钩子监听本窗口的最小化/隐藏事件
+// idProcess=0 表示钩子与当前进程关联，但 WINEVENT_OUTOFCONTEXT 模式下仍会收到
+// 系统所有进程的事件，回调中通过 watchedHwnd 过滤。如需彻底消除跨进程干扰，
+// 应设置 idProcess 为当前进程 PID。
 func (api *WindowsAPI) InstallWinEventHook(hwnd win.HWND) {
 	watchedHwnd = hwnd
 
@@ -618,13 +649,13 @@ func (api *WindowsAPI) InstallWinEventHook(hwnd win.HWND) {
 		uintptr(EVENT_SYSTEM_MINIMIZESTART), // eventMax
 		0,                            // hmodWinEventProc (0 = 当前进程)
 		winEventCB,                   // pfnWinEventProc
-		0,                            // idProcess (0 = 所有进程)
+		0,                            // idProcess (0 = 当前进程)
 		0,                            // idThread (0 = 所有线程)
 		uintptr(WINEVENT_OUTOFCONTEXT), // dwFlags
 	)
 	winEventHookHandle = h1
 
-	// 监听隐藏事件
+	// 监听隐藏事件（限制到当前进程，减少全局干扰）
 	h2, _, _ := procSetWinEventHook.Call(
 		uintptr(EVENT_OBJECT_HIDE),
 		uintptr(EVENT_OBJECT_HIDE),

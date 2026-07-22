@@ -270,22 +270,27 @@ func (dm *DesktopMode) autoArrangeIcons() {
 }
 
 // refreshDesktop 刷新桌面（整体刷新：壁纸 + 桌面项同步 + 重建卡片 + 图标缓存 + 重绘）
+// 耗时操作（文件 I/O、图片解码、COM 调用）在后台 strand 中执行，避免阻塞 UI 主线程
 func (dm *DesktopMode) refreshDesktop() {
-	// 重新同步桌面项（以系统桌面目录为准）
-	dm.Manager.ReloadDesktopItems()
+	dm.Work.Post(func() {
+		// 重新同步桌面项（以系统桌面目录为准）
+		dm.Manager.ReloadDesktopItems()
 
-	// 重新加载壁纸
-	dm.WallpaperState.LoadWallpaper(dm.MainWindow.DPI, dm.WorkW, dm.WorkH)
+		// 预加载未分组图标缓存
+		freePaths := make([]string, 0)
+		for _, item := range dm.Manager.GetUngroupedItems() {
+			freePaths = append(freePaths, item.Path)
+		}
+		if len(freePaths) > 0 {
+			ui.GlobalIconBmpCache.LoadAll(freePaths)
+		}
 
-	// 预加载未分组图标缓存
-	freePaths := make([]string, 0)
-	for _, item := range dm.Manager.GetUngroupedItems() {
-		freePaths = append(freePaths, item.Path)
-	}
-	if len(freePaths) > 0 {
-		ui.GlobalIconBmpCache.LoadAll(freePaths)
-	}
+		// 重新加载壁纸
+		dm.WallpaperState.LoadWallpaper(dm.MainWindow.DPI, dm.WorkW, dm.WorkH)
 
-	// 重建卡片（销毁旧卡片并重新创建）
-	dm.refreshCards()
+		// 重建卡片必须在 UI 主线程执行（操作 walk 控件树）
+		dm.Post(func() {
+			dm.refreshCards()
+		})
+	})
 }

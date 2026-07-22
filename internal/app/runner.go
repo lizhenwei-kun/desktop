@@ -544,26 +544,37 @@ func (r *Runner) startTimer() {
 	r.work.Run()
 
 	// 桌面模式下添加定时自检恢复（每 30 秒检测窗口状态）
+	// 使用缓存状态判断，无变化时跳过耗时检测，避免不必要的 UI 线程开销
 	if r.mode == ModeDesktop && r.dm != nil {
 		r.work.AddTimer(30*1000, func() {
 			r.dm.Post(func() {
 				hwnd := r.mw.Handle()
-				if !r.winAPI.IsWindowVisible(hwnd) {
-					logger.Debug("healthcheck: window not visible, restoring...")
-					r.mw.SetVisible(true)
-					r.winAPI.MoveWindow(hwnd, r.dm.WorkX, r.dm.WorkY, r.dm.WorkW, r.dm.WorkH)
-					r.dm.ReapplyCardPositionsAndRefresh()
+
+				// 检测窗口可见性
+				visible := r.winAPI.IsWindowVisible(hwnd)
+				if visible != r.dm.HealthLastVisible() {
+					r.dm.SetHealthLastVisible(visible)
+					if !visible {
+						logger.Debug("healthcheck: window not visible, restoring...")
+						r.mw.SetVisible(true)
+						r.winAPI.MoveWindow(hwnd, r.dm.WorkX, r.dm.WorkY, r.dm.WorkW, r.dm.WorkH)
+						r.dm.ReapplyCardPositionsAndRefresh()
+					}
 				}
+
 				// 检测父窗口是否仍是 WorkerW
 				parent := win.GetParent(hwnd)
-				shellWorkerW := r.winAPI.FindShellWorkerW()
-				if shellWorkerW != 0 && parent != shellWorkerW {
-					logger.Debug("healthcheck: parent changed (parent=%v, shellWorkerW=%v), re-embedding...", parent, shellWorkerW)
-					if !r.winAPI.SetAsDesktopChild(hwnd) {
-						logger.Error("healthcheck: SetAsDesktopChild failed, cannot re-embed into WorkerW")
+				if parent != r.dm.HealthLastParent() {
+					r.dm.SetHealthLastParent(parent)
+					shellWorkerW := r.winAPI.FindShellWorkerW()
+					if shellWorkerW != 0 && parent != shellWorkerW {
+						logger.Debug("healthcheck: parent changed (parent=%v, shellWorkerW=%v), re-embedding...", parent, shellWorkerW)
+						if !r.winAPI.SetAsDesktopChild(hwnd) {
+							logger.Error("healthcheck: SetAsDesktopChild failed, cannot re-embed into WorkerW")
+						}
+						r.winAPI.MoveWindow(hwnd, r.dm.WorkX, r.dm.WorkY, r.dm.WorkW, r.dm.WorkH)
+						r.dm.ReapplyCardPositionsAndRefresh()
 					}
-					r.winAPI.MoveWindow(hwnd, r.dm.WorkX, r.dm.WorkY, r.dm.WorkW, r.dm.WorkH)
-					r.dm.ReapplyCardPositionsAndRefresh()
 				}
 			})
 		})

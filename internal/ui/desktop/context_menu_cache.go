@@ -28,12 +28,35 @@ func (dm *DesktopMode) initContextMenuCache() {
 }
 
 // refreshContextMenuCacheAsync 异步刷新右键菜单缓存（在 strand goroutine 中调用）
-// 先读取数据，再投递到 UI 主线程赋值，避免跨线程访问 ContextMenuState
+// 先读取数据，与上次结果比较，只有变化时才投递到 UI 主线程赋值。
+// 避免每 30 秒都向 UI 主线程投递消息，减少不必要的消息队列压力。
 func (dm *DesktopMode) refreshContextMenuCacheAsync() {
 	// 在 strand goroutine 中执行数据读取（注册表/COM 调用可能阻塞）
 	desktopItems := ui.ReadDesktopRegistryMenu()
 	fileItems := ui.ReadFileRegistryMenu("")
 	iconItems, iconOK := ui.QueryIconMenuItems()
+
+	// 在 strand 中比较是否变化，只有变化才 Post 到 UI 主线程
+	changed := false
+
+	if desktopItems != nil && !registryItemsEqual(dm.lastDesktopRegItems, desktopItems) {
+		dm.lastDesktopRegItems = desktopItems
+		changed = true
+	}
+
+	if fileItems != nil && !registryItemsEqual(dm.lastFileRegItems, fileItems) {
+		dm.lastFileRegItems = fileItems
+		changed = true
+	}
+
+	if iconOK && len(iconItems) > 0 && !registryItemsEqual(dm.lastIconMenuItems, iconItems) {
+		dm.lastIconMenuItems = iconItems
+		changed = true
+	}
+
+	if !changed {
+		return
+	}
 
 	// 投递到 UI 主线程赋值
 	dm.Post(func() {
@@ -57,4 +80,17 @@ func (dm *DesktopMode) refreshContextMenuCacheAsync() {
 
 		dm.ContextMenuState.registryCacheTime = time.Now()
 	})
+}
+
+// registryItemsEqual 比较两个 RegistryShellItem 切片是否相等
+func registryItemsEqual(a, b []ui.RegistryShellItem) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].Name != b[i].Name || a[i].Command != b[i].Command {
+			return false
+		}
+	}
+	return true
 }

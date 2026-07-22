@@ -137,11 +137,14 @@ func (dm *DesktopMode) checkDelayedRefresh() {
 
 	dm.DesktopWatcherState.changePending = false
 
-	// 投递到 UI 主线程刷新桌面
-	dm.Post(func() {
+	// 后台 goroutine 执行 ReloadDesktopItems（涉及文件 I/O），避免阻塞 UI 主线程
+	dm.Work.Post(func() {
 		logger.Debug("desktopWatcher: directory changed, reloading desktop items")
 		dm.Manager.ReloadDesktopItems()
-		dm.BodyWidget.Invalidate()
+		// 数据更新完成后通知 UI 主线程重绘
+		dm.Post(func() {
+			dm.BodyWidget.Invalidate()
+		})
 	})
 }
 
