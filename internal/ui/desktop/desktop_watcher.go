@@ -143,6 +143,9 @@ func (dm *DesktopMode) checkDelayedRefresh() {
 		dm.Manager.ReloadDesktopItems()
 		// 数据更新完成后通知 UI 主线程重绘
 		dm.Post(func() {
+			if !dm.MainWindow.Visible() {
+				return
+			}
 			dm.BodyWidget.Invalidate()
 		})
 	})

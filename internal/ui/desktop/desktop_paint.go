@@ -112,6 +112,11 @@ func (dm *DesktopMode) paintDragGhost(canvas *walk.Canvas, _ walk.Rectangle) {
 
 // Refresh 刷新桌面模式
 func (dm *DesktopMode) Refresh() {
+	// 窗口不可见时跳过刷新，避免触发 WM_PAINT 导致窗口意外显示
+	// 窗口重新显示时 showDesktopMode() 会调用 ReapplyCardPositionsAndRefresh() 完成完整刷新
+	if !dm.MainWindow.Visible() {
+		return
+	}
 	for _, card := range dm.Cards {
 		card.Refresh()
 	}
