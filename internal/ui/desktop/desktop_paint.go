@@ -117,9 +117,18 @@ func (dm *DesktopMode) Refresh() {
 	if !dm.MainWindow.Visible() {
 		return
 	}
+	// 刷新所有卡片内容
 	for _, card := range dm.Cards {
 		card.Refresh()
 	}
+	// 预加载未分组图标的图标缓存
+	ungrouped := dm.Manager.GetUngroupedItems()
+	freePaths := make([]string, 0, len(ungrouped))
+	for _, item := range ungrouped {
+		freePaths = append(freePaths, item.Path)
+	}
+	ui.GlobalIconBmpCache.LoadAll(freePaths)
+
 	dm.BodyWidget.Invalidate()
 }
 
@@ -132,6 +141,14 @@ func (dm *DesktopMode) ReapplyCardPositionsAndRefresh() {
 	for _, card := range dm.Cards {
 		card.Refresh()
 	}
+	// 预加载未分组图标的图标缓存
+	ungrouped := dm.Manager.GetUngroupedItems()
+	freePaths := make([]string, 0, len(ungrouped))
+	for _, item := range ungrouped {
+		freePaths = append(freePaths, item.Path)
+	}
+	ui.GlobalIconBmpCache.LoadAll(freePaths)
+
 	// 使 BodyWidget 无效化，触发重绘
 	dm.WinAPI.InvalidateRect(win.HWND(dm.BodyWidget.Handle()))
 	// 发送 WM_SIZE 让 walk 重新布局

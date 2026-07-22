@@ -515,7 +515,8 @@ func (r *Runner) initSystemItems() {
 	}
 }
 
-// showDesktopMode 桌面模式下窗口从隐藏变为可见时触发整体重绘
+// showDesktopMode 桌面模式下窗口从隐藏变为可见时触发完整刷新
+// 隐藏期间数据变更（桌面文件新增/删除、分组调整等）被跳过，显示时需要全部重载
 func (r *Runner) showDesktopMode() {
 	if r.dm == nil {
 		return
@@ -532,7 +533,10 @@ func (r *Runner) showDesktopMode() {
 	dm.Container.SetBoundsPixels(walk.Rectangle{X: 0, Y: 0, Width: dm.WorkW, Height: fullH})
 	dm.BodyWidget.SetBoundsPixels(walk.Rectangle{X: 0, Y: 0, Width: dm.WorkW, Height: fullH})
 
-	// 重新应用卡片位置
+	// 重新加载桌面项目（同步隐藏期间可能错过的文件变更）
+	r.manager.ReloadDesktopItems()
+
+	// 重新应用卡片位置并完整刷新
 	dm.ReapplyCardPositionsAndRefresh()
 }
 
