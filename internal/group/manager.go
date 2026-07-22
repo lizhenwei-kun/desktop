@@ -168,6 +168,20 @@ func (m *Manager) GetConfig() *config.Config {
 	return m.cfg
 }
 
+// SetCardFontPreset 设置卡片标题字体预设并保存
+// preset 为 "consolas" / "segoeui" / "yahei" / "custom" 之一
+func (m *Manager) SetCardFontPreset(preset string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.cfg.CardFontPreset = preset
+	// 预设发生变更时，同步刷新 name/size 以便降级或导出
+	if p, ok := config.CardFontPresets[preset]; ok {
+		m.cfg.CardFontName = p.Name
+		m.cfg.CardFontSize = p.Size
+	}
+	config.Save(m.cfg)
+}
+
 // GetGroups 获取所有分组
 func (m *Manager) GetGroups() []config.Group {
 	m.mu.RLock()

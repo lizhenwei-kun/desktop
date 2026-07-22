@@ -32,6 +32,17 @@ type SystemItem struct {
 	Name string `json:"name"` // 显示名称
 }
 
+// CardFontPresets 卡片标题字体预设
+// key 为 preset 名（小写），value 为 {字体名, 字号}
+var CardFontPresets = map[string]struct {
+	Name string
+	Size int
+}{
+	"consolas": {"Consolas", 14},           // 等宽感
+	"segoeui":  {"Segoe UI", 13},           // 拉丁感
+	"yahei":    {"Microsoft YaHei UI", 13}, // 中文现代感
+}
+
 // Config 表示应用配置
 type Config struct {
 	Groups             []Group           `json:"groups"`
@@ -40,6 +51,7 @@ type Config struct {
 	SystemItems        []SystemItem      `json:"system_items"`         // 系统桌面项
 	CardFontName       string            `json:"card_font_name"`
 	CardFontSize       int               `json:"card_font_size"`
+	CardFontPreset     string            `json:"card_font_preset"` // 预设: "consolas" / "segoeui" / "yahei" / "custom"
 	IconFontName       string            `json:"icon_font_name"`
 	IconFontSize       int               `json:"icon_font_size"`
 }
@@ -74,6 +86,7 @@ func Load() *Config {
 		UngroupedPositions: make(map[string]Position),
 		CardFontName:       "Consolas",
 		CardFontSize:       14,
+		CardFontPreset:     "consolas",
 		IconFontName:       "宋体",
 		IconFontSize:       11,
 	}

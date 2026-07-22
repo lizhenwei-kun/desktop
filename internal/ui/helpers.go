@@ -12,6 +12,7 @@ import (
 	"github.com/lxn/walk"
 	"github.com/lxn/win"
 
+	"desktop_go/internal/config"
 	"desktop_go/internal/logger"
 )
 
@@ -148,9 +149,10 @@ var (
 	iconFontSize = 11
 	iconFontMu   sync.RWMutex
 
-	cardFontName = "Consolas"
-	cardFontSize = 14
-	cardFontMu   sync.RWMutex
+	cardFontName   = "Consolas"
+	cardFontSize   = 14
+	cardFontPreset = "consolas"
+	cardFontMu     sync.RWMutex
 )
 
 // InitIconFont 初始化图标标签字体配置（应用启动时调用）
@@ -183,6 +185,7 @@ func GetIconFont() *walk.Font {
 }
 
 // InitCardFont 初始化卡片标题字体配置（应用启动时调用）
+// name/size 仅在 preset == "custom" 或 preset 为空时使用
 func InitCardFont(name string, size int) {
 	cardFontMu.Lock()
 	defer cardFontMu.Unlock()
@@ -192,6 +195,29 @@ func InitCardFont(name string, size int) {
 	if size > 0 {
 		cardFontSize = size
 	}
+}
+
+// InitCardFontPreset 初始化卡片标题字体预设（应用启动时调用）
+// preset 为 "consolas" / "segoeui" / "yahei" / "custom" 之一
+// 当 preset 为 "custom" 或未识别时，保留 cardFontName/cardFontSize 不变
+func InitCardFontPreset(preset string) {
+	cardFontMu.Lock()
+	defer cardFontMu.Unlock()
+	if p, ok := config.CardFontPresets[preset]; ok {
+		cardFontPreset = preset
+		cardFontName = p.Name
+		cardFontSize = p.Size
+		return
+	}
+	// 未识别或 "custom"：保持现有 name/size
+	cardFontPreset = "custom"
+}
+
+// GetCardFontPreset 返回当前预设名
+func GetCardFontPreset() string {
+	cardFontMu.RLock()
+	defer cardFontMu.RUnlock()
+	return cardFontPreset
 }
 
 // GetCardTitleFont 获取卡片标题字体（带回退）

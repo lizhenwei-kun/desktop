@@ -54,7 +54,12 @@ func NewRunner() (*Runner, error) {
 	// 初始化字体配置（从 config 读取）
 	cfg := r.manager.GetConfig()
 	ui.InitIconFont(cfg.IconFontName, cfg.IconFontSize)
-	ui.InitCardFont(cfg.CardFontName, cfg.CardFontSize)
+	// 优先按预设初始化；预设为 "custom" 或未识别时退回 name/size
+	if cfg.CardFontPreset != "" && cfg.CardFontPreset != "custom" {
+		ui.InitCardFontPreset(cfg.CardFontPreset)
+	} else {
+		ui.InitCardFont(cfg.CardFontName, cfg.CardFontSize)
+	}
 
 	// 检测运行模式
 	r.mode = r.detectMode()
@@ -378,21 +383,31 @@ func (r *Runner) setWindowIcon(mw *walk.MainWindow) {
 const (
 	trayCmdShowHide = 0x6001
 	trayCmdExit     = 0x6002
+
+	// 标题字体预设命令
+	trayCmdFontConsolas = 0x6101
+	trayCmdFontSegoeUI  = 0x6102
+	trayCmdFontYaHei    = 0x6103
 )
 
 // Win32 菜单 API
 var (
-	user32Tray         = syscall.NewLazyDLL("user32.dll")
+	user32Tray              = syscall.NewLazyDLL("user32.dll")
 	procCreatePopupMenuTray = user32Tray.NewProc("CreatePopupMenu")
 	procDestroyMenuTray     = user32Tray.NewProc("DestroyMenu")
 	procAppendMenuW_tray    = user32Tray.NewProc("AppendMenuW")
 	procTrackPopupMenuTray  = user32Tray.NewProc("TrackPopupMenu")
 	procSetForegroundTray   = user32Tray.NewProc("SetForegroundWindow")
+	procCheckMenuItemTray   = user32Tray.NewProc("CheckMenuItem")
 )
 
 const (
-	mfString    = 0x00000000
-	mfSeparator = 0x00000800
+	mfString     = 0x00000000
+	mfSeparator  = 0x00000800
+	mfPopup      = 0x00000010
+	mfChecked    = 0x00000008
+	mfUnchecked  = 0x00000000
+	mfByCommand  = 0x00000000
 	tpmReturnCmd = 0x00000100
 )
 
@@ -409,6 +424,31 @@ func (r *Runner) showTrayContextMenu() {
 		showHideText = "显示/隐藏"
 	}
 	procAppendMenuW_tray.Call(hMenu, mfString, trayCmdShowHide, uintptr(unsafe.Pointer(syscall.StringToUTF16Ptr(showHideText))))
+	procAppendMenuW_tray.Call(hMenu, mfSeparator, 0, 0)
+
+	// 标题字体子菜单
+	fontMenu, _, _ := procCreatePopupMenuTray.Call()
+	if fontMenu != 0 {
+		defer procDestroyMenuTray.Call(fontMenu)
+		curPreset := ui.GetCardFontPreset()
+		fontItems := []struct {
+			cmd     uintptr
+			text    string
+			preset  string
+		}{
+			{trayCmdFontConsolas, "等宽 (Consolas)", "consolas"},
+			{trayCmdFontSegoeUI, "拉丁 (Segoe UI)", "segoeui"},
+			{trayCmdFontYaHei, "中文 (Microsoft YaHei UI)", "yahei"},
+		}
+		for _, it := range fontItems {
+			flags := uintptr(mfString)
+			if curPreset == it.preset {
+				flags |= mfChecked
+			}
+			procAppendMenuW_tray.Call(fontMenu, flags, it.cmd, uintptr(unsafe.Pointer(syscall.StringToUTF16Ptr(it.text))))
+		}
+		procAppendMenuW_tray.Call(hMenu, mfPopup, fontMenu, uintptr(unsafe.Pointer(syscall.StringToUTF16Ptr("标题字体"))))
+	}
 	procAppendMenuW_tray.Call(hMenu, mfSeparator, 0, 0)
 	procAppendMenuW_tray.Call(hMenu, mfString, trayCmdExit, uintptr(unsafe.Pointer(syscall.StringToUTF16Ptr("退出"))))
 
@@ -447,6 +487,27 @@ func (r *Runner) showTrayContextMenu() {
 			r.ni.Dispose()
 		}
 		walk.App().Exit(0)
+	case trayCmdFontConsolas, trayCmdFontSegoeUI, trayCmdFontYaHei:
+		var preset string
+		switch uintptr(cmd) {
+		case trayCmdFontConsolas:
+			preset = "consolas"
+		case trayCmdFontSegoeUI:
+			preset = "segoeui"
+		case trayCmdFontYaHei:
+			preset = "yahei"
+		}
+		if preset == "" {
+			break
+		}
+		// 更新内存 + 持久化 + 立即重绘
+		ui.InitCardFontPreset(preset)
+		r.manager.SetCardFontPreset(preset)
+		if r.mode == ModeDesktop && r.dm != nil {
+			r.dm.Refresh()
+		} else if r.mw != nil {
+			r.mw.Invalidate()
+		}
 	}
 }
 
