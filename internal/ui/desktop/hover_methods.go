@@ -76,7 +76,7 @@ func (dm *DesktopMode) paintAllIcons(canvas *walk.Canvas, bounds walk.Rectangle)
 		lines := ui.SplitTextToLines(displayName, 4)
 		selH := ui.TileHeight()
 		if isSelected {
-			selH = ui.DesktopIconLabelTop + len(lines)*ui.DesktopIconLineHeight + 4
+			selH = ui.DesktopIconLabelTop() + len(lines)*ui.DesktopIconLineHeight() + 4
 		}
 
 		// 绘制选中/悬停高亮
@@ -89,9 +89,9 @@ func (dm *DesktopMode) paintAllIcons(canvas *walk.Canvas, bounds walk.Rectangle)
 		// 绘制图标
 		bmp := ui.GlobalIconBmpCache.GetOrLoad(item.Path)
 		if bmp != nil {
-			iconX := px + (ui.TileWidth()-ui.DesktopIconSize)/2
-			iconY := py + ui.DesktopIconTop
-			canvas.DrawBitmapWithOpacityPixels(bmp, walk.Rectangle{X: iconX, Y: iconY, Width: ui.DesktopIconSize, Height: ui.DesktopIconSize}, 255)
+			iconX := px + (ui.TileWidth()-ui.DesktopIconSize())/2
+			iconY := py + ui.DesktopIconTop()
+			canvas.DrawBitmapWithOpacityPixels(bmp, walk.Rectangle{X: iconX, Y: iconY, Width: ui.DesktopIconSize(), Height: ui.DesktopIconSize()}, 255)
 		}
 
 		// 编辑模式下不绘制文字标签（由编辑框显示）
@@ -103,7 +103,7 @@ func (dm *DesktopMode) paintAllIcons(canvas *walk.Canvas, bounds walk.Rectangle)
 		font := ui.GetIconFont()
 		if font != nil {
 			defer font.Dispose()
-			labelTop := py + ui.DesktopIconLabelTop
+			labelTop := py + ui.DesktopIconLabelTop()
 		if isSelected {
 			// 选中状态：显示所有行，不加省略号
 			drawIconLabel(canvas, font, lines, px, labelTop, ui.TileWidth())

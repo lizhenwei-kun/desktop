@@ -759,26 +759,25 @@ const (
 
 // getDesktopIconSize 获取当前桌面图标大小
 func GetDesktopIconSize() int {
-	if desktopIconItemWidth >= 120 {
+	switch desktopIconSizeBase {
+	case 48:
 		return iconSizeLarge
-	} else if desktopIconItemWidth >= 90 {
+	case 40:
 		return iconSizeMedium
+	default:
+		return iconSizeSmall
 	}
-	return iconSizeSmall
 }
 
 // setDesktopIconSize 设置桌面图标大小
 func SetDesktopIconSize(size int) {
 	switch size {
 	case iconSizeLarge:
-		desktopIconItemWidth = 132
-		desktopIconItemHeight = 132
+		desktopIconSizeBase = 48
 	case iconSizeMedium:
-		desktopIconItemWidth = 100
-		desktopIconItemHeight = 100
+		desktopIconSizeBase = 40
 	case iconSizeSmall:
-		desktopIconItemWidth = 72
-		desktopIconItemHeight = 72
+		desktopIconSizeBase = 32
 	}
 	// 重置磁贴尺寸测量标记，下次绘制时重新计算
 	ForceTileRemeasure()

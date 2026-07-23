@@ -768,7 +768,7 @@ func (gc *GroupCard) paintIconTile(canvas *walk.Canvas, item group.GroupItem, x,
 	lines := SplitTextToLines(item.Name, 4)
 	selH := desktopIconItemHeight
 	if selected {
-		selH = DesktopIconLabelTop + len(lines)*DesktopIconLineHeight + 4
+		selH = DesktopIconLabelTop() + len(lines)*DesktopIconLineHeight() + 4
 	}
 
 	// 绘制选中/悬停高亮
@@ -786,10 +786,10 @@ func (gc *GroupCard) paintIconTile(canvas *walk.Canvas, item group.GroupItem, x,
 
 	bmp := GlobalIconBmpCache.GetOrLoad(item.Path)
 	if bmp != nil {
-		iconX := x + (desktopIconItemWidth-DesktopIconSize)/2
-		iconY := y + DesktopIconTop
+		iconX := x + (desktopIconItemWidth-DesktopIconSize())/2
+		iconY := y + DesktopIconTop()
 		canvas.DrawBitmapWithOpacityPixels(bmp, walk.Rectangle{
-			X: iconX, Y: iconY, Width: DesktopIconSize, Height: DesktopIconSize,
+			X: iconX, Y: iconY, Width: DesktopIconSize(), Height: DesktopIconSize(),
 		}, 255)
 	}
 
@@ -797,24 +797,24 @@ func (gc *GroupCard) paintIconTile(canvas *walk.Canvas, item group.GroupItem, x,
 	font := GetIconFont()
 	if font != nil {
 		defer font.Dispose()
-		labelTop := y + DesktopIconLabelTop
+		labelTop := y + DesktopIconLabelTop()
 		if selected {
 			// 选中状态：显示所有行，不加省略号
 			for i, line := range lines {
-				lineY := labelTop + i*DesktopIconLineHeight
-				shadowBounds := walk.Rectangle{X: x + 1, Y: lineY + 1, Width: desktopIconItemWidth, Height: DesktopIconLineHeight}
+				lineY := labelTop + i*DesktopIconLineHeight()
+				shadowBounds := walk.Rectangle{X: x + 1, Y: lineY + 1, Width: desktopIconItemWidth, Height: DesktopIconLineHeight()}
 				canvas.DrawTextPixels(line, font, walk.RGB(0, 0, 0), shadowBounds, walk.TextCenter|walk.TextSingleLine)
-				textBounds := walk.Rectangle{X: x, Y: lineY, Width: desktopIconItemWidth, Height: DesktopIconLineHeight}
+				textBounds := walk.Rectangle{X: x, Y: lineY, Width: desktopIconItemWidth, Height: DesktopIconLineHeight()}
 				canvas.DrawTextPixels(line, font, walk.RGB(0xFF, 0xFF, 0xFF), textBounds, walk.TextCenter|walk.TextSingleLine)
 			}
 		} else {
 			// 非选中：最多显示2行，超出省略
 			displayLines := GetIconDisplayLines(item.Name, 4)
 			for i, line := range displayLines {
-				lineY := labelTop + i*DesktopIconLineHeight
-				shadowBounds := walk.Rectangle{X: x + 1, Y: lineY + 1, Width: desktopIconItemWidth, Height: DesktopIconLineHeight}
+				lineY := labelTop + i*DesktopIconLineHeight()
+				shadowBounds := walk.Rectangle{X: x + 1, Y: lineY + 1, Width: desktopIconItemWidth, Height: DesktopIconLineHeight()}
 				canvas.DrawTextPixels(line, font, walk.RGB(0, 0, 0), shadowBounds, walk.TextCenter|walk.TextSingleLine)
-				textBounds := walk.Rectangle{X: x, Y: lineY, Width: desktopIconItemWidth, Height: DesktopIconLineHeight}
+				textBounds := walk.Rectangle{X: x, Y: lineY, Width: desktopIconItemWidth, Height: DesktopIconLineHeight()}
 				canvas.DrawTextPixels(line, font, walk.RGB(0xFF, 0xFF, 0xFF), textBounds, walk.TextCenter|walk.TextSingleLine)
 			}
 		}
@@ -869,8 +869,8 @@ func (gc *GroupCard) getIconTileBounds(idx int) (x, y int) {
 // isCardItemInLabelArea 判断点击是否在卡片内图标磁贴的标签区域
 func (gc *GroupCard) isCardItemInLabelArea(y int, idx int) bool {
 	_, tileY := gc.getIconTileBounds(idx)
-	labelStart := tileY + DesktopIconLabelTop
-	labelEnd := labelStart + 2*DesktopIconLineHeight
+	labelStart := tileY + DesktopIconLabelTop()
+	labelEnd := labelStart + 2*DesktopIconLineHeight()
 	return y >= labelStart && y < labelEnd
 }
 

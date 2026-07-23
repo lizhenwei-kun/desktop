@@ -35,22 +35,22 @@ var (
 )
 
 const (
-	freeGridLeft = 20
-	freeGridTop  = 60
-	_ULW_ALPHA   = 0x00000002
+	_ULW_ALPHA = 0x00000002
 )
 
-func freeCellW() int { return ui.TileWidth() + ui.DesktopIconGap }
-func freeCellH() int { return ui.TileHeight() + ui.DesktopIconGap }
+func freeCellW() int { return ui.TileWidth() + ui.DesktopIconGap() }
+func freeCellH() int { return ui.TileHeight() + ui.DesktopIconGap() }
 
 func gridToPixel(col, row int) (int, int) {
-	return freeGridLeft + col*freeCellW(), freeGridTop + row*freeCellH()
+	return ui.FreeGridLeft() + col*freeCellW(), ui.FreeGridTop() + row*freeCellH()
 }
 
 // pixelToGrid 将像素坐标转换为网格（列, 行），不会做越界裁剪
 func pixelToGrid(px, py int) (int, int) {
-	col := (px - freeGridLeft + freeCellW()/2) / freeCellW()
-	row := (py - freeGridTop + freeCellH()/2) / freeCellH()
+	left := ui.FreeGridLeft()
+	top := ui.FreeGridTop()
+	col := (px - left + freeCellW()/2) / freeCellW()
+	row := (py - top + freeCellH()/2) / freeCellH()
 	if col < 0 {
 		col = 0
 	}
@@ -67,7 +67,7 @@ func (dm *DesktopMode) maxGridRows() int {
 	if h < 100 {
 		h = dm.WorkH
 	}
-	maxRow := (h - freeGridTop) / freeCellH()
+	maxRow := (h - ui.FreeGridTop()) / freeCellH()
 	if maxRow < 1 {
 		maxRow = 1
 	}
@@ -81,7 +81,7 @@ func (dm *DesktopMode) maxGridCols() int {
 	if w < 100 {
 		w = dm.WorkW
 	}
-	maxCol := (w - freeGridLeft) / freeCellW()
+	maxCol := (w - ui.FreeGridLeft()) / freeCellW()
 	if maxCol < 1 {
 		maxCol = 1
 	}
@@ -306,8 +306,8 @@ func (dm *DesktopMode) isPointInAnyCard(cx, cy int) bool {
 
 // isInLabelArea 判断 y 坐标是否在图标磁贴的标签区域内
 func (dm *DesktopMode) isInLabelArea(y, tileY int) bool {
-	labelStart := tileY + ui.DesktopIconLabelTop
-	labelEnd := labelStart + 2*ui.DesktopIconLineHeight
+	labelStart := tileY + ui.DesktopIconLabelTop()
+	labelEnd := labelStart + 2*ui.DesktopIconLineHeight()
 	return y >= labelStart && y < labelEnd
 }
 
@@ -358,9 +358,9 @@ func (dm *DesktopMode) startItemEdit(itemPath string) {
 
 	ix, iy := dm.getFreeItemPixelPos(foundItem.Path, foundIdx)
 	labelX := ix
-	labelY := iy + ui.DesktopIconLabelTop
+	labelY := iy + ui.DesktopIconLabelTop()
 	labelW := ui.TileWidth()
-	labelH := 2 * ui.DesktopIconLineHeight
+	labelH := 2 * ui.DesktopIconLineHeight()
 
 	hwnd := dm.BodyWidget.Handle()
 	className := syscall.StringToUTF16Ptr("EDIT")
@@ -619,7 +619,7 @@ func (dm *DesktopMode) ghostWindowSize() (int, int) {
 	tileW := ui.TileWidth()
 	displayName := dm.DragItemName
 	lines := ui.SplitTextToLines(displayName, 4)
-	tileH := ui.DesktopIconLabelTop + len(lines)*ui.DesktopIconLineHeight + 4
+	tileH := ui.DesktopIconLabelTop() + len(lines)*ui.DesktopIconLineHeight() + 4
 	if tileH < ui.TileHeight() {
 		tileH = ui.TileHeight()
 	}
@@ -708,17 +708,17 @@ func (dm *DesktopMode) paintGhostIcon() {
 	defer canvas.Dispose()
 
 	// 绘制图标（居中）
-	iconX := (tileW - ui.DesktopIconSize) / 2
-	iconY := ui.DesktopIconTop
+	iconX := (tileW - ui.DesktopIconSize()) / 2
+	iconY := ui.DesktopIconTop()
 	canvas.DrawBitmapWithOpacityPixels(dm.GhostBmp,
-		walk.Rectangle{X: iconX, Y: iconY, Width: ui.DesktopIconSize, Height: ui.DesktopIconSize}, 255)
+		walk.Rectangle{X: iconX, Y: iconY, Width: ui.DesktopIconSize(), Height: ui.DesktopIconSize()}, 255)
 
 	// 绘制文字（选中状态：显示所有行）
 	font := ui.GetIconFont()
 	if font != nil {
 		defer font.Dispose()
 		lines := ui.SplitTextToLines(dm.DragItemName, 4)
-		drawIconLabel(canvas, font, lines, 0, ui.DesktopIconLabelTop, tileW)
+		drawIconLabel(canvas, font, lines, 0, ui.DesktopIconLabelTop(), tileW)
 	}
 
 	img, err := bmp.ToImage()
@@ -766,7 +766,7 @@ func (dm *DesktopMode) paintGhostIcon() {
 	imgH := img.Bounds().Dy()
 	n := 0
 	for y := 0; y < tileH; y++ {
-		inTextArea := y >= ui.DesktopIconLabelTop
+		inTextArea := y >= ui.DesktopIconLabelTop()
 		for x := 0; x < tileW; x++ {
 			if x >= imgW || y >= imgH {
 				pixels[n+0] = 0

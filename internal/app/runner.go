@@ -38,6 +38,7 @@ type Runner struct {
 	ni        *walk.NotifyIcon
 	work      *dowork.GoWork // 定时器工作器
 	dm        *desktopmode.DesktopMode // 桌面模式 UI（仅桌面模式非 nil）
+	userHidden bool // 用户主动隐藏窗口标记，healthcheck 检测到不可见时若为 true 则跳过恢复
 }
 
 // NewRunner 创建应用运行器
@@ -136,11 +137,15 @@ func (r *Runner) runDesktopMode() error {
 	mw.Closing().Attach(func(canceled *bool, reason walk.CloseReason) {
 		// 关闭时隐藏到托盘
 		*canceled = true
+		r.userHidden = true
 		mw.SetVisible(false)
 	})
 
 	// 设置桌面模式 UI
 	r.work = dowork.NewGoWork()
+
+	// 初始化 DPI 缩放（窗口创建后、UI 测量前）
+	ui.SetCurrentDPI(mw.DPI())
 
 	dm := desktopmode.NewDesktopMode(mw, r.manager, r.winAPI, r.lifecycle, r.work)
 	r.dm = dm
@@ -199,6 +204,7 @@ func (r *Runner) runWindowMode() error {
 	// 关闭事件 - 隐藏到托盘
 	mw.Closing().Attach(func(canceled *bool, reason walk.CloseReason) {
 		*canceled = true
+		r.userHidden = true
 		mw.SetVisible(false)
 	})
 
@@ -467,8 +473,10 @@ func (r *Runner) showTrayContextMenu() {
 	switch uintptr(cmd) {
 	case trayCmdShowHide:
 		if r.mw.Visible() {
+			r.userHidden = true
 			r.mw.SetVisible(false)
 		} else {
+			r.userHidden = false
 			r.mw.SetVisible(true)
 			if r.mode == ModeDesktop {
 				r.showDesktopMode()
@@ -547,6 +555,7 @@ func (r *Runner) setupNotifyIcon() {
 	// 双击托盘图标显示窗口
 	r.ni.MouseDown().Attach(func(x, y int, button walk.MouseButton) {
 		if button == walk.LeftButton {
+			r.userHidden = false
 			r.mw.SetVisible(true)
 			if r.mode == ModeDesktop {
 				r.showDesktopMode()
@@ -630,10 +639,16 @@ func (r *Runner) startTimer() {
 				if visible != r.dm.HealthLastVisible() {
 					r.dm.SetHealthLastVisible(visible)
 					if !visible {
-						logger.Debug("healthcheck: window not visible, restoring...")
-						r.mw.SetVisible(true)
-						r.winAPI.MoveWindow(hwnd, r.dm.WorkX, r.dm.WorkY, r.dm.WorkW, r.dm.WorkH)
-						r.dm.ReapplyCardPositionsAndRefresh()
+						// 用户主动隐藏（关闭到托盘 / 托盘菜单隐藏）时不恢复，
+						// 避免隐藏后被 healthcheck 重新弹出
+						if r.userHidden {
+							logger.Debug("healthcheck: window hidden by user, skip restore")
+						} else {
+							logger.Debug("healthcheck: window not visible, restoring...")
+							r.mw.SetVisible(true)
+							r.winAPI.MoveWindow(hwnd, r.dm.WorkX, r.dm.WorkY, r.dm.WorkW, r.dm.WorkH)
+							r.dm.ReapplyCardPositionsAndRefresh()
+						}
 					}
 				}
 

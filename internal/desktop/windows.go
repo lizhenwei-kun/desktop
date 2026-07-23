@@ -98,6 +98,7 @@ const (
 	WM_DISPLAYCHANGE       = 0x007E
 	WM_QUERYENDSESSION     = 0x0011
 	WM_ENDSESSION          = 0x0016
+	WM_DPICHANGED          = 0x02E0
 
 	// WM_POWERBROADCAST wParam 值
 	PBT_APMRESUMEAUTOMATIC = 0x0012
@@ -518,12 +519,18 @@ func negIntToUintptr(v int) uintptr {
 // 全局系统事件回调（电源恢复、显示变更等）
 var (
 	systemEventCallback func()
+	dpiChangedCallback  func(newDPI int)
 	subclassHwnd        win.HWND
 )
 
 // SetOnSystemEvent 设置系统事件回调（电源恢复、显示变更等触发）
 func (api *WindowsAPI) SetOnSystemEvent(fn func()) {
 	systemEventCallback = fn
+}
+
+// SetOnDPIChanged 设置 DPI 变化回调（窗口在不同 DPI 显示器间移动时触发）
+func (api *WindowsAPI) SetOnDPIChanged(fn func(newDPI int)) {
+	dpiChangedCallback = fn
 }
 
 // subclassProc 子类化回调：拦截 WM_SYSCOMMAND SC_MINIMIZE + 监听电源/显示/会话结束事件
@@ -546,6 +553,17 @@ func subclassProc(hwnd uintptr, msg uint32, wParam, lParam, uIDSubclass, dwRefDa
 		logger.Debug("subclassProc: display change event (new size=%dx%d)", int(lParam&0xFFFF), int((lParam>>16)&0xFFFF))
 		if systemEventCallback != nil {
 			systemEventCallback()
+		}
+	case WM_DPICHANGED:
+		// 窗口 DPI 变化（如在不同 DPI 显示器间拖动）
+		// wParam 高字 = 新 Y DPI，低字 = 新 X DPI
+		newDPI := int((wParam >> 16) & 0xFFFF)
+		if newDPI <= 0 {
+			newDPI = 96
+		}
+		logger.Debug("subclassProc: WM_DPICHANGED newDPI=%d", newDPI)
+		if dpiChangedCallback != nil {
+			dpiChangedCallback(newDPI)
 		}
 	case WM_QUERYENDSESSION:
 		// 系统请求结束会话（注销/关机），记录日志并允许关机

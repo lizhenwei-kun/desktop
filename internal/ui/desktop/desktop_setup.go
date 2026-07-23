@@ -225,6 +225,18 @@ func (dm *DesktopMode) delayedSetup() {
 			})
 		})
 
+		// 注册 DPI 变化回调（窗口在不同 DPI 显示器间移动时触发）
+		dm.WinAPI.SetOnDPIChanged(func(newDPI int) {
+			dm.Post(func() {
+				logger.Debug("DPI changed: newDPI=%d, refreshing", newDPI)
+				ui.SetCurrentDPI(newDPI)
+				// 重新加载壁纸（DPI 变化后位图需要重新生成）
+				dm.WallpaperState.LoadWallpaper(dm.MainWindow.DPI, dm.WorkW, dm.WorkH)
+				dm.reapplyCardPositions()
+				dm.BodyWidget.Invalidate()
+			})
+		})
+
 		logger.Debug("delayedSetup done: window=(%d,%d,%dx%d)", clientBounds.X, clientBounds.Y, clientBounds.Width, clientBounds.Height)
 		dm.Lifecycle.MarkReady()
 

@@ -395,8 +395,8 @@ func (ie *IconExtractor) ExtractIcoFile(filePath string) image.Image {
 		0,
 		uintptr(unsafe.Pointer(pathPtr)),
 		IMAGE_ICON,
-		DesktopIconSize, // 目标宽度 48
-		DesktopIconSize, // 目标高度 48
+		uintptr(DesktopIconSize()), // 目标宽度（随 DPI + 档位）
+		uintptr(DesktopIconSize()), // 目标高度（随 DPI + 档位）
 		LR_LOADFROMFILE,
 	)
 	if hIcon == 0 {

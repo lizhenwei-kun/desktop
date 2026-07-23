@@ -16,31 +16,108 @@ import (
 	"desktop_go/internal/logger"
 )
 
-// 图标磁贴规格常量
+// 图标磁贴规格 —— 基准常量（96 DPI 下的像素值）
 const (
-	DesktopIconSize       = 48
-	DesktopIconTop        = 2
-	DesktopIconLabelTop   = 52
-	DesktopIconLineHeight = 24
-	DesktopIconGap        = 8                      // 图标磁贴间距
-	LongPressDragDelay    = 1 * time.Second        // 卡片拖拽延迟（标题栏长按）
-	IconDragDelay         = 300 * time.Millisecond // 图标拖拽延迟（卡片内/未分组图标）
+	baseDesktopIconSize    = 48 // 图标位图尺寸（大档基准）
+	baseDesktopIconTop     = 2
+	baseDesktopIconGap     = 8  // 图标磁贴间距
+	baseDesktopIconLineH   = 24 // 文字行高
+	baseFreeGridLeft       = 20 // 未分组网格左边距
+	baseFreeGridTop        = 60 // 未分组网格上边距
+
+	LongPressDragDelay = 1 * time.Second         // 卡片拖拽延迟（标题栏长按）
+	IconDragDelay      = 300 * time.Millisecond  // 图标拖拽延迟（卡片内/未分组图标）
 )
+
+// ============================================================
+// DPI 缩放基础设施
+// ============================================================
+
+// currentDPI 当前窗口 DPI（默认 96）。启动时由 SetCurrentDPI 设置，
+// DPI 变化时（WM_DPICHANGED）更新。所有像素常量通过 DpiPx 缩放。
+var (
+	currentDPI   int = 96
+	currentDPIMu sync.RWMutex
+)
+
+// SetCurrentDPI 更新当前 DPI。DPI 变化会触发磁贴尺寸重新测量。
+func SetCurrentDPI(dpi int) {
+	if dpi <= 0 {
+		dpi = 96
+	}
+	currentDPIMu.Lock()
+	currentDPI = dpi
+	currentDPIMu.Unlock()
+	ForceTileRemeasure()
+}
+
+// CurrentDPI 返回当前 DPI
+func CurrentDPI() int {
+	currentDPIMu.RLock()
+	defer currentDPIMu.RUnlock()
+	return currentDPI
+}
+
+// DpiScale 返回相对 96 DPI 的缩放因子（如 150% DPI 返回 1.5）
+func DpiScale() float64 {
+	return float64(CurrentDPI()) / 96.0
+}
+
+// DpiPx 将 96-DPI 基准像素值按当前 DPI 缩放
+func DpiPx(base96 int) int {
+	return int(float64(base96) * DpiScale())
+}
+
+// ============================================================
+// 图标位图尺寸（随档位 + DPI 变化）
+// ============================================================
+
+// desktopIconSizeBase 当前档位下的图标位图基准尺寸（96 DPI）。
+// 大档 48，中档 40，小档 32。实际像素 = DpiPx(desktopIconSizeBase)。
+var desktopIconSizeBase = baseDesktopIconSize
+
+// DesktopIconSize 返回图标位图实际像素尺寸（随 DPI + 档位缩放）
+func DesktopIconSize() int { return DpiPx(desktopIconSizeBase) }
+
+// DesktopIconTop 返回图标在磁贴内的顶部偏移（随 DPI 缩放）
+func DesktopIconTop() int { return DpiPx(baseDesktopIconTop) }
+
+// DesktopIconLabelTop 返回标签文字起始 Y 偏移 = 图标高度 + 顶部偏移 + 2px 间隙
+// 跟随图标尺寸，保证文字不被图标覆盖
+func DesktopIconLabelTop() int {
+	return DpiPx(desktopIconSizeBase+baseDesktopIconTop) + DpiPx(2)
+}
+
+// DesktopIconLineHeight 返回每行文字高度（随 DPI 缩放）
+func DesktopIconLineHeight() int { return DpiPx(baseDesktopIconLineH) }
+
+// DesktopIconGap 返回图标磁贴间距（随 DPI 缩放）
+func DesktopIconGap() int { return DpiPx(baseDesktopIconGap) }
+
+// FreeGridLeft 返回未分组网格左边距（随 DPI 缩放）
+func FreeGridLeft() int { return DpiPx(baseFreeGridLeft) }
+
+// FreeGridTop 返回未分组网格上边距（随 DPI 缩放）
+func FreeGridTop() int { return DpiPx(baseFreeGridTop) }
+
+// ============================================================
+// 磁贴尺寸（宽度动态测量，高度公式计算）
+// ============================================================
 
 var (
 	desktopIconItemWidth  = 132
-	desktopIconItemHeight = 104 // DesktopIconLabelTop(52) + DesktopIconLineHeight(24)*2 + 4
+	desktopIconItemHeight = 104 // = DesktopIconLabelTop + DesktopIconLineHeight*2 + 4
 	tileSizeOnce          sync.Once
 )
 
-// TileWidth 返回图标磁贴像素宽度（动态计算）
+// TileWidth 返回图标磁贴像素宽度（动态测量）
 func TileWidth() int { return desktopIconItemWidth }
 
 // TileHeight 返回图标磁贴像素高度（动态计算）
 func TileHeight() int { return desktopIconItemHeight }
 
 // TileColWidth 返回图标磁贴列宽（磁贴宽度 + 间距）
-func TileColWidth() int { return desktopIconItemWidth + DesktopIconGap }
+func TileColWidth() int { return desktopIconItemWidth + DesktopIconGap() }
 
 // end用 Win32 GetTextExtentPoint32 真实测量文本尺寸，
 // 确保磁贴宽度能容纳 4 个汉字或 9 个西文字符（取较大值）。
@@ -137,10 +214,11 @@ func EnsureTileSizeMeasured(_ *walk.Canvas) {
 		if desktopIconItemWidth < 80 {
 			desktopIconItemWidth = 80
 		}
-		desktopIconItemHeight = DesktopIconLabelTop + DesktopIconLineHeight*2 + 4
+		// 磁贴高度 = 标签起始 Y + 2 行文字高度 + 4px 底部 padding
+		desktopIconItemHeight = DesktopIconLabelTop() + DesktopIconLineHeight()*2 + 4
 
-		logger.Debug("ensureTileSizeMeasured: font=%s %dpt, tile=%dx%d (measured cjk=%d ascii=%d)",
-			family, ptSize, desktopIconItemWidth, desktopIconItemHeight, cjkW, asciiW)
+		logger.Debug("ensureTileSizeMeasured: font=%s %dpt, tile=%dx%d (measured cjk=%d ascii=%d, dpi=%d)",
+			family, ptSize, desktopIconItemWidth, desktopIconItemHeight, cjkW, asciiW, CurrentDPI())
 	})
 }
 

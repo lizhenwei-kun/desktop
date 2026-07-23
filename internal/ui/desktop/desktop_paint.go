@@ -93,15 +93,15 @@ func (dm *DesktopMode) paintDragGhost(canvas *walk.Canvas, _ walk.Rectangle) {
 	}
 	ghostX := dm.DragMouseX - ui.TileWidth()/2
 	ghostY := dm.DragMouseY - ui.TileHeight()/2
-	iconX := ghostX + (ui.TileWidth()-ui.DesktopIconSize)/2
-	iconY := ghostY + ui.DesktopIconTop
-	canvas.DrawBitmapWithOpacityPixels(dm.GhostBmp, walk.Rectangle{X: iconX, Y: iconY, Width: ui.DesktopIconSize, Height: ui.DesktopIconSize}, 128)
+	iconX := ghostX + (ui.TileWidth()-ui.DesktopIconSize())/2
+	iconY := ghostY + ui.DesktopIconTop()
+	canvas.DrawBitmapWithOpacityPixels(dm.GhostBmp, walk.Rectangle{X: iconX, Y: iconY, Width: ui.DesktopIconSize(), Height: ui.DesktopIconSize()}, 128)
 	font := ui.GetIconFont()
 	if font != nil {
 		defer font.Dispose()
 		displayName := dm.DragItemName
 		lines := ui.GetIconDisplayLines(displayName, 4)
-		labelTop := ghostY + ui.DesktopIconLabelTop
+		labelTop := ghostY + ui.DesktopIconLabelTop()
 		drawIconLabel(canvas, font, lines, ghostX, labelTop, ui.TileWidth())
 	}
 }
@@ -119,8 +119,8 @@ func drawIconLabel(canvas *walk.Canvas, font *walk.Font, lines []string, x, labe
 		{-1, 1}, {0, 1}, {1, 1},
 	}
 	for i, line := range lines {
-		lineY := labelTop + i*ui.DesktopIconLineHeight
-		textBounds := walk.Rectangle{X: x, Y: lineY, Width: tileWidth, Height: ui.DesktopIconLineHeight}
+		lineY := labelTop + i*ui.DesktopIconLineHeight()
+		textBounds := walk.Rectangle{X: x, Y: lineY, Width: tileWidth, Height: ui.DesktopIconLineHeight()}
 		// 8 方向阴影各画 2 遍（加深、消除锯齿造成的浅灰感）
 		for pass := 0; pass < 2; pass++ {
 			for _, off := range shadowOffsets {
