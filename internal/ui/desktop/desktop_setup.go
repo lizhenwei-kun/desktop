@@ -32,6 +32,24 @@ func (dm *DesktopMode) Setup() error {
 	logger.Debug("Setup: DPI=%d, bounds=(%d,%d,%dx%d)",
 		dm.MainWindow.DPI(), dm.WorkX, dm.WorkY, dm.WorkW, dm.WorkH)
 
+	// === 从持久化配置恢复状态 ===
+	// 1. 恢复图标档位（覆盖 NewRunner 中 AutoSelectIconSizeByResolution 的自动选择）
+	savedLevel := dm.Manager.GetIconSizeLevel()
+	ui.SetDesktopIconSize(savedLevel)
+	logger.Debug("Setup: restored icon size level=%d", savedLevel)
+
+	// 2. 恢复"自动排列"开关
+	dm.IsAutoArrange = dm.Manager.GetAutoArrangeEnabled()
+	if dm.IsAutoArrange {
+		dm.autoArrangeIcons()
+	}
+
+	// 3. 恢复"将图标与网格对齐"开关
+	dm.IsAlignToGrid = dm.Manager.GetAlignToGridEnabled()
+	if dm.IsAlignToGrid {
+		dm.snapAllUngroupedToGrid()
+	}
+
 	// === 注入子结构体能力 ===
 	dm.CardDragOutline.Inject(dm.WorkX, dm.WorkY)
 	dm.ResizeOutlineState.Inject(dm.WorkX, dm.WorkY)

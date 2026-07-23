@@ -100,6 +100,21 @@ func FreeGridLeft() int { return DpiPx(baseFreeGridLeft) }
 // FreeGridTop 返回未分组网格上边距（随 DPI 缩放）
 func FreeGridTop() int { return DpiPx(baseFreeGridTop) }
 
+// AutoSelectIconSizeByResolution 根据屏幕分辨率自动选择图标大小档位。
+// 低分辨率（高度 < 1080）使用小图标，高分辨率（高度 >= 1080）使用中图标。
+// 仅在用户未手动设置过时生效（启动时调用）。
+func AutoSelectIconSizeByResolution(screenW, screenH int) {
+	var level int
+	switch {
+	case screenH < 1080:
+		level = 2 // iconSizeSmall (32px)
+	default:
+		level = 1 // iconSizeMedium (40px)
+	}
+	SetDesktopIconSize(level)
+	logger.Debug("autoSelectIconSize: screen=%dx%d, level=%d", screenW, screenH, level)
+}
+
 // ============================================================
 // 磁贴尺寸（宽度动态测量，高度公式计算）
 // ============================================================

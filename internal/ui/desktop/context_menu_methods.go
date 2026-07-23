@@ -53,11 +53,12 @@ func (s *ContextMenuState) InstallRightClickHandler(bodyWidget *walk.CustomWidge
 			return 0
 		}
 
-		// 捕获 WM_COMMAND 处理桌面菜单命令
+		// 桌面菜单命令已通过 TPM_RETURNCMD 同步获取并直接分发（见 showCachedDesktopContextMenu），
+		// 不再依赖 WM_COMMAND 消息路由。保留此分支仅为兼容性，正常情况下不会进入。
 		if msg == win.WM_COMMAND {
 			cmdID := win.LOWORD(uint32(wParam))
 			if cmdID >= 0x1000 && !s.rclickIsIconMenu {
-				logger.Debug("rightClick: WM_COMMAND desktop cmd=%d", cmdID)
+				logger.Debug("rightClick: WM_COMMAND desktop cmd=%d (legacy path)", cmdID)
 				if cmdID == idNewCard {
 					if s.rclickOnNewCard != nil {
 						s.rclickOnNewCard()
@@ -316,7 +317,17 @@ func (s *ContextMenuState) showCachedDesktopContextMenu(hwnd win.HWND, x, y int)
 
 	appendMenuSeparator(hMenu)
 	appendMenu(hMenu, MF_STRING, idDisplaySettings, syscall.StringToUTF16Ptr("显示设置(&D)"))
-	appendMenu(hMenu, MF_STRING, idPersonalize, syscall.StringToUTF16Ptr("个性化(&R)"))
+
+	// 个性化子菜单（包含背景等常用入口）
+	persMenu := createPopupMenu()
+	if persMenu != 0 {
+		appendMenu(persMenu, MF_STRING, idPersonalize, syscall.StringToUTF16Ptr("个性化主页"))
+		appendMenu(persMenu, MF_STRING, idPersonalizeBackground, syscall.StringToUTF16Ptr("背景"))
+		appendMenu(hMenu, MF_POPUP|MF_STRING, uintptr(persMenu), syscall.StringToUTF16Ptr("个性化(&R)"))
+	} else {
+		// 回退：作为普通菜单项
+		appendMenu(hMenu, MF_STRING, idPersonalize, syscall.StringToUTF16Ptr("个性化(&R)"))
+	}
 
 	itemCount := getMenuItemCount(hMenu)
 	if itemCount == 0 {
@@ -324,11 +335,37 @@ func (s *ContextMenuState) showCachedDesktopContextMenu(hwnd win.HWND, x, y int)
 	}
 
 	logger.Debug("rightClick: desktop menu built, itemCount=%d, calling TrackPopupMenu", itemCount)
-	trackPopupMenuNoReturn(hMenu, TPM_LEFTALIGN|TPM_LEFTBUTTON, x, y, hwnd)
-	logger.Debug("rightClick: TrackPopupMenu done")
+
+	// 用 TPM_RETURNCMD 同步获取命令 ID，避免依赖 WM_COMMAND 消息路由
+	// （子类化装在 bodyWidget 上，但 TrackPopupMenu 把 WM_COMMAND 发给 hwnd=主窗口，
+	//  主窗口的 walk WndProc 会吞掉非 walk 控件 ID 的命令，导致点击无反应）
+	cmd := trackPopupMenu(hMenu, TPM_RETURNCMD|TPM_LEFTALIGN|TPM_LEFTBUTTON|TPM_RIGHTBUTTON, x, y, hwnd)
+	logger.Info("桌面菜单: 用户选择 cmd=0x%x (=%d)", cmd, cmd)
+	if cmd == 0 {
+		logger.Debug("桌面菜单: 用户取消（点击空白或按 ESC）")
+		return
+	}
+
+	// 同步分发命令：与"新建卡片"一样，直接调用回调
+	if cmd == idNewCard {
+		logger.Info("桌面菜单: 分发到 onNewCard 回调")
+		if s.rclickOnNewCard != nil {
+			s.rclickOnNewCard()
+		}
+	} else if s.rclickOnDesktopCmd != nil {
+		logger.Info("桌面菜单: 分发到 onDesktopCmd 回调 (cmd=0x%x)", cmd)
+		s.rclickOnDesktopCmd(int(cmd))
+	} else {
+		logger.Warn("桌面菜单: 无可用回调处理 cmd=0x%x (onDesktopCmd 为 nil)", cmd)
+	}
+	// 同步 ContextMenuState 的内存状态（IsAutoArrange 等）
+	s.handleDesktopCmd(int(cmd))
 }
 
 // handleDesktopCmd 处理桌面菜单命令的状态更新
+// 注意：实际命令执行在 DesktopMode.handleContextMenuCommand 中完成，
+// 此处仅同步 ContextMenuState 的内存状态（IsAutoArrange/IsAlignToGrid/SortBy/IsShowDesktopIcons）。
+// 图标档位、AutoArrange/AlignToGrid 的持久化由 DesktopMode.handleContextMenuCommand 调用 Manager 完成。
 func (s *ContextMenuState) handleDesktopCmd(cmd int) {
 	if cmd >= s.CachedDesktopRegCmdStart && cmd < s.CachedDesktopRegCmdStart+len(s.CachedDesktopRegItems) {
 		idx := cmd - s.CachedDesktopRegCmdStart
@@ -352,6 +389,8 @@ func (s *ContextMenuState) handleDesktopCmd(cmd int) {
 		s.SortBy = 2
 	case idSortByDate:
 		s.SortBy = 3
+	case idPersonalizeBackground, idPersonalize, idDisplaySettings:
+		// 系统设置命令在 handleContextMenuCommand 中已处理；此处无需额外状态变更
 	}
 }
 

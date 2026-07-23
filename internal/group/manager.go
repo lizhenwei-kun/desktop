@@ -169,6 +169,67 @@ func (m *Manager) GetConfig() *config.Config {
 	return m.cfg
 }
 
+// GetIconSizeLevel 获取桌面图标大小档位
+//   0=大(48px)  1=中(40px)  2=小(32px)
+func (m *Manager) GetIconSizeLevel() int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.cfg.IconSizeLevel
+}
+
+// SetIconSizeLevel 设置桌面图标大小档位并保存
+func (m *Manager) SetIconSizeLevel(level int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if level < 0 {
+		level = 0
+	}
+	if level > 2 {
+		level = 2
+	}
+	if m.cfg.IconSizeLevel == level {
+		return
+	}
+	m.cfg.IconSizeLevel = level
+	config.Save(m.cfg)
+}
+
+// GetAutoArrangeEnabled 获取是否启用"自动排列图标"
+func (m *Manager) GetAutoArrangeEnabled() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.cfg.AutoArrange
+}
+
+// SetAutoArrangeEnabled 设置是否启用"自动排列图标"并保存
+func (m *Manager) SetAutoArrangeEnabled(enabled bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.cfg.AutoArrange == enabled {
+		return
+	}
+	m.cfg.AutoArrange = enabled
+	config.Save(m.cfg)
+}
+
+// GetAlignToGridEnabled 获取是否启用"将图标与网格对齐"
+func (m *Manager) GetAlignToGridEnabled() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.cfg.AlignToGrid
+}
+
+// SetAlignToGridEnabled 设置是否启用"将图标与网格对齐"并保存
+func (m *Manager) SetAlignToGridEnabled(enabled bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.cfg.AlignToGrid == enabled {
+		return
+	}
+	m.cfg.AlignToGrid = enabled
+	config.Save(m.cfg)
+}
+
 // SetCardFontPreset 设置卡片标题字体预设并保存
 // preset 为 "consolas" / "segoeui" / "yahei" / "custom" 之一
 func (m *Manager) SetCardFontPreset(preset string) {

@@ -769,18 +769,28 @@ func GetDesktopIconSize() int {
 	}
 }
 
-// setDesktopIconSize 设置桌面图标大小
+// setDesktopIconSize 设置桌面图标大小（同时调整标签字号）
 func SetDesktopIconSize(size int) {
 	switch size {
 	case iconSizeLarge:
 		desktopIconSizeBase = 48
+		setIconFontSize(11) // 大档 11pt
 	case iconSizeMedium:
 		desktopIconSizeBase = 40
+		setIconFontSize(9) // 中档 9pt
 	case iconSizeSmall:
 		desktopIconSizeBase = 32
+		setIconFontSize(8) // 小档 8pt
 	}
 	// 重置磁贴尺寸测量标记，下次绘制时重新计算
 	ForceTileRemeasure()
+}
+
+// setIconFontSize 线程安全地设置图标标签字号
+func setIconFontSize(size int) {
+	iconFontMu.Lock()
+	defer iconFontMu.Unlock()
+	iconFontSize = size
 }
 
 // forceTileRemeasure 强制重新测量磁贴尺寸
@@ -1040,14 +1050,47 @@ func CreateNewBitmapImage(_, _ int) {
 // 系统设置
 // ============================================================
 
-// openDisplaySettings 打开显示设置
-func OpenDisplaySettings() {
-	exec.Command("cmd", "/c", "start", "ms-settings:display").Start()
+// shell32.dll 已经声明（顶部 var shell32Ctx）
+var procShellExecuteW = shell32Ctx.NewProc("ShellExecuteW")
+
+// openSystemSettingsURI 通过 Windows 设置 URI 打开系统设置页
+// 使用 ShellExecuteW 替代 cmd /c start，更可靠，错误也更易捕获。
+// 在 Windows 10/11 上可通过 ms-settings: URI 打开系统设置。
+// uri 示例：
+//   - ms-settings:display          显示
+//   - ms-settings:personalization  个性化
+//   - ms-settings:personalization-background 个性化 - 背景
+func openSystemSettingsURI(uri string) {
+	verb, _ := syscall.UTF16PtrFromString("open")
+	file, _ := syscall.UTF16PtrFromString(uri)
+	ret, _, _ := procShellExecuteW.Call(
+		0,
+		uintptr(unsafe.Pointer(verb)),
+		uintptr(unsafe.Pointer(file)),
+		0, 0,
+		1, // SW_NORMAL
+	)
+	// ShellExecuteW 返回值 > 32 表示成功
+	if uintptr(ret) <= 32 {
+		logger.Warn("openSystemSettingsURI(%q) failed: code=%d", uri, ret)
+	} else {
+		logger.Info("openSystemSettingsURI(%q) success", uri)
+	}
 }
 
-// openPersonalize 打开个性化设置
+// OpenDisplaySettings 打开显示设置
+func OpenDisplaySettings() {
+	openSystemSettingsURI("ms-settings:display")
+}
+
+// OpenPersonalize 打开个性化设置
 func OpenPersonalize() {
-	exec.Command("cmd", "/c", "start", "ms-settings:personalization").Start()
+	openSystemSettingsURI("ms-settings:personalization")
+}
+
+// OpenPersonalizeBackground 打开个性化 - 背景设置（快捷入口）
+func OpenPersonalizeBackground() {
+	openSystemSettingsURI("ms-settings:personalization-background")
 }
 
 // ============================================================

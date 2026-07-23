@@ -147,6 +147,10 @@ func (r *Runner) runDesktopMode() error {
 	// 初始化 DPI 缩放（窗口创建后、UI 测量前）
 	ui.SetCurrentDPI(mw.DPI())
 
+	// 根据屏幕分辨率自动选择图标大小档位（低分辨率用小图标）
+	screenW, screenH := r.winAPI.GetScreenSize()
+	ui.AutoSelectIconSizeByResolution(screenW, screenH)
+
 	dm := desktopmode.NewDesktopMode(mw, r.manager, r.winAPI, r.lifecycle, r.work)
 	r.dm = dm
 	if err := dm.Setup(); err != nil {

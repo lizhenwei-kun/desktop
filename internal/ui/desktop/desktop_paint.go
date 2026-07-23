@@ -20,6 +20,9 @@ func (dm *DesktopMode) paintDesktop(canvas *walk.Canvas, updateBounds walk.Recta
 		logger.Debug("paintDesktop #%d: bounds=(%d,%d,%dx%d), wallpaperBmp=%v",
 			paintCount, bounds.X, bounds.Y, bounds.Width, bounds.Height, dm.WallpaperBmp != nil)
 	}
+	// 确保磁贴尺寸已测量（切换图标大小后 ForceTileRemeasure 会触发重新测量）
+	// 必须在 paintAllIcons 之前调用，否则 TileWidth/TileHeight 可能还是旧档位的值
+	ui.EnsureTileSizeMeasured(canvas)
 	dm.paintBackground(canvas, bounds)
 	dm.WallpaperState.PaintWallpaper(canvas, bounds)
 	dm.paintToolbar(canvas, bounds)
@@ -106,32 +109,47 @@ func (dm *DesktopMode) paintDragGhost(canvas *walk.Canvas, _ walk.Rectangle) {
 	}
 }
 
-// drawIconLabel 绘制带阴影的图标文字标签（白字 + 8 方向 1px 黑色阴影，模拟 Windows 原生桌面图标文字效果）
+// drawIconLabel 绘制带阴影的图标文字标签（白字 + 黑色阴影，模拟 Windows 原生桌面图标文字效果）
 // x: 文本块左上角 X；labelTop: 第一行 Y；tileWidth: 文本块宽度
+//
+// 阴影策略：
+//   - 大字号(>=10pt)：4 方向(上下左右) + 4 对角线，1 遍，偏移 1px
+//   - 小字号(<10pt)：仅 4 方向(上下左右)，1 遍，偏移 1px
+//   - 避免小字号下 8方向×2遍 把文字糊成一团黑影
 func drawIconLabel(canvas *walk.Canvas, font *walk.Font, lines []string, x, labelTop, tileWidth int) {
 	if font == nil {
 		return
 	}
-	// 8 个方向的阴影偏移：水平/垂直 + 对角线
-	shadowOffsets := [8]struct{ dx, dy int }{
-		{-1, -1}, {0, -1}, {1, -1},
-		{-1, 0}, {1, 0},
-		{-1, 1}, {0, 1}, {1, 1},
+
+	// 根据字号决定阴影方向数：小字号用 4 方向，大字号用 8 方向
+	fontSize := font.PointSize()
+	var shadowOffsets []struct{ dx, dy int }
+	if fontSize >= 10 {
+		// 大字号：8 方向
+		shadowOffsets = []struct{ dx, dy int }{
+			{-1, -1}, {0, -1}, {1, -1},
+			{-1, 0}, {1, 0},
+			{-1, 1}, {0, 1}, {1, 1},
+		}
+	} else {
+		// 小字号：仅 4 方向（上下左右），避免糊成一团
+		shadowOffsets = []struct{ dx, dy int }{
+			{0, -1}, {-1, 0}, {1, 0}, {0, 1},
+		}
 	}
+
 	for i, line := range lines {
 		lineY := labelTop + i*ui.DesktopIconLineHeight()
 		textBounds := walk.Rectangle{X: x, Y: lineY, Width: tileWidth, Height: ui.DesktopIconLineHeight()}
-		// 8 方向阴影各画 2 遍（加深、消除锯齿造成的浅灰感）
-		for pass := 0; pass < 2; pass++ {
-			for _, off := range shadowOffsets {
-				shadowBounds := walk.Rectangle{
-					X:      textBounds.X + off.dx,
-					Y:      textBounds.Y + off.dy,
-					Width:  textBounds.Width,
-					Height: textBounds.Height,
-				}
-				canvas.DrawTextPixels(line, font, walk.RGB(0, 0, 0), shadowBounds, walk.TextCenter|walk.TextSingleLine)
+		// 阴影只画 1 遍（原来画 2 遍太重，小字号下会把白字完全覆盖）
+		for _, off := range shadowOffsets {
+			shadowBounds := walk.Rectangle{
+				X:      textBounds.X + off.dx,
+				Y:      textBounds.Y + off.dy,
+				Width:  textBounds.Width,
+				Height: textBounds.Height,
 			}
+			canvas.DrawTextPixels(line, font, walk.RGB(0, 0, 0), shadowBounds, walk.TextCenter|walk.TextSingleLine)
 		}
 		// 最后画白色正文
 		canvas.DrawTextPixels(line, font, walk.RGB(0xFF, 0xFF, 0xFF), textBounds, walk.TextCenter|walk.TextSingleLine)
