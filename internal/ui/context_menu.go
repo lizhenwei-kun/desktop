@@ -742,11 +742,17 @@ const (
 // 桌面图标大小状态
 // ============================================================
 
-// 图标尺寸级别
+// 图标尺寸级别（导出供其他包使用）
 const (
-	iconSizeLarge  = 0
-	iconSizeMedium = 1
-	iconSizeSmall  = 2
+	IconSizeLarge  = 0
+	IconSizeMedium = 1
+	IconSizeSmall  = 2
+)
+
+const (
+	iconSizeLarge  = IconSizeLarge
+	iconSizeMedium = IconSizeMedium
+	iconSizeSmall  = IconSizeSmall
 )
 
 // 排序方式
@@ -770,17 +776,25 @@ func GetDesktopIconSize() int {
 }
 
 // setDesktopIconSize 设置桌面图标大小（同时调整标签字号）
+//
+// 档位规格（对齐 Windows 原生桌面图标观感）：
+//   - 大档：图标 48px，文字 11pt，磁贴间距 10px
+//   - 中档：图标 40px，文字 10pt，磁贴间距 8px
+//   - 小档：图标 28px，文字 9pt， 磁贴间距 6px（接近系统桌面小图标）
 func SetDesktopIconSize(size int) {
 	switch size {
 	case iconSizeLarge:
 		desktopIconSizeBase = 48
 		setIconFontSize(11) // 大档 11pt
+		setIconGap(10)
 	case iconSizeMedium:
 		desktopIconSizeBase = 40
-		setIconFontSize(9) // 中档 9pt
+		setIconFontSize(10) // 中档 10pt
+		setIconGap(8)
 	case iconSizeSmall:
-		desktopIconSizeBase = 32
-		setIconFontSize(8) // 小档 8pt
+		desktopIconSizeBase = 28
+		setIconFontSize(9) // 小档 9pt（接近系统桌面小图标）
+		setIconGap(6)
 	}
 	// 重置磁贴尺寸测量标记，下次绘制时重新计算
 	ForceTileRemeasure()

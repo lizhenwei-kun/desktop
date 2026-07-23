@@ -112,36 +112,27 @@ func (dm *DesktopMode) paintDragGhost(canvas *walk.Canvas, _ walk.Rectangle) {
 // drawIconLabel 绘制带阴影的图标文字标签（白字 + 黑色阴影，模拟 Windows 原生桌面图标文字效果）
 // x: 文本块左上角 X；labelTop: 第一行 Y；tileWidth: 文本块宽度
 //
-// 阴影策略：
-//   - 大字号(>=10pt)：4 方向(上下左右) + 4 对角线，1 遍，偏移 1px
-//   - 小字号(<10pt)：仅 4 方向(上下左右)，1 遍，偏移 1px
-//   - 避免小字号下 8方向×2遍 把文字糊成一团黑影
+// 阴影策略（按图标档位）：
+//   - 大档(48px)：4 方向(上下左右)，1 遍，偏移 1px
+//   - 中档(40px)：4 方向(上下左右)，1 遍，偏移 1px
+//   - 小档(32px)：4 方向(上下左右)，1 遍，偏移 1px
+//
+// 关键：阴影必须保留，否则白字在浅色背景（卡片、彩色壁纸）上完全不可见。
+// 之前 8 方向 × 2 遍在小字号下太重导致糊成一团黑影，已改为 4 方向 × 1 遍。
 func drawIconLabel(canvas *walk.Canvas, font *walk.Font, lines []string, x, labelTop, tileWidth int) {
 	if font == nil {
 		return
 	}
 
-	// 根据字号决定阴影方向数：小字号用 4 方向，大字号用 8 方向
-	fontSize := font.PointSize()
-	var shadowOffsets []struct{ dx, dy int }
-	if fontSize >= 10 {
-		// 大字号：8 方向
-		shadowOffsets = []struct{ dx, dy int }{
-			{-1, -1}, {0, -1}, {1, -1},
-			{-1, 0}, {1, 0},
-			{-1, 1}, {0, 1}, {1, 1},
-		}
-	} else {
-		// 小字号：仅 4 方向（上下左右），避免糊成一团
-		shadowOffsets = []struct{ dx, dy int }{
-			{0, -1}, {-1, 0}, {1, 0}, {0, 1},
-		}
+	// 所有档位都用 4 方向阴影（上下左右），保证白字在任何背景下都清晰可读
+	shadowOffsets := []struct{ dx, dy int }{
+		{0, -1}, {-1, 0}, {1, 0}, {0, 1},
 	}
 
 	for i, line := range lines {
 		lineY := labelTop + i*ui.DesktopIconLineHeight()
 		textBounds := walk.Rectangle{X: x, Y: lineY, Width: tileWidth, Height: ui.DesktopIconLineHeight()}
-		// 阴影只画 1 遍（原来画 2 遍太重，小字号下会把白字完全覆盖）
+		// 画阴影（1 遍足够，避免 8 方向 × 2 遍在小字号下糊成黑影）
 		for _, off := range shadowOffsets {
 			shadowBounds := walk.Rectangle{
 				X:      textBounds.X + off.dx,

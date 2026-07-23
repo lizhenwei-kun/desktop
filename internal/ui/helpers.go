@@ -20,7 +20,6 @@ import (
 const (
 	baseDesktopIconSize    = 48 // 图标位图尺寸（大档基准）
 	baseDesktopIconTop     = 2
-	baseDesktopIconGap     = 8  // 图标磁贴间距
 	baseDesktopIconLineH   = 24 // 文字行高
 	baseFreeGridLeft       = 20 // 未分组网格左边距
 	baseFreeGridTop        = 60 // 未分组网格上边距
@@ -88,11 +87,44 @@ func DesktopIconLabelTop() int {
 	return DpiPx(desktopIconSizeBase+baseDesktopIconTop) + DpiPx(2)
 }
 
-// DesktopIconLineHeight 返回每行文字高度（随 DPI 缩放）
-func DesktopIconLineHeight() int { return DpiPx(baseDesktopIconLineH) }
+// DesktopIconLineHeight 返回每行文字高度（随 DPI + 字号档位缩放）
+//
+// 行高与字号成正比，避免小字号下行高过大导致磁贴中间空白过多：
+//   - 11pt(大档) → 24px（基准）
+//   - 9pt(中档)  → 20px
+//   - 8pt(小档)  → 17px
+//
+// 计算方式：baseDesktopIconLineH(24) × 当前字号 / 11（大档基准字号），再按 DPI 缩放
+func DesktopIconLineHeight() int {
+	iconFontMu.RLock()
+	size := iconFontSize
+	iconFontMu.RUnlock()
+	if size <= 0 {
+		size = 11
+	}
+	// 行高 = 基准行高 × (字号 / 基准字号)，向上取整避免行间挤压
+	lineH := baseDesktopIconLineH * size / 11
+	if lineH < 14 {
+		lineH = 14 // 最小行高保护
+	}
+	return DpiPx(lineH)
+}
 
-// DesktopIconGap 返回图标磁贴间距（随 DPI 缩放）
-func DesktopIconGap() int { return DpiPx(baseDesktopIconGap) }
+// DesktopIconGap 返回图标磁贴间距（随 DPI + 档位缩放）
+// 间距随档位变化：大档 10px、中档 8px、小档 6px（接近系统桌面小图标观感）
+func DesktopIconGap() int {
+	iconGapMu.RLock()
+	gap := iconGap
+	iconGapMu.RUnlock()
+	return DpiPx(gap)
+}
+
+// setIconGap 线程安全地设置磁贴间距（按图标档位调整）
+func setIconGap(gap int) {
+	iconGapMu.Lock()
+	defer iconGapMu.Unlock()
+	iconGap = gap
+}
 
 // FreeGridLeft 返回未分组网格左边距（随 DPI 缩放）
 func FreeGridLeft() int { return DpiPx(baseFreeGridLeft) }
@@ -225,15 +257,24 @@ func EnsureTileSizeMeasured(_ *walk.Canvas) {
 		}
 		tileW += 8 // 左右安全 padding
 
-		desktopIconItemWidth = tileW
-		if desktopIconItemWidth < 80 {
-			desktopIconItemWidth = 80
+		// 磁贴宽度 = max(图标尺寸 + 24, 文字宽度 + padding)
+		// 基础磁贴宽按图标档位缩放，避免小图标下左右空白过多：
+		//   大档(48)→72，中档(40)→64，小档(32)→56
+		baseTileW := desktopIconSizeBase + 24
+
+		desktopIconItemWidth = baseTileW
+		if tileW > desktopIconItemWidth {
+			desktopIconItemWidth = tileW
+		}
+		// 封顶防止极端字体导致磁贴过宽
+		if desktopIconItemWidth > 160 {
+			desktopIconItemWidth = 160
 		}
 		// 磁贴高度 = 标签起始 Y + 2 行文字高度 + 4px 底部 padding
 		desktopIconItemHeight = DesktopIconLabelTop() + DesktopIconLineHeight()*2 + 4
 
-		logger.Debug("ensureTileSizeMeasured: font=%s %dpt, tile=%dx%d (measured cjk=%d ascii=%d, dpi=%d)",
-			family, ptSize, desktopIconItemWidth, desktopIconItemHeight, cjkW, asciiW, CurrentDPI())
+		logger.Debug("ensureTileSizeMeasured: font=%s %dpt, tile=%dx%d (baseTileW=%d, measured cjk=%d ascii=%d, dpi=%d)",
+			family, ptSize, desktopIconItemWidth, desktopIconItemHeight, baseTileW, cjkW, asciiW, CurrentDPI())
 	})
 }
 
@@ -241,6 +282,8 @@ var (
 	iconFontName = "宋体"
 	iconFontSize = 11
 	iconFontMu   sync.RWMutex
+	iconGap      = 8  // 当前图标档位对应的磁贴间距（基线像素），实际像素 = DpiPx(iconGap)
+	iconGapMu    sync.RWMutex
 
 	cardFontName   = "Consolas"
 	cardFontSize   = 14

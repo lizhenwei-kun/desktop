@@ -798,24 +798,36 @@ func (gc *GroupCard) paintIconTile(canvas *walk.Canvas, item group.GroupItem, x,
 	if font != nil {
 		defer font.Dispose()
 		labelTop := y + DesktopIconLabelTop()
+		// 4 方向阴影（上下左右），保证白字在浅色卡片背景上也清晰可读
+		// 之前用单方向 (x+1,y+1) 偏移太弱，在浅紫/浅蓝卡片背景上白字几乎看不清
+		shadowOffsets := [4]struct{ dx, dy int }{
+			{0, -1}, {-1, 0}, {1, 0}, {0, 1},
+		}
+		drawLabel := func(line string, lineY int) {
+			textBounds := walk.Rectangle{X: x, Y: lineY, Width: desktopIconItemWidth, Height: DesktopIconLineHeight()}
+			for _, off := range shadowOffsets {
+				shadowBounds := walk.Rectangle{
+					X:      textBounds.X + off.dx,
+					Y:      textBounds.Y + off.dy,
+					Width:  textBounds.Width,
+					Height: textBounds.Height,
+				}
+				canvas.DrawTextPixels(line, font, walk.RGB(0, 0, 0), shadowBounds, walk.TextCenter|walk.TextSingleLine)
+			}
+			canvas.DrawTextPixels(line, font, walk.RGB(0xFF, 0xFF, 0xFF), textBounds, walk.TextCenter|walk.TextSingleLine)
+		}
 		if selected {
 			// 选中状态：显示所有行，不加省略号
 			for i, line := range lines {
 				lineY := labelTop + i*DesktopIconLineHeight()
-				shadowBounds := walk.Rectangle{X: x + 1, Y: lineY + 1, Width: desktopIconItemWidth, Height: DesktopIconLineHeight()}
-				canvas.DrawTextPixels(line, font, walk.RGB(0, 0, 0), shadowBounds, walk.TextCenter|walk.TextSingleLine)
-				textBounds := walk.Rectangle{X: x, Y: lineY, Width: desktopIconItemWidth, Height: DesktopIconLineHeight()}
-				canvas.DrawTextPixels(line, font, walk.RGB(0xFF, 0xFF, 0xFF), textBounds, walk.TextCenter|walk.TextSingleLine)
+				drawLabel(line, lineY)
 			}
 		} else {
 			// 非选中：最多显示2行，超出省略
 			displayLines := GetIconDisplayLines(item.Name, 4)
 			for i, line := range displayLines {
 				lineY := labelTop + i*DesktopIconLineHeight()
-				shadowBounds := walk.Rectangle{X: x + 1, Y: lineY + 1, Width: desktopIconItemWidth, Height: DesktopIconLineHeight()}
-				canvas.DrawTextPixels(line, font, walk.RGB(0, 0, 0), shadowBounds, walk.TextCenter|walk.TextSingleLine)
-				textBounds := walk.Rectangle{X: x, Y: lineY, Width: desktopIconItemWidth, Height: DesktopIconLineHeight()}
-				canvas.DrawTextPixels(line, font, walk.RGB(0xFF, 0xFF, 0xFF), textBounds, walk.TextCenter|walk.TextSingleLine)
+				drawLabel(line, lineY)
 			}
 		}
 	}
