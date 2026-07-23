@@ -742,6 +742,9 @@ func (gc *GroupCard) paintIconGrid(canvas *walk.Canvas, bounds walk.Rectangle) {
 	if maxCols < 1 {
 		maxCols = 1
 	}
+	logger.Debug("paintIconGrid: card=%q items=%d bounds=(%d,%d,%dx%d) startY=%d colWidth=%d maxCols=%d tileH=%d",
+		gc.groupName, len(gc.items), bounds.X, bounds.Y, bounds.Width, bounds.Height,
+		startY, colWidth, maxCols, desktopIconItemHeight)
 
 	for i, item := range gc.items {
 		col := i % maxCols
@@ -751,6 +754,8 @@ func (gc *GroupCard) paintIconGrid(canvas *walk.Canvas, bounds walk.Rectangle) {
 		y := startY + row*desktopIconItemHeight
 
 		if y+desktopIconItemHeight > bounds.Y+bounds.Height {
+			logger.Debug("paintIconGrid: card=%q BREAK at item[%d] name=%q (y=%d + tileH=%d > bottom=%d)",
+				gc.groupName, i, item.Name, y, desktopIconItemHeight, bounds.Y+bounds.Height)
 			break
 		}
 
@@ -791,6 +796,9 @@ func (gc *GroupCard) paintIconTile(canvas *walk.Canvas, item group.GroupItem, x,
 		canvas.DrawBitmapWithOpacityPixels(bmp, walk.Rectangle{
 			X: iconX, Y: iconY, Width: DesktopIconSize(), Height: DesktopIconSize(),
 		}, 255)
+	} else {
+		logger.Warn("paintIconTile: bmp is NIL for path=%q name=%q card=%q (iconSize=%d tileW=%d)",
+			item.Path, item.Name, gc.groupName, DesktopIconSize(), desktopIconItemWidth)
 	}
 
 	// 绘制名称

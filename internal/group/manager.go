@@ -170,7 +170,7 @@ func (m *Manager) GetConfig() *config.Config {
 }
 
 // GetIconSizeLevel 获取桌面图标大小档位
-//   0=大(48px)  1=中(40px)  2=小(32px)
+//   0=大(48px)  1=中(48px)  2=小(32px)
 func (m *Manager) GetIconSizeLevel() int {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

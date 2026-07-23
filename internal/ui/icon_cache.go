@@ -41,12 +41,14 @@ func (c *IconBmpCache) GetOrLoad(path string) *walk.Bitmap {
 	if bmp, ok := c.cache[path]; ok {
 		return bmp
 	}
+	logger.Debug("IconBmpCache.GetOrLoad: cache MISS for %q, calling extractAndCache", path)
 	return c.extractAndCache(path)
 }
 
 // LoadAll 批量预加载图标到缓存
 func (c *IconBmpCache) LoadAll(paths []string) {
 	extractor := NewIconExtractor()
+	logger.Debug("IconBmpCache.LoadAll: ENTER count=%d, currentCacheSize=%d", len(paths), len(c.cache))
 	for _, path := range paths {
 		if _, ok := c.cache[path]; ok {
 			continue
@@ -57,14 +59,18 @@ func (c *IconBmpCache) LoadAll(paths []string) {
 		}
 		iconImg, err := extractor.GetIconImage(path)
 		if err != nil || iconImg == nil {
+			logger.Warn("IconBmpCache.LoadAll: GetIconImage failed for %q err=%v imgNil=%v", path, err, iconImg == nil)
 			continue
 		}
 		bmp := imageToBitmap(iconImg)
 		if bmp == nil {
+			bounds := iconImg.Bounds()
+			logger.Warn("IconBmpCache.LoadAll: imageToBitmap returned nil for %q (imageSize=%dx%d)", path, bounds.Dx(), bounds.Dy())
 			continue
 		}
 		c.cache[path] = bmp
 	}
+	logger.Debug("IconBmpCache.LoadAll: DONE, newCacheSize=%d", len(c.cache))
 }
 
 // Remove 移除并释放单个缓存
@@ -199,6 +205,8 @@ func imageToBitmap(img image.Image) *walk.Bitmap {
 	}
 	bmp, err := walk.NewBitmapFromImage(rgbaImg)
 	if err != nil {
+		bounds := img.Bounds()
+		logger.Warn("imageToBitmap: NewBitmapFromImage failed size=%dx%d err=%v", bounds.Dx(), bounds.Dy(), err)
 		return nil
 	}
 	return bmp

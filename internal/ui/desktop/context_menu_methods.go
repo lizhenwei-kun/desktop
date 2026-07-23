@@ -21,6 +21,7 @@ func (s *ContextMenuState) InstallRightClickHandler(bodyWidget *walk.CustomWidge
 	}
 
 	// 保存依赖，供异步消息处理器使用
+	s.rclickBodyWidget = bodyWidget
 	s.rclickMainWindow = mainWindow
 	s.rclickManager = manager
 	s.rclickExecutor = executor
@@ -77,6 +78,15 @@ func (s *ContextMenuState) InstallRightClickHandler(bodyWidget *walk.CustomWidge
 			logger.Debug("rightClick: icon menu cmd=%d", cmdID)
 			if s.rclickOnDesktopCmd != nil {
 				s.rclickOnDesktopCmd(cmdID)
+			}
+			return 0
+		}
+
+		// 延迟执行新建卡片（Win11 下 TrackPopupMenu 返回后直接弹出模态对话框可能被阻塞）
+		if msg == rclickNewCardMsg {
+			logger.Info("rightClick: received rclickNewCardMsg, executing addNewCard")
+			if s.rclickOnNewCard != nil {
+				s.rclickOnNewCard()
 			}
 			return 0
 		}
@@ -221,6 +231,19 @@ func pidlFromKnownFolder(folderKey string) uintptr {
 	return pidl
 }
 
+// scheduleNewCard 通过 PostMessage 延迟执行新建卡片，避免 Win11 下
+// TrackPopupMenu 返回后直接弹出模态对话框被阻塞的问题。
+func (s *ContextMenuState) scheduleNewCard() {
+	if s.rclickBodyWidget == nil {
+		// 没有 bodyWidget 句柄时直接调用（兼容）
+		if s.rclickOnNewCard != nil {
+			s.rclickOnNewCard()
+		}
+		return
+	}
+	win.PostMessage(s.rclickBodyWidget.Handle(), rclickNewCardMsg, 0, 0)
+}
+
 // showCachedDesktopContextMenu 使用缓存的菜单数据显示桌面右键菜单（UI 主线程）
 func (s *ContextMenuState) showCachedDesktopContextMenu(hwnd win.HWND, x, y int) {
 	logger.Debug("rightClick: showCachedDesktopContextMenu at (%d,%d)", x, y)
@@ -242,7 +265,7 @@ func (s *ContextMenuState) showCachedDesktopContextMenu(hwnd win.HWND, x, y int)
 		appendMenu(viewMenu, MF_STRING, idViewLargeIcons, syscall.StringToUTF16Ptr("大图标"))
 		appendMenu(viewMenu, MF_STRING, idViewMediumIcons, syscall.StringToUTF16Ptr("中图标"))
 		appendMenu(viewMenu, MF_STRING, idViewSmallIcons, syscall.StringToUTF16Ptr("小图标"))
-		curSize := ui.GetDesktopIconSize()
+		curSize := ui.CurrentIconSizeLevel()
 		switch curSize {
 		case 0:
 			checkMenuRadioItem(viewMenu, idViewLargeIcons, idViewSmallIcons, idViewLargeIcons)
@@ -318,16 +341,8 @@ func (s *ContextMenuState) showCachedDesktopContextMenu(hwnd win.HWND, x, y int)
 	appendMenuSeparator(hMenu)
 	appendMenu(hMenu, MF_STRING, idDisplaySettings, syscall.StringToUTF16Ptr("显示设置(&D)"))
 
-	// 个性化子菜单（包含背景等常用入口）
-	persMenu := createPopupMenu()
-	if persMenu != 0 {
-		appendMenu(persMenu, MF_STRING, idPersonalize, syscall.StringToUTF16Ptr("个性化主页"))
-		appendMenu(persMenu, MF_STRING, idPersonalizeBackground, syscall.StringToUTF16Ptr("背景"))
-		appendMenu(hMenu, MF_POPUP|MF_STRING, uintptr(persMenu), syscall.StringToUTF16Ptr("个性化(&R)"))
-	} else {
-		// 回退：作为普通菜单项
-		appendMenu(hMenu, MF_STRING, idPersonalize, syscall.StringToUTF16Ptr("个性化(&R)"))
-	}
+	// 个性化：直接作为普通菜单项，无需子菜单（子菜单的"个性化主页"和"背景"功能相同）
+	appendMenu(hMenu, MF_STRING, idPersonalize, syscall.StringToUTF16Ptr("个性化(&R)"))
 
 	itemCount := getMenuItemCount(hMenu)
 	if itemCount == 0 {
@@ -346,11 +361,14 @@ func (s *ContextMenuState) showCachedDesktopContextMenu(hwnd win.HWND, x, y int)
 		return
 	}
 
-	// 同步分发命令：与"新建卡片"一样，直接调用回调
+	// 同步分发命令
 	if cmd == idNewCard {
 		logger.Info("桌面菜单: 分发到 onNewCard 回调")
 		if s.rclickOnNewCard != nil {
-			s.rclickOnNewCard()
+			// Win11 下 TrackPopupMenu 返回后直接弹出模态对话框可能被阻塞，
+			// 因为菜单可能残留鼠标捕获状态。用 PostMessage 延迟到消息队列
+			// 下次空闲时执行，确保菜单完全关闭。
+			s.scheduleNewCard()
 		}
 	} else if s.rclickOnDesktopCmd != nil {
 		logger.Info("桌面菜单: 分发到 onDesktopCmd 回调 (cmd=0x%x)", cmd)

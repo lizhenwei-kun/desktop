@@ -42,9 +42,9 @@ type Runner struct {
 }
 
 // NewRunner 创建应用运行器
-func NewRunner() (*Runner, error) {
-	// 初始化日志
-	logger.Init("debug", "./log/desktop_go.log")
+func NewRunner(logLevel string) (*Runner, error) {
+	// 初始化日志（debug 级别保留完整诊断信息，用户可通过 --log-level 控制输出级别）
+	logger.Init(logLevel, "./log/desktop_go.log")
 
 	r := &Runner{
 		manager:   group.NewManager(),

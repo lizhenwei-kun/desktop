@@ -148,6 +148,7 @@ type ContextMenuState struct {
 	lastIconMenuItems   []ui.RegistryShellItem
 
 	// 异步右键菜单：在 WM_RBUTTONDOWN 中只记录信息，PostMessage 延迟弹出
+	rclickBodyWidget *walk.CustomWidget // bodyWidget 句柄，用于 PostMessage
 	rclickMainWindow win.HWND
 	rclickManager    *group.Manager
 	rclickExecutor   *ui.ProgramExecutor

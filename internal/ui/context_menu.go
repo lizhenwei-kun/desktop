@@ -767,37 +767,73 @@ const (
 func GetDesktopIconSize() int {
 	switch desktopIconSizeBase {
 	case 48:
-		return iconSizeLarge
-	case 40:
-		return iconSizeMedium
+		return iconSizeLarge // 大档/中档都用 48px，通过档位记录区分
+	case 28:
+		return iconSizeSmall
 	default:
 		return iconSizeSmall
 	}
 }
 
+// GetDesktopIconSizeLevel 返回当前图标档位（基于配置值，不依赖像素尺寸）
+// 因为大档和中档现在都用 48px，需要额外的档位状态
+var currentIconSizeLevel = iconSizeLarge
+
+// SetDesktopIconSizeLevel 设置当前图标档位
+func SetDesktopIconSizeLevel(level int) {
+	currentIconSizeLevel = level
+}
+
+// CurrentIconSizeLevel 获取当前图标档位
+func CurrentIconSizeLevel() int {
+	return currentIconSizeLevel
+}
+
 // setDesktopIconSize 设置桌面图标大小（同时调整标签字号）
 //
-// 档位规格（对齐 Windows 原生桌面图标观感）：
+// 档位规格：
 //   - 大档：图标 48px，文字 11pt，磁贴间距 10px
-//   - 中档：图标 40px，文字 10pt，磁贴间距 8px
-//   - 小档：图标 28px，文字 9pt， 磁贴间距 6px（接近系统桌面小图标）
+//   - 中档：图标 48px（与大档同尺寸），文字 10pt，磁贴间距 8px
+//   - 小档：图标 32px，文字 9pt， 磁贴间距 6px
+//
+// 中档使用 48px 标准尺寸，避免 40px 非标尺寸导致部分 .ico 加载失败
+// 或缩放时出现白色框等异常。切换档位时必须清空图标缓存。
 func SetDesktopIconSize(size int) {
+	logger.Info("SetDesktopIconSize: ENTER size=%d (0=large/48, 1=medium/48, 2=small/32), dpi=%d, prevBase=%d",
+		size, CurrentDPI(), desktopIconSizeBase)
+	SetDesktopIconSizeLevel(size) // 记录档位
 	switch size {
 	case iconSizeLarge:
 		desktopIconSizeBase = 48
 		setIconFontSize(11) // 大档 11pt
 		setIconGap(10)
 	case iconSizeMedium:
-		desktopIconSizeBase = 40
-		setIconFontSize(10) // 中档 10pt
+		desktopIconSizeBase = 48 // 使用标准 48px，避免 40px 非标尺寸导致 .ico 加载/缩放问题
+		setIconFontSize(10)       // 中档 10pt
 		setIconGap(8)
 	case iconSizeSmall:
-		desktopIconSizeBase = 28
-		setIconFontSize(9) // 小档 9pt（接近系统桌面小图标）
+		desktopIconSizeBase = 32 // 与 Windows 系统小图标尺寸一致
+		setIconFontSize(9) // 小档 9pt
 		setIconGap(6)
 	}
+	logger.Info("SetDesktopIconSize: newBase=%d newTarget=%d", desktopIconSizeBase, DesktopIconSize())
 	// 重置磁贴尺寸测量标记，下次绘制时重新计算
 	ForceTileRemeasure()
+	// 清空图标缓存，强制按新档位重新提取（image 层缓存和 bitmap 层缓存都清）
+	ClearIconCaches()
+}
+
+// ClearIconCaches 清空所有图标缓存（iconCache + GlobalIconBmpCache）
+// 切换图标档位或 DPI 变化后调用，确保新档位按目标尺寸重新加载
+func ClearIconCaches() {
+	cnt := 0
+	iconCache.Range(func(k, v interface{}) bool {
+		iconCache.Delete(k)
+		cnt++
+		return true
+	})
+	GlobalIconBmpCache.Clear()
+	logger.Info("ClearIconCaches: cleared iconCache entries=%d, GlobalIconBmpCache cleared", cnt)
 }
 
 // setIconFontSize 线程安全地设置图标标签字号

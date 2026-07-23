@@ -12,9 +12,10 @@ import (
 )
 
 const (
-	rclickSubclassID = 2
-	rclickMsgID      = 0x8000 + 100 // WM_APP + 100，用于异步投递右键菜单
-	rclickCmdMsgID   = 0x8000 + 101 // WM_APP + 101，后台 goroutine 返回菜单命令结果
+	rclickSubclassID  = 2
+	rclickMsgID       = 0x8000 + 100 // WM_APP + 100，用于异步投递右键菜单
+	rclickCmdMsgID    = 0x8000 + 101 // WM_APP + 101，后台 goroutine 返回菜单命令结果
+	rclickNewCardMsg  = 0x8000 + 102 // WM_APP + 102，延迟执行新建卡片（避免 Win11 菜单残留阻塞对话框）
 
 	MF_STRING       = 0x00000000
 	MF_POPUP        = 0x00000010
@@ -260,7 +261,7 @@ func (dm *DesktopMode) handleContextMenuCommand(cmd int) {
 		dm.Manager.SetIconSizeLevel(0)
 		dm.Refresh()
 	case idViewMediumIcons:
-		logger.Info("设置图标档位: 中 (40px, 9pt)")
+		logger.Info("设置图标档位: 中 (48px, 10pt)")
 		ui.SetDesktopIconSize(1)
 		dm.Manager.SetIconSizeLevel(1)
 		dm.Refresh()

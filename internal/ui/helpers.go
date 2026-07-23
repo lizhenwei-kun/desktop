@@ -72,7 +72,7 @@ func DpiPx(base96 int) int {
 // ============================================================
 
 // desktopIconSizeBase 当前档位下的图标位图基准尺寸（96 DPI）。
-// 大档 48，中档 40，小档 32。实际像素 = DpiPx(desktopIconSizeBase)。
+// 大档 48，中档 48（与大档同尺寸，仅字号/间距不同），小档 32。实际像素 = DpiPx(desktopIconSizeBase)。
 var desktopIconSizeBase = baseDesktopIconSize
 
 // DesktopIconSize 返回图标位图实际像素尺寸（随 DPI + 档位缩放）
@@ -134,6 +134,7 @@ func FreeGridTop() int { return DpiPx(baseFreeGridTop) }
 
 // AutoSelectIconSizeByResolution 根据屏幕分辨率自动选择图标大小档位。
 // 低分辨率（高度 < 1080）使用小图标，高分辨率（高度 >= 1080）使用中图标。
+// 中档图标尺寸与高档相同（48px），仅字号和间距更紧凑。
 // 仅在用户未手动设置过时生效（启动时调用）。
 func AutoSelectIconSizeByResolution(screenW, screenH int) {
 	var level int
@@ -141,7 +142,7 @@ func AutoSelectIconSizeByResolution(screenW, screenH int) {
 	case screenH < 1080:
 		level = 2 // iconSizeSmall (32px)
 	default:
-		level = 1 // iconSizeMedium (40px)
+		level = 1 // iconSizeMedium (48px)
 	}
 	SetDesktopIconSize(level)
 	logger.Debug("autoSelectIconSize: screen=%dx%d, level=%d", screenW, screenH, level)
@@ -259,7 +260,7 @@ func EnsureTileSizeMeasured(_ *walk.Canvas) {
 
 		// 磁贴宽度 = max(图标尺寸 + 24, 文字宽度 + padding)
 		// 基础磁贴宽按图标档位缩放，避免小图标下左右空白过多：
-		//   大档(48)→72，中档(40)→64，小档(32)→56
+		//   大档(48)→72，中档(48)→72，小档(32)→56
 		baseTileW := desktopIconSizeBase + 24
 
 		desktopIconItemWidth = baseTileW
