@@ -141,12 +141,9 @@ func (dm *DesktopMode) checkDelayedRefresh() {
 	dm.Work.Post(func() {
 		logger.Debug("desktopWatcher: directory changed, reloading desktop items")
 		dm.Manager.ReloadDesktopItems()
-		// 数据更新完成后通知 UI 主线程重绘
+		// 数据更新完成后通知 UI 主线程重绘（InvalidateBody 内部会检查窗口可见性）
 		dm.Post(func() {
-			if !dm.MainWindow.Visible() {
-				return
-			}
-			dm.BodyWidget.Invalidate()
+			dm.InvalidateBody()
 		})
 	})
 }

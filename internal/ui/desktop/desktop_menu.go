@@ -219,7 +219,7 @@ func (dm *DesktopMode) handleContextMenuCommand(cmd int) {
 		dm.Refresh()
 	case idViewShowDesktopIcons:
 		dm.IsShowDesktopIcons = !dm.IsShowDesktopIcons
-		dm.BodyWidget.Invalidate()
+		dm.InvalidateBody()
 	case idSortByName:
 		dm.SortBy = 0
 		dm.sortAndRefresh()
@@ -255,7 +255,7 @@ func (dm *DesktopMode) handleContextMenuCommand(cmd int) {
 
 // sortAndRefresh 排序刷新
 func (dm *DesktopMode) sortAndRefresh() {
-	dm.BodyWidget.Invalidate()
+	dm.InvalidateBody()
 }
 
 // autoArrangeIcons 自动排列图标（列优先：从上到下、从左到右）

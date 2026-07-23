@@ -157,7 +157,7 @@ func (dm *DesktopMode) Refresh() {
 	}
 	ui.GlobalIconBmpCache.LoadAll(freePaths)
 
-	dm.BodyWidget.Invalidate()
+	dm.InvalidateBody()
 }
 
 // ReapplyCardPositionsAndRefresh 重新应用卡片位置并强制完全重绘

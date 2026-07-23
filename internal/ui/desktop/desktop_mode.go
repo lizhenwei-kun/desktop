@@ -224,6 +224,16 @@ func (dm *DesktopMode) Post(fn func()) {
 	dm.MainWindow.Synchronize(fn)
 }
 
+// InvalidateBody 使 BodyWidget 无效化并触发重绘。
+// 窗口不可见时跳过，避免触发 WM_PAINT 导致隐藏的窗口意外显示。
+// 窗口重新显示时 showDesktopMode() 会调用 ReapplyCardPositionsAndRefresh() 完成完整刷新。
+func (dm *DesktopMode) InvalidateBody() {
+	if !dm.MainWindow.Visible() {
+		return
+	}
+	dm.BodyWidget.Invalidate()
+}
+
 // HealthLastVisible 返回上次 healthcheck 检测到的窗口可见性
 func (dm *DesktopMode) HealthLastVisible() bool { return dm.healthLastVisible }
 

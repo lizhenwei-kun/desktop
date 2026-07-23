@@ -65,6 +65,6 @@ func (dm *DesktopMode) updateRecycleBinIcon() {
 
 	logger.Debug("recycleBin: nonEmpty=%v, icon cache cleared", dm.RecycleBinState.NonEmpty)
 
-	// 重绘桌面
-	dm.BodyWidget.Invalidate()
+	// 重绘桌面（窗口不可见时自动跳过）
+	dm.InvalidateBody()
 }

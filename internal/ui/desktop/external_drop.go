@@ -109,7 +109,7 @@ func (dm *DesktopMode) handleExternalFilesDrop(files []string, screenX, screenY 
 	}
 
 	// 刷新桌面
-	dm.BodyWidget.Invalidate()
+	dm.InvalidateBody()
 }
 
 // resolveDestPath 如果目标路径已存在，自动添加编号（如 "文件 (2).txt"）

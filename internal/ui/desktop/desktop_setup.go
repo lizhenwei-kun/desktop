@@ -115,7 +115,7 @@ func (dm *DesktopMode) Setup() error {
 			return
 		}
 		if dm.checkItemHover(x, y) {
-			dm.BodyWidget.Invalidate()
+			dm.InvalidateBody()
 		}
 	})
 
@@ -147,7 +147,7 @@ func (dm *DesktopMode) Setup() error {
 				mwRect.Left, mwRect.Top, mwRect.Right-mwRect.Left, mwRect.Bottom-mwRect.Top,
 				screenX, screenY, dm.DragItemPath)
 			dm.clearDragState()
-			dm.BodyWidget.Invalidate()
+			dm.InvalidateBody()
 		} else {
 			// 在应用内部释放：正常内部拖放逻辑
 			dm.handleIconDrop(screenX, screenY)
@@ -215,7 +215,7 @@ func (dm *DesktopMode) delayedSetup() {
 		dm.BodyWidget.SetBoundsPixels(walk.Rectangle{X: 0, Y: 0, Width: dm.WorkW, Height: fullH})
 		dm.reapplyCardPositions()
 		dm.WallpaperState.LoadWallpaper(dm.MainWindow.DPI, dm.WorkW, dm.WorkH)
-		dm.BodyWidget.Invalidate()
+		dm.InvalidateBody()
 
 		// 注册系统事件回调（电源恢复、显示变更、会话结束等自动刷新桌面）
 		dm.WinAPI.SetOnSystemEvent(func() {
@@ -233,7 +233,7 @@ func (dm *DesktopMode) delayedSetup() {
 				// 重新加载壁纸（DPI 变化后位图需要重新生成）
 				dm.WallpaperState.LoadWallpaper(dm.MainWindow.DPI, dm.WorkW, dm.WorkH)
 				dm.reapplyCardPositions()
-				dm.BodyWidget.Invalidate()
+				dm.InvalidateBody()
 			})
 		})
 
@@ -247,7 +247,7 @@ func (dm *DesktopMode) delayedSetup() {
 				dm.reapplyCardPositions()
 				dm.WallpaperState.LoadWallpaper(dm.MainWindow.DPI, dm.WorkW, dm.WorkH)
 				dm.Manager.ReloadDesktopItems()
-				dm.BodyWidget.Invalidate()
+				dm.InvalidateBody()
 			})
 		}()
 	})

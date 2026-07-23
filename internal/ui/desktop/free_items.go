@@ -315,7 +315,7 @@ func (dm *DesktopMode) isInLabelArea(y, tileY int) bool {
 func (dm *DesktopMode) selectItem(itemPath string) {
 	if dm.SelectedPath != itemPath {
 		dm.SelectedPath = itemPath
-		dm.BodyWidget.Invalidate()
+		dm.InvalidateBody()
 	}
 }
 
@@ -329,7 +329,7 @@ func (dm *DesktopMode) clearSelectedItem() {
 	}
 	if dm.SelectedPath != "" {
 		dm.SelectedPath = ""
-		dm.BodyWidget.Invalidate()
+		dm.InvalidateBody()
 	}
 }
 
@@ -424,7 +424,7 @@ func (dm *DesktopMode) setupItemEditSubclass(editHwnd win.HWND, itemPath string)
 				win.DestroyWindow(win.HWND(hwnd))
 				dm.EditHwnd = 0
 				dm.EditingPath = ""
-				dm.BodyWidget.Invalidate()
+				dm.InvalidateBody()
 			})
 			return 0
 		case win.WM_KEYDOWN:
@@ -434,7 +434,7 @@ func (dm *DesktopMode) setupItemEditSubclass(editHwnd win.HWND, itemPath string)
 					win.DestroyWindow(win.HWND(hwnd))
 					dm.EditHwnd = 0
 					dm.EditingPath = ""
-					dm.BodyWidget.Invalidate()
+					dm.InvalidateBody()
 				})
 				return 0
 			}
@@ -443,7 +443,7 @@ func (dm *DesktopMode) setupItemEditSubclass(editHwnd win.HWND, itemPath string)
 					win.DestroyWindow(win.HWND(hwnd))
 					dm.EditHwnd = 0
 					dm.EditingPath = ""
-					dm.BodyWidget.Invalidate()
+					dm.InvalidateBody()
 				})
 				return 0
 			}
@@ -480,7 +480,7 @@ func (dm *DesktopMode) endItemEdit(save bool) {
 		dm.EditHwnd = 0
 	}
 	dm.EditingPath = ""
-	dm.BodyWidget.Invalidate()
+	dm.InvalidateBody()
 }
 
 // commitItemRename 提交图标重命名
@@ -846,7 +846,7 @@ func (dm *DesktopMode) handleIconDrop(screenX, screenY int) {
 	dm.DisposeGhostBmp()
 	// 销毁幽灵窗口
 	dm.destroyGhostWindow()
-	defer dm.BodyWidget.Invalidate()
+	defer dm.InvalidateBody()
 
 	// 清除所有卡片的高亮
 	for _, c := range dm.Cards {

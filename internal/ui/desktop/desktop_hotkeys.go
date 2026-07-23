@@ -41,7 +41,7 @@ func (dm *DesktopMode) setupHotkeys() {
 		// Ctrl+V 粘贴
 		if key == walk.KeyV && walk.ControlDown() {
 			ui.PasteFromClipboard(0, 0)
-			dm.BodyWidget.Invalidate()
+			dm.InvalidateBody()
 			return
 		}
 
@@ -51,7 +51,7 @@ func (dm *DesktopMode) setupHotkeys() {
 				ui.DeleteFileToRecycleBin(dm.SelectedPath)
 				dm.Manager.RemoveItem(dm.SelectedPath)
 				dm.SelectedPath = ""
-				dm.BodyWidget.Invalidate()
+				dm.InvalidateBody()
 			}
 			return
 		}

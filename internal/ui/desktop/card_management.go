@@ -114,7 +114,7 @@ func (dm *DesktopMode) setupCardActions(card *ui.GroupCard, grp config.Group) {
 		if ok && colorStr != "" {
 			dm.Manager.UpdateGroupColor(name, colorStr)
 			card.SetGroupColor(colorStr)
-			dm.BodyWidget.Invalidate()
+			dm.InvalidateBody()
 		}
 	})
 	card.SetOnDelete(func(name string) {
@@ -153,7 +153,7 @@ func (dm *DesktopMode) refreshCards() {
 	dm.Cards = nil
 	dm.createGroupCards()
 	dm.reapplyCardPositions()
-	dm.BodyWidget.Invalidate()
+	dm.InvalidateBody()
 }
 
 // reapplyCardPositions 重新应用所有卡片的绝对定位，并确保卡片 Z-order 在 bodyWidget 上方
