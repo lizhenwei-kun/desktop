@@ -1,0 +1,165 @@
+---
+description: 从 spec 中提炼的关键约束和禁忌
+alwaysApply: true
+enabled: true
+---
+
+# 项目核心规则（从 Spec 提炼）
+
+## 架构约束
+
+### 1. 禁止修改的目录
+- **`walk/` 目录** — 第三方框架代码，**严禁**修改
+- **`src/libgamenet/include/` 和 `src/libtable/`** — 即使需要新枚举值，也只能改 proto 源文件后由生成流程更新
+
+### 2. 日志规范
+- 全项目**必须**统一使用 `logger` 包，**禁止** `fmt.Println` / `log.Printf`
+- 日志在 `NewRunner()` 中**最先**初始化（`O_TRUNC` 覆盖模式，不追加）
+
+### 3. 配置文件
+- 路径固定：`%USERPROFILE%\.desktop_go\config.json`
+- 所有位置/尺寸**必须**使用 `0.0~1.0` 相对坐标
+- 任何分组 CRUD 后**必须** `config.Save`
+
+### 4. 生命周期
+- 三态单向流转：`StateUninit` → `StateReady` → `StateClosing`，**不可逆**
+- 清理函数 **LIFO 顺序**执行
+- 所有状态操作**必须**通过读写锁保护
+
+---
+
+## 桌面模式核心约束
+
+### 5. paint 回调必须每次全量绘制（⚠️ 最重要）
+- `paintDesktop` **禁止**因"非脏"跳过绘制——walk 框架在回调前已擦除客户区，跳过会导致整个桌面内容（壁纸 + 图标 + 卡片）被清空
+- `paintDirty` 仅作标记字段，**不再控制跳过**
+
+### 6. 去边框后布局修复步骤（顺序不能乱）
+```
+SetWindowPosNoRedraw(w+1, h+1) → SetWindowPosNoRedraw(w, h)
+→ container.SetBoundsPixels 铺满
+→ bodyWidget.SetBoundsPixels 铺满
+→ reapplyCardPositions()
+→ bodyWidget.Invalidate()
+```
+
+### 7. 退出清理顺序（缺一不可）
+```
+MarkClosing → ExecuteCleanups → 卸载子类化
+→ ShowDesktopIcons → ShowTaskbar → Close
+```
+
+### 8. Z 序守护
+- 每 500ms 轮询，检测窗口最小化/不可见/不在前台时推回底部
+- **不能干扰**用户打开其他程序
+
+### 9. 刷新时抑制 notifyChange
+`refreshDesktop()` 中调用 `ReloadDesktopItems()` 前**必须**用 `SuppressNotify()` / `UnsuppressNotify()` 包裹，避免触发多余的 `dm.Refresh()` 导致卡片闪烁。
+
+---
+
+## 壁纸管理
+
+### 10. 转 walk 位图必须用 `NewBitmapFromImage`（⚠️ 关键坑）
+- **绝对禁止**用 `NewBitmapFromImageForDPI(img, 96)`——DPI != 96 时壁纸会被二次缩放，表现为**跳动**和**颜色变化**
+- 忽略 `NewBitmapFromImage` 的 deprecation hint
+
+### 11. 壁纸位图读写必须加锁
+- 后台 goroutine 加载，UI 主线程绘制，**禁止**裸读 `WallpaperBmp`
+- 刷新时在 UI 线程捕获 `workW` / `workH` / `dpiFn` 快照后传入后台任务
+
+### 12. 使用 Go 标准库解码壁纸（不用 GDI+）
+- `walk.NewBitmapFromFileForDPI` 底层 GDI+ 加载会有颜色失真（偏青/偏亮）
+
+---
+
+## 右键菜单
+
+### 13. 注册表命令执行必须用 `cmd /c`
+- **禁止**用 `strings.Fields` 拆分命令行，会破坏引号包裹的带空格路径
+
+### 14. IContextMenu::InvokeCommand 的 lpDirectory 必须为 NULL
+- 不能传入文件路径，否则某些 Shell 扩展会误用为工作目录
+
+### 15. 命令 ID 范围
+- 桌面内置：`0x1001-0x1052`
+- 图标内置：`0x2001-0x2031`
+- 桌面注册表：`0x3000+`
+- 文件注册表：`0x4000+`
+- 发送到：`0x5000+`
+- **不得**重叠
+
+---
+
+## 分组管理
+
+### 16. 新文件默认未分组（⚠️ 重要变更）
+- `ReloadDesktopItems` 中新增文件**必须**保持未分组（`gName=""`）
+- **禁止**调用 `groupForPath` 自动分类——旧逻辑导致用户文件"消失"
+
+### 17. 删除分组时项目不丢失
+- 删除分组时其中的项目**必须**移回未分组，**不能**删除文件
+
+### 18. 桌面同步扫描两个目录
+- `%USERPROFILE%\Desktop` 和 `C:\Users\Public\Desktop`，跳过 `desktop.ini`
+
+---
+
+## 图标与磁贴
+
+### 19. hoveredIdx 必须初始化为 -1
+- Go int 零值为 0，初始化为 0 会导致第一个图标在未悬停时默认高亮
+
+### 20. 磁贴尺寸固定
+- 74x96 px，图标 48x48 居中，文字顶部偏移 56
+- 文字最多 2 行，第 2 行超长省略号截断
+
+### 21. 图标提取
+- LNK 文件**必须**解析 LNK 二进制格式获取实际目标路径
+- 低质量图标自动回退（可见像素 < 总面积/10）
+- BGRA 转 RGBA
+
+---
+
+## 分组卡片
+
+### 22. 拖拽触发条件
+- 仅**标题栏空白处**（y < 30 且不在操作按钮热区）长按 **3 秒**
+- 操作按钮和图标区**禁止**触发
+
+### 23. 竞态保护
+- `MouseDown` 设 `isPressed=true`，`MouseUp` 设 `false`
+- goroutine 3 秒后**必须**检查 `isPressed` 才置 `isDragging=true`
+
+### 24. 最小尺寸
+- 卡片最小 220x160 px，缩放**不得**低于此值
+
+---
+
+## 系统事件
+
+### 25. 定时自检每 30 秒执行一次
+- 检测窗口可见性和父窗口是否变更，异常时自动恢复
+- `FindShellWorkerW` 中的 `0x052C` 消息超时降至 500ms
+
+### 26. 系统事件触发 refreshDesktop
+- 电源恢复（`WM_POWERBROADCAST`）和显示变更（`WM_DISPLAYCHANGE`）通过窗口子类化拦截
+
+---
+
+## 其他
+
+### 27. 单实例保护
+- 使用 `CreateMutexW("Global\\DesktopGo_SingleInstance")`
+- 已有实例运行时**必须**静默退出（`os.Exit(0)`），不弹窗
+
+### 28. 关闭窗口隐藏到托盘（不退出）
+- `Closing` 事件中**不能**直接退出，只有托盘菜单"退出"才真正退出
+
+### 29. 对话框
+- 颜色选择**必须**用系统 `ChooseColorW` API，**禁止**自行实现
+
+### 30. 磁贴尺寸测量
+- **禁止**使用 `walk.Canvas.MeasureTextPixels`（精度不可靠）
+- 改用 Win32 API `GetTextExtentPoint32`
+- 文本换行考虑中英文宽度差异（全角 2 单位，半角 1 单位）
