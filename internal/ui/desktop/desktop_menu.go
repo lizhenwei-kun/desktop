@@ -454,8 +454,8 @@ func (dm *DesktopMode) refreshDesktop() {
 			ui.GlobalIconBmpCache.LoadAll(freePaths)
 		}
 
-		// 重新加载壁纸
-		dm.WallpaperState.LoadWallpaper(dm.MainWindow.DPI, dm.WorkW, dm.WorkH)
+		// 按全屏尺寸重新加载壁纸，对齐系统桌面
+		dm.WallpaperState.LoadWallpaper(dm.MainWindow.DPI, dm.ScreenW, dm.ScreenH, dm.WorkX, dm.WorkY, dm.WorkW, dm.WorkH)
 
 		// 重建卡片必须在 UI 主线程执行（操作 walk 控件树）
 		dm.Post(func() {

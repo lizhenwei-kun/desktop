@@ -204,6 +204,10 @@ type DesktopMode struct {
 	bgBrush     walk.Brush   // 背景色刷子（0x1A1A2E）
 	btnBrush    walk.Brush   // 工具栏按钮刷子（0x30343C）
 	toolbarFont *walk.Font   // 工具栏字体（Microsoft YaHei 14）
+
+	// 脏标记：系统触发的 WM_PAINT 但无内容变化时跳过全量绘制
+	// 主动调用 InvalidateBody 或数据变更时设置为 true，paintDesktop 消费后清 false
+	paintDirty bool
 }
 
 // NewDesktopMode 创建桌面模式
@@ -237,7 +241,7 @@ func (dm *DesktopMode) Post(fn func()) {
 }
 
 // InvalidateBody 使 BodyWidget 无效化并触发重绘。
-// 窗口不可见时跳过，避免触发 WM_PAINT 导致隐藏的窗口意外显示。
+// 设置脏标记确保 paintDesktop 执行全量绘制；窗口不可见时跳过。
 // 窗口重新显示时 showDesktopMode() 会调用 ReapplyCardPositionsAndRefresh() 完成完整刷新。
 var invalidateCount int
 
@@ -245,6 +249,7 @@ func (dm *DesktopMode) InvalidateBody() {
 	if !dm.MainWindow.Visible() {
 		return
 	}
+	dm.paintDirty = true
 	invalidateCount++
 	if invalidateCount <= 5 {
 		logger.Debug("DesktopMode.InvalidateBody #%d: calling BodyWidget.Invalidate", invalidateCount)

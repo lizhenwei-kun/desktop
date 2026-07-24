@@ -10,6 +10,7 @@ import (
 	"github.com/fsnotify/fsnotify"
 
 	"desktop_go/internal/logger"
+	"desktop_go/internal/ui"
 )
 
 // DesktopWatcherState 桌面目录文件变更监听状态
@@ -140,6 +141,16 @@ func (dm *DesktopMode) checkDelayedRefresh() {
 	dm.Work.Post(func() {
 		logger.Debug("desktopWatcher: directory changed, reloading desktop items")
 		dm.Manager.ReloadDesktopItems()
+
+		// 预加载新文件的图标缓存，避免绘制时逐个按需加载导致卡顿
+		freePaths := make([]string, 0)
+		for _, item := range dm.Manager.GetUngroupedItems() {
+			freePaths = append(freePaths, item.Path)
+		}
+		if len(freePaths) > 0 {
+			ui.GlobalIconBmpCache.LoadAll(freePaths)
+		}
+
 		// 数据更新完成后通知 UI 主线程重绘（InvalidateBody 内部会检查窗口可见性）
 		dm.Post(func() {
 			dm.InvalidateBody()

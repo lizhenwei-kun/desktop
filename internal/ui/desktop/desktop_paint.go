@@ -2,7 +2,6 @@ package desktop
 
 import (
 	"github.com/lxn/walk"
-	"github.com/lxn/win"
 
 	"desktop_go/internal/logger"
 	"desktop_go/internal/ui"
@@ -12,6 +11,14 @@ var paintCount int
 
 func (dm *DesktopMode) paintDesktop(canvas *walk.Canvas, updateBounds walk.Rectangle) error {
 	bounds := dm.BodyWidget.ClientBoundsPixels()
+
+	// 脏标记检查：只有主动标记为脏时才执行全量绘制
+	// 系统触发的 WM_PAINT（窗口遮挡/恢复/Z序变化等）直接跳过，避免不必要的全量重绘
+	if !dm.paintDirty {
+		return nil
+	}
+	dm.paintDirty = false
+
 	paintCount++
 	if paintCount <= 3 {
 		logger.Debug("paintDesktop #%d: bounds=(%d,%d,%dx%d), wallpaperBmp=%v",
@@ -140,47 +147,21 @@ func (dm *DesktopMode) Refresh() {
 	for _, card := range dm.Cards {
 		card.Refresh()
 	}
-	// 预加载未分组图标的图标缓存
-	ungrouped := dm.Manager.GetUngroupedItems()
-	freePaths := make([]string, 0, len(ungrouped))
-	for _, item := range ungrouped {
-		freePaths = append(freePaths, item.Path)
-	}
-	ui.GlobalIconBmpCache.LoadAll(freePaths)
 
 	dm.InvalidateBody()
 }
 
-// ReapplyCardPositionsAndRefresh 重新应用卡片位置并强制完全重绘
+// ReapplyCardPositionsAndRefresh 重新应用卡片位置并触发全量重绘
 // 用于窗口从隐藏变为可见后的完整刷新
 func (dm *DesktopMode) ReapplyCardPositionsAndRefresh() {
-	// 重新应用卡片位置和 Z 序
+	// 重新应用卡片位置
 	dm.reapplyCardPositions()
-	// 把 BodyWidget 在 Z 序中置顶，确保其上绘制的未分组图标不被卡片覆盖
-	win.SetWindowPos(dm.BodyWidget.Handle(), win.HWND_TOP, 0, 0, 0, 0,
-		win.SWP_NOMOVE|win.SWP_NOSIZE|win.SWP_NOACTIVATE)
+
 	// 刷新所有卡片内容
 	for _, card := range dm.Cards {
 		card.Refresh()
 	}
-	// 预加载未分组图标的图标缓存
-	ungrouped := dm.Manager.GetUngroupedItems()
-	freePaths := make([]string, 0, len(ungrouped))
-	for _, item := range ungrouped {
-		freePaths = append(freePaths, item.Path)
-	}
-	ui.GlobalIconBmpCache.LoadAll(freePaths)
 
-	// 使 BodyWidget 无效化，触发重绘
-	dm.WinAPI.InvalidateRect(win.HWND(dm.BodyWidget.Handle()))
-	// 发送 WM_SIZE 让 walk 重新布局
-	dm.WinAPI.SendWMSize(win.HWND(dm.BodyWidget.Handle()))
-	// 强制立即重绘（不等待消息队列）
-	dm.WinAPI.UpdateWindow(win.HWND(dm.BodyWidget.Handle()))
-	// 同时强制主窗口立即重绘
-	dm.WinAPI.UpdateWindow(win.HWND(dm.MainWindow.Handle()))
-
-	// 再次确保 BodyWidget Z 序置顶（重绘和布局后可能被覆盖）
-	win.SetWindowPos(dm.BodyWidget.Handle(), win.HWND_TOP, 0, 0, 0, 0,
-		win.SWP_NOMOVE|win.SWP_NOSIZE|win.SWP_NOACTIVATE)
+	// 设置脏标记并通过 InvalidateBody 触发重绘（内部已处理窗口可见性检查）
+	dm.InvalidateBody()
 }
