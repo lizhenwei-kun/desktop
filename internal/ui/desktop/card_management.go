@@ -163,6 +163,9 @@ func (dm *DesktopMode) setupCardActions(card *ui.GroupCard, grp config.Group) {
 func (dm *DesktopMode) refreshCards() {
 	groups := dm.Manager.GetGroups()
 
+	// 冻结桌面 bodyWidget 重绘，所有卡片刷新完再一次性显示
+	win.SendMessage(dm.BodyWidget.Handle(), win.WM_SETREDRAW, 0, 0)
+
 	// 当前分组名集合
 	groupNames := make(map[string]bool, len(groups))
 	for _, g := range groups {
@@ -208,7 +211,11 @@ func (dm *DesktopMode) refreshCards() {
 	}
 
 	dm.reapplyCardPositions()
-	dm.InvalidateBody()
+
+	// 解冻并一次性刷新
+	win.SendMessage(dm.BodyWidget.Handle(), win.WM_SETREDRAW, 1, 0)
+	win.InvalidateRect(dm.BodyWidget.Handle(), nil, false)
+	win.UpdateWindow(dm.BodyWidget.Handle())
 }
 
 // reapplyCardPositions 重新应用所有卡片的绝对定位，并确保卡片 Z-order 在 bodyWidget 上方
