@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"bytes"
 	"encoding/binary"
 	"image"
 	"image/color"
@@ -8,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"syscall"
@@ -447,42 +449,113 @@ func (ie *IconExtractor) extractIconExtraLarge(filePath string) (image.Image, er
 // 按目标 rect 自动完成（walk 内部用高质量拉伸），避免反复重新提取。
 // ExtractIcoFromMemory 从内存中的 .ico 数据加载图标，无需写入临时文件
 func (ie *IconExtractor) ExtractIcoFromMemory(data []byte) image.Image {
-	// LookupIconIdFromDirectoryEx 找到最适合请求尺寸的图标条目索引
-	dirData := data
+	// ICO 格式解码（Go 原生，不依赖 CreateIconFromResourceEx Win32 API）
+	// ICO 文件格式：
+	//   [6 bytes header] reserved(2) + type(2) + count(2)
+	//   [16*count bytes directory entries]
+	//   [image data blocks] 每个条目可以是 PNG 或 BMP（BGRA）
 	if len(data) < 6 {
 		return nil
 	}
-	// .ico 头前 4 字节保留，第 4-5 字节是图像数量
-	// 目录条目从第 6 字节开始
-	entryIdx, _, _ := procLookupIconIdFromDirEx.Call(
-		uintptr(unsafe.Pointer(&dirData[0])),
-		1, // 仅查找（不加载）
-		0, 0,
-		uintptr(LR_DEFAULTSIZE),
-	)
-	_ = entryIdx
-
-	// 用 CreateIconFromResourceEx 从内存创建 HICON
-	hIcon, _, _ := procCreateIconFromResourceEx.Call(
-		uintptr(unsafe.Pointer(&data[0])),
-		uintptr(len(data)),
-		1, // TRUE = 创建图标
-		0x00030000, // 版本 3.0
-		0, 0, // 默认尺寸
-		uintptr(LR_DEFAULTSIZE),
-	)
-	if hIcon == 0 {
-		logger.Warn("ExtractIcoFromMemory: CreateIconFromResourceEx failed")
+	count := int(binary.LittleEndian.Uint16(data[4:6]))
+	if count == 0 {
 		return nil
 	}
-	defer procDestroyIcon.Call(hIcon)
-
-	img, err := ie.hIconToImage(hIcon)
-	if err != nil {
-		logger.Warn("ExtractIcoFromMemory: hIconToImage failed: %v", err)
+	dirOffset := 6
+	if len(data) < dirOffset+count*16 {
 		return nil
 	}
-	return img
+
+	// 优先选最大尺寸的条目（256x256 通常用 PNG 存储，解码质量最高）
+	type icoEntry struct {
+		offset uint32
+		size   uint32
+		w, h  int
+	}
+	entries := make([]icoEntry, 0, count)
+	for i := 0; i < count; i++ {
+		base := dirOffset + i*16
+		w := int(data[base])
+		h := int(data[base+1])
+		if w == 0 {
+			w = 256
+		}
+		if h == 0 {
+			h = 256
+		}
+		size := binary.LittleEndian.Uint32(data[base+8:])
+		offset := binary.LittleEndian.Uint32(data[base+12:])
+		if int(offset)+int(size) > len(data) {
+			continue
+		}
+		entries = append(entries, icoEntry{offset: offset, size: size, w: w, h: h})
+	}
+	if len(entries) == 0 {
+		return nil
+	}
+
+	// 按尺寸从大到小排序
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].w > entries[j].w
+	})
+
+	for _, entry := range entries {
+		imgData := data[entry.offset : entry.offset+entry.size]
+
+		// 尝试 PNG 解码（大尺寸图标通常用 PNG 格式）
+		if img, err := png.Decode(bytes.NewReader(imgData)); err == nil {
+			return img
+		}
+
+		// BMP 格式解码（小尺寸图标用 BGRA 位图）
+		// BMP 结构：BITMAPINFOHEADER(40 bytes) + BGRA pixels + AND mask
+		if len(imgData) < 40 {
+			continue
+		}
+		bmpHeaderSize := int(binary.LittleEndian.Uint32(imgData[0:4]))
+		if bmpHeaderSize < 40 || len(imgData) < bmpHeaderSize {
+			continue
+		}
+		bmpW := int(binary.LittleEndian.Uint32(imgData[4:8]))
+		bmpH := int(binary.LittleEndian.Uint32(imgData[8:12]))
+		bpp := binary.LittleEndian.Uint16(imgData[14:16])
+		if bpp != 32 {
+			continue
+		}
+		// BMP 高度 = 实际高度 * 2（包含 AND 掩码），所以实际高度 = bmpH/2
+		actualH := bmpH / 2
+		if actualH <= 0 {
+			continue
+		}
+		pixelOffset := bmpHeaderSize
+		rowSize := bmpW * 4
+		if len(imgData) < pixelOffset+rowSize*actualH {
+			continue
+		}
+
+		img := image.NewRGBA(image.Rect(0, 0, bmpW, actualH))
+		for y := 0; y < actualH; y++ {
+			// BMP 是 bottom-up 存储
+			srcY := actualH - 1 - y
+			for x := 0; x < bmpW; x++ {
+				px := pixelOffset + (srcY*bmpW+x)*4
+				if px+3 >= len(imgData) {
+					continue
+				}
+				// BGRA -> RGBA
+				img.SetRGBA(x, y, color.RGBA{
+					R: imgData[px+2],
+					G: imgData[px+1],
+					B: imgData[px+0],
+					A: imgData[px+3],
+				})
+			}
+		}
+		return img
+	}
+
+	logger.Warn("ExtractIcoFromMemory: all entries failed to decode")
+	return nil
 }
 
 func (ie *IconExtractor) ExtractIcoFile(filePath string) image.Image {
@@ -770,18 +843,41 @@ func (ie *IconExtractor) getFallbackIcon(filePath string) image.Image {
 
 // GetSystemIconImage 获取系统图标（如"此电脑"），使用 SHGetKnownFolderIDList + SHGetImageList
 // 通过 KNOWNFOLDERID 获取系统文件夹 PIDL，从系统图标列表提取 48x48 高清图标
-func (ie *IconExtractor) GetSystemIconImage() (image.Image, error) {
+func (ie *IconExtractor) GetSystemIconImage(shellPath string) (image.Image, error) {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 	ComInitThread()
 
-	// FOLDERID_ComputerFolder = {0AC0837C-BBF8-452A-850D-79D08E667CA7}
-	folderID := [...]byte{
-		0x7C, 0x83, 0xC0, 0x0A,
-		0xF8, 0xBB,
-		0x2A, 0x45,
-		0x85, 0x0D,
-		0x79, 0xD0, 0x8E, 0x66, 0x7C, 0xA7,
+	// 根据 shell: 路径选择对应的 FOLDERID
+	var folderID [16]byte
+	switch {
+	case strings.HasPrefix(shellPath, "shell:RecycleBinFolder"):
+		// FOLDERID_RecycleBinFolder = {B7534046-3ECB-4C18-BE4E-64CD4CB7D6AC}
+		folderID = [...]byte{
+			0x46, 0x40, 0x53, 0xB7,
+			0xCB, 0x3E,
+			0x18, 0x4C,
+			0xBE, 0x4E,
+			0x64, 0xCD, 0x4C, 0xB7, 0xD6, 0xAC,
+		}
+	case strings.HasPrefix(shellPath, "shell:NetworkFolder"):
+		// FOLDERID_NetworkFolder = {D20BEEC4-5CA8-4905-AE3B-BF251EA09B53}
+		folderID = [...]byte{
+			0xC4, 0xEE, 0x0B, 0xD2,
+			0xA8, 0x5C,
+			0x05, 0x49,
+			0xAE, 0x3B,
+			0xBF, 0x25, 0x1E, 0xA0, 0x9B, 0x53,
+		}
+	default:
+		// FOLDERID_ComputerFolder = {0AC0837C-BBF8-452A-850D-79D08E667CA7}
+		folderID = [...]byte{
+			0x7C, 0x83, 0xC0, 0x0A,
+			0xF8, 0xBB,
+			0x2A, 0x45,
+			0x85, 0x0D,
+			0x79, 0xD0, 0x8E, 0x66, 0x7C, 0xA7,
+		}
 	}
 	var pidl uintptr
 	hr, _, _ := procSHGetKnownFolderIDList.Call(

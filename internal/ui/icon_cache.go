@@ -116,26 +116,12 @@ func (c *IconBmpCache) extractAndCache(path string) *walk.Bitmap {
 	return bmp
 }
 
-// loadEmbeddedSystemIcon 加载系统图标：优先从嵌入 ico 数据（内存）加载，回退到系统提取
+// loadEmbeddedSystemIcon 加载系统图标：直接走系统提取（SHGetKnownFolderIDList + SHGetImageList），
+// 不使用嵌入的 ico 文件。嵌入的 ico 在 BMP 格式解码时存在毛边和颜色问题，
+// 系统 API 提取的图标是系统原生渲染，效果最佳。
 func loadEmbeddedSystemIcon(shellPath string, extractor *IconExtractor) (image.Image, error) {
-	embeddedFile := embeddedIcoPath(shellPath)
-
-	// 从嵌入 FS 读取数据，直接从内存创建 HICON，避免写入临时文件
-	if embeddedFile != "" && EmbeddedIcoFS != nil {
-		data, err := fs.ReadFile(EmbeddedIcoFS, embeddedFile)
-		if err == nil {
-			img := extractor.ExtractIcoFromMemory(data)
-			if img != nil {
-				logger.Debug("loadEmbeddedSystemIcon: embedded %s from memory (%dx%d)", embeddedFile, img.Bounds().Dx(), img.Bounds().Dy())
-				return img, nil
-			}
-			logger.Warn("loadEmbeddedSystemIcon: embedded %s extract failed, fallback to system", embeddedFile)
-		}
-	}
-
-	// 回退到系统提取（SHGetKnownFolderIDList + SHGetImageList）
 	logger.Debug("loadEmbeddedSystemIcon: system extraction for %s", shellPath)
-	return extractor.GetSystemIconImage()
+	return extractor.GetSystemIconImage(shellPath)
 }
 
 // systemIconCLSID 根据 shell: 路径返回对应的 CLSID 路径（供 program.go 执行用）
