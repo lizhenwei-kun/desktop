@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"desktop_go/internal/config"
 )
@@ -101,10 +102,11 @@ func parseLnkTarget(lnkPath string) string {
 
 // Manager 分组数据管理器
 type Manager struct {
-	cfg       *config.Config
-	mu        sync.RWMutex
-	onChange  func()
-	itemOrder map[string][]string // groupName -> ordered path list (in-memory, for drag reorder)
+	cfg            *config.Config
+	mu             sync.RWMutex
+	onChange       func()
+	suppressNotify int32 // >0 时 notifyChange 跳过回调（原子操作，用于批量操作避免重复刷新）
+	itemOrder      map[string][]string // groupName -> ordered path list (in-memory, for drag reorder)
 }
 
 // NewManager 创建分组管理器
@@ -121,6 +123,17 @@ func (m *Manager) SetOnChange(fn func()) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.onChange = fn
+}
+
+// SuppressNotify 临时抑制 notifyChange 回调（原子操作，可嵌套调用）
+// 调用一次 SuppressNotify 必须对应一次 UnsuppressNotify
+func (m *Manager) SuppressNotify() {
+	atomic.AddInt32(&m.suppressNotify, 1)
+}
+
+// UnsuppressNotify 恢复 notifyChange 回调（原子操作）
+func (m *Manager) UnsuppressNotify() {
+	atomic.AddInt32(&m.suppressNotify, -1)
 }
 
 // SetFreeItemIndex 设置未分组项的网格索引（列优先：从上到下、从左到右）
@@ -152,6 +165,9 @@ func (m *Manager) RemoveFreeItemIndex(path string) {
 
 // notifyChange 通知变更
 func (m *Manager) notifyChange() {
+	if atomic.LoadInt32(&m.suppressNotify) > 0 {
+		return
+	}
 	if m.onChange != nil {
 		m.onChange()
 	}

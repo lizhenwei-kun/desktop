@@ -220,19 +220,17 @@ func (dm *DesktopMode) refreshCards() {
 
 	dm.reapplyCardPositions()
 
-	// 解冻并一次性刷新所有窗口
-	logger.Debug("refreshCards #%d: unfreeze + invalidate", refreshCardsCount)
+	// 解冻所有窗口，让系统自然处理挂起的重绘请求。
+	// 不要在此处额外调用 InvalidateRect/UpdateWindow，因为：
+	// 1. ReapplyBounds 中的 SetBoundsPixels + Invalidate 已在冻结期间标记了脏区域
+	// 2. 额外的 UpdateWindow 强制同步重绘会阻塞 UI 线程，且多次强制重绘导致闪烁
+	// 3. WM_SETREDRAW 1 恢复后系统会自动处理所有挂起的无效区域
+	logger.Debug("refreshCards #%d: unfreeze (no force redraw)", refreshCardsCount)
 	for _, card := range dm.Cards {
 		win.SendMessage(card.Container().Handle(), win.WM_SETREDRAW, 1, 0)
 		win.SendMessage(card.BodyWidgetHandle(), win.WM_SETREDRAW, 1, 0)
-		win.InvalidateRect(card.Container().Handle(), nil, false)
-		win.InvalidateRect(card.BodyWidgetHandle(), nil, false)
-		win.UpdateWindow(card.Container().Handle())
-		win.UpdateWindow(card.BodyWidgetHandle())
 	}
 	win.SendMessage(dm.BodyWidget.Handle(), win.WM_SETREDRAW, 1, 0)
-	win.InvalidateRect(dm.BodyWidget.Handle(), nil, false)
-	win.UpdateWindow(dm.BodyWidget.Handle())
 }
 
 // reapplyCardPositions 重新应用所有卡片的绝对定位，并确保卡片 Z-order 在 bodyWidget 上方

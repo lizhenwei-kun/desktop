@@ -458,8 +458,15 @@ func (dm *DesktopMode) refreshDesktop() {
 	dm.Work.Post(func() {
 		defer func() { refreshDesktopPending = false }()
 
+		// 抑制 ReloadDesktopItems 触发的 onChange 回调（会投递 dm.Refresh() 到 UI 线程），
+		// 避免与下面 dm.Post(refreshCards) 重复刷新卡片导致闪烁。
+		// refreshCards 内部已完成全量刷新，无需额外的 dm.Refresh()。
+		dm.Manager.SuppressNotify()
+
 		// 重新同步桌面项（以系统桌面目录为准）
 		dm.Manager.ReloadDesktopItems()
+
+		dm.Manager.UnsuppressNotify()
 
 		// 预加载未分组图标缓存
 		freePaths := make([]string, 0)
