@@ -186,9 +186,8 @@ func (dm *DesktopMode) refreshCards() {
 	for _, card := range dm.Cards {
 		name := card.GroupName()
 		if groupNames[name] {
-			// 分组仍存在：就地刷新内容与位置（不销毁窗口，避免闪烁）
+			// 分组仍存在：就地刷新内容（不重设位置，reapplyCardPositions 统一处理）
 			card.Refresh()
-			card.ReapplyBounds()
 			kept = append(kept, card)
 		} else {
 			// 分组已被删除：销毁卡片
