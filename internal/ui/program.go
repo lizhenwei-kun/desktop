@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+
+	"desktop_go/internal/logger"
 )
 
 // Windows 进程创建标志
@@ -21,51 +23,77 @@ func NewProgramExecutor() *ProgramExecutor {
 	return &ProgramExecutor{}
 }
 
-// Execute 执行程序或打开文件
+// Execute 执行程序或打开文件（在后台 goroutine 中异步执行，不阻塞 UI 主线程）
 func (pe *ProgramExecutor) Execute(path string) error {
+	logger.Debug("ProgramExecutor.Execute: path=%q", path)
+	go pe.executeAsync(path)
+	return nil
+}
+
+// executeAsync 在后台 goroutine 中执行程序
+func (pe *ProgramExecutor) executeAsync(path string) {
+	logger.Debug("ProgramExecutor.executeAsync: path=%q goroutine start", path)
+	defer logger.Debug("ProgramExecutor.executeAsync: path=%q goroutine end", path)
+
 	// 系统桌面项（shell: 前缀）
 	if strings.HasPrefix(path, "shell:") {
-		return pe.executeSystemItem(path)
+		pe.executeSystemItem(path)
+		return
 	}
 
 	ext := strings.ToLower(filepath.Ext(path))
 	if ext == ".exe" {
-		return pe.executeExe(path)
+		pe.executeExe(path)
+		return
 	}
-	return pe.openWithAssoc(path)
+	pe.openWithAssoc(path)
 }
 
 // executeSystemItem 执行系统桌面项
-func (pe *ProgramExecutor) executeSystemItem(path string) error {
+func (pe *ProgramExecutor) executeSystemItem(path string) {
 	clsid := systemIconCLSID(path)
+	logger.Debug("ProgramExecutor.executeSystemItem: path=%q clsid=%q", path, clsid)
 	if clsid == "" {
-		return nil
+		return
 	}
-	// 用 explorer.exe 打开系统文件夹
 	cmd := exec.Command("explorer.exe", clsid)
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		HideWindow: false,
 	}
-	return cmd.Start()
+	if err := cmd.Start(); err != nil {
+		logger.Warn("ProgramExecutor.executeSystemItem: cmd.Start failed: %v", err)
+		return
+	}
+	logger.Debug("ProgramExecutor.executeSystemItem: cmd.Start ok")
 }
 
 // executeExe 直接启动 exe 程序
-func (pe *ProgramExecutor) executeExe(path string) error {
+func (pe *ProgramExecutor) executeExe(path string) {
+	logger.Debug("ProgramExecutor.executeExe: path=%q", path)
 	cmd := exec.Command(path)
 	cmd.Dir = filepath.Dir(path)
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		HideWindow:    true,
 		CreationFlags: CREATE_NEW_CONSOLE | CREATE_NEW_PROCESS_GROUP,
 	}
-	return cmd.Start()
+	if err := cmd.Start(); err != nil {
+		logger.Warn("ProgramExecutor.executeExe: cmd.Start failed: %v", err)
+		return
+	}
+	logger.Debug("ProgramExecutor.executeExe: cmd.Start ok")
 }
 
 // openWithAssoc 使用关联程序打开文件
-func (pe *ProgramExecutor) openWithAssoc(path string) error {
+func (pe *ProgramExecutor) openWithAssoc(path string) {
+	logger.Debug("ProgramExecutor.openWithAssoc: path=%q", path)
 	cmd := exec.Command("cmd", "/c", "start", "", path)
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		HideWindow:    true,
 		CreationFlags: CREATE_NEW_CONSOLE | CREATE_NEW_PROCESS_GROUP,
 	}
-	return cmd.Start()
+	if err := cmd.Start(); err != nil {
+		logger.Warn("ProgramExecutor.openWithAssoc: cmd.Start failed: %v", err)
+		return
+	}
+	logger.Debug("ProgramExecutor.openWithAssoc: cmd.Start ok")
 }

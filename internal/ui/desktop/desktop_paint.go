@@ -16,10 +16,8 @@ var paintCount int
 func (dm *DesktopMode) paintDesktop(canvas *walk.Canvas, updateBounds walk.Rectangle) error {
 	bounds := dm.BodyWidget.ClientBoundsPixels()
 	paintCount++
-	if paintCount <= 3 {
-		logger.Debug("paintDesktop #%d: bounds=(%d,%d,%dx%d), wallpaperBmp=%v",
-			paintCount, bounds.X, bounds.Y, bounds.Width, bounds.Height, dm.WallpaperBmp != nil)
-	}
+	logger.Debug("paintDesktop #%d: bounds=(%d,%d,%dx%d), wallpaperBmp=%v",
+		paintCount, bounds.X, bounds.Y, bounds.Width, bounds.Height, dm.WallpaperBmp != nil)
 	// 确保磁贴尺寸已测量（切换图标大小后 ForceTileRemeasure 会触发重新测量）
 	// 必须在 paintAllIcons 之前调用，否则 TileWidth/TileHeight 可能还是旧档位的值
 	ui.EnsureTileSizeMeasured(canvas)
@@ -149,9 +147,11 @@ func drawIconLabel(canvas *walk.Canvas, font *walk.Font, lines []string, x, labe
 
 // Refresh 刷新桌面模式
 func (dm *DesktopMode) Refresh() {
+	logger.Debug("DesktopMode.Refresh: ENTER")
 	// 窗口不可见时跳过刷新，避免触发 WM_PAINT 导致窗口意外显示
 	// 窗口重新显示时 showDesktopMode() 会调用 ReapplyCardPositionsAndRefresh() 完成完整刷新
 	if !dm.MainWindow.Visible() {
+		logger.Debug("DesktopMode.Refresh: window not visible, skipping")
 		return
 	}
 	// 刷新所有卡片内容

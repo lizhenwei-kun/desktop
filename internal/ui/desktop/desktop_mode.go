@@ -232,6 +232,7 @@ func (dm *DesktopMode) InvalidateBody() {
 	if !dm.MainWindow.Visible() {
 		return
 	}
+	logger.Debug("DesktopMode.InvalidateBody: calling BodyWidget.Invalidate")
 	dm.BodyWidget.Invalidate()
 }
 

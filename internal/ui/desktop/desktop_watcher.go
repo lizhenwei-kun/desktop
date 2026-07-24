@@ -115,9 +115,8 @@ func (dm *DesktopMode) handleWatchEvent(event fsnotify.Event) {
 		return
 	}
 
-	// 只关注创建、删除、写入、重命名
-	if event.Has(fsnotify.Create) || event.Has(fsnotify.Remove) ||
-		event.Has(fsnotify.Write) || event.Has(fsnotify.Rename) || event.Has(fsnotify.Chmod) {
+	// 只关注创建、删除、重命名（忽略 Write/Chmod，避免程序运行时频繁写入触发刷新）
+	if event.Has(fsnotify.Create) || event.Has(fsnotify.Remove) || event.Has(fsnotify.Rename) {
 		dm.DesktopWatcherState.lastChangeTime = time.Now()
 		dm.DesktopWatcherState.changePending = true
 		logger.Debug("desktopWatcher: event %s, pending refresh", event)

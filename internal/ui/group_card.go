@@ -262,8 +262,10 @@ func (gc *GroupCard) setupMouseEvents() {
 			if gc.lastClickIdx == idx && !gc.lastClickTime.IsZero() &&
 				time.Since(gc.lastClickTime) < doubleClickMs*time.Millisecond {
 				// 双击→执行程序
+				logger.Debug("GroupCard.MouseDown: DOUBLE-CLICK detected, path=%q", gc.items[idx].Path)
 				gc.executor.Execute(gc.items[idx].Path)
 				gc.lastClickTime = time.Time{}
+				logger.Debug("GroupCard.MouseDown: Execute returned, returning")
 				return
 			}
 			// 单击→选中

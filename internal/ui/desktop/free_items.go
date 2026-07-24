@@ -234,8 +234,10 @@ func (dm *DesktopMode) handleDesktopMouseDown(x, y int, button walk.MouseButton)
 			// 双击检测
 			if dm.LastClickPath == item.Path && !dm.LastClickTime.IsZero() &&
 				time.Since(dm.LastClickTime) < 500*time.Millisecond {
+				logger.Debug("handleDesktopMouseDown: DOUBLE-CLICK detected, path=%q", item.Path)
 				dm.Executor.Execute(item.Path)
 				dm.LastClickTime = time.Time{}
+				logger.Debug("handleDesktopMouseDown: Execute returned, returning")
 				return
 			}
 
