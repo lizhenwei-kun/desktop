@@ -9,21 +9,14 @@ import (
 
 var paintCount int
 
-var paintSkippedCount int
-
 func (dm *DesktopMode) paintDesktop(canvas *walk.Canvas, updateBounds walk.Rectangle) error {
 	bounds := dm.BodyWidget.ClientBoundsPixels()
 
-	// 脏标记检查：只有主动标记为脏时才执行全量绘制
-	// 系统触发的 WM_PAINT（窗口遮挡/恢复/Z序变化等）直接跳过，避免不必要的全量重绘
-	if !dm.paintDirty {
-		paintSkippedCount++
-		if paintSkippedCount <= 5 {
-			logger.Debug("paintDesktop: SKIPPED (paintDirty=false) #%d, bounds=(%d,%d,%dx%d)",
-				paintSkippedCount, bounds.X, bounds.Y, bounds.Width, bounds.Height)
-		}
-		return nil
-	}
+	// 注意：每次 WM_PAINT 都必须执行全量绘制。
+	// 不能因为"非脏"就跳过：CustomWidget 的 paint 回调执行前 walk 已擦除客户区，
+	// 若跳过绘制会导致整个桌面（壁纸 + 未分组图标 + 卡片）被清空。
+	// 之前的"脏标记跳过"逻辑正是双击打开程序后图标消失的根因。
+	// 背景跳动问题已由壁纸 1:1 物理像素加载 + 加载并发锁解决，去掉跳过不会复现。
 	dm.paintDirty = false
 
 	paintCount++

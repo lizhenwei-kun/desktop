@@ -101,6 +101,19 @@ delayedSetup()
 - 检测 IsForegroundWindow → SetWindowBottom 推底
 - 用户打开其他程序时不做任何操作
 
+## 绘制机制（⚠️ CustomWidget 的 paint 回调必须每次都绘制）
+
+`bodyWidget` 是 `walk.NewCustomWidgetPixels(container, 0, paintDesktop)`。
+
+**关键注意事项（双击打开程序后未分组图标消失的根因）**：
+
+- `paintDesktop` 的 paint 回调执行**前**，walk 框架已经擦除了客户区（背景被清空）。
+- 因此 **不能**因为"非脏"就 `return nil` 跳过绘制——跳过会导致整个桌面（壁纸 + 未分组图标 + 卡片）被清空，下次 WM_PAINT（如双击打开程序使本窗口失去焦点触发重绘）时内容消失。
+- `paintDesktop` 必须**每次 WM_PAINT 都执行全量绘制**（背景→壁纸→工具栏→图标），即使没有数据变更。
+- 原 `paintDirty` 脏标记曾用于控制"是否跳过绘制"，该逻辑会导致图标消失，已移除。`paintDirty` 现在仅作标记字段，不再控制跳过。
+- 背景跳动问题由壁纸 1:1 物理像素加载 + 加载并发锁解决，去掉跳过绘制不会复现跳动。
+- `refreshDesktopPending` 的 debounce 仍保留，用于防止连续刷新时的并发 race（壁纸加载 goroutine 与 UI 重绘）。
+
 ## 桌面图标遮挡方案
 
 - `HideDesktopIcons()`: 隐藏包含 SHELLDLL_DefView 的父窗口，防止系统图标显示在应用窗口上层
@@ -136,7 +149,8 @@ exitDesktopMode()
 ## 检查清单
 
 - [ ] 去边框后客户区正确铺满，无白边
-- [ ] 壁纸按全屏尺寸加载后裁剪到工作区，1:1 绘制无缩放
+- [ ] 壁纸直接按工作区尺寸 1:1 加载（见 spec-wallpaper），绘制无缩放无跳动
+- [ ] `paintDesktop` 每次 WM_PAINT 都执行全量绘制，**禁止**非脏时跳过（否则图标消失）
 - [ ] 隐藏→显示时先设 bounds + SetPaintDirty，再 MoveWindow
 - [ ] Z序守护不会干扰用户打开其他程序
 - [ ] Alt+F6 正确退出桌面模式
