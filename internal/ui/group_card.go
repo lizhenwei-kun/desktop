@@ -341,12 +341,16 @@ func (gc *GroupCard) setupMouseEvents() {
 			idx := gc.getItemIndexAt(x, y)
 			if idx >= 0 && idx < len(gc.items) {
 				if idx != gc.hoveredItemIdx {
+					// 只无效新旧悬停磁贴区域，避免整卡重绘导致其他图标闪烁
+					oldIdx := gc.hoveredItemIdx
 					gc.hoveredItemIdx = idx
-					gc.bodyWidget.Invalidate()
+					gc.invalidateTile(oldIdx)
+					gc.invalidateTile(idx)
 				}
 			} else if gc.hoveredItemIdx != -1 {
+				oldIdx := gc.hoveredItemIdx
 				gc.hoveredItemIdx = -1
-				gc.bodyWidget.Invalidate()
+				gc.invalidateTile(oldIdx)
 			}
 		}
 	})
@@ -912,6 +916,21 @@ func (gc *GroupCard) getIconTileBounds(idx int) (x, y int) {
 	return startX + col*colWidth, startY + row*desktopIconItemHeight
 }
 
+// invalidateTile 使指定图标磁贴区域无效，触发局部重绘
+func (gc *GroupCard) invalidateTile(idx int) {
+	if idx < 0 || idx >= len(gc.items) {
+		return
+	}
+	x, y := gc.getIconTileBounds(idx)
+	r := win.RECT{
+		Left:   int32(x),
+		Top:    int32(y),
+		Right:  int32(x + TileColWidth()),
+		Bottom: int32(y + desktopIconItemHeight),
+	}
+	win.InvalidateRect(gc.bodyWidget.Handle(), &r, false)
+}
+
 // isCardItemInLabelArea 判断点击是否在卡片内图标磁贴的标签区域
 func (gc *GroupCard) isCardItemInLabelArea(y int, idx int) bool {
 	_, tileY := gc.getIconTileBounds(idx)
@@ -1058,12 +1077,16 @@ func (gc *GroupCard) SetSize(w, h float64) {
 }
 
 // ReapplyBounds 重新应用位置和尺寸（用于布局变更后恢复绝对定位）
+// 注意：位置/尺寸未实际变化，不需要 applyBounds 的冻结+重布局机制。
 func (gc *GroupCard) ReapplyBounds() {
 	w := gc.pixelW()
 	h := gc.pixelH()
 	x := gc.pixelX()
 	y := gc.pixelY()
-	gc.applyBounds(x, y, w, h)
+	gc.container.SetBoundsPixels(walk.Rectangle{X: x, Y: y, Width: w, Height: h})
+	gc.bodyWidget.SetBoundsPixels(walk.Rectangle{X: 0, Y: 0, Width: w, Height: h})
+	gc.clearBgCache()
+	gc.bodyWidget.Invalidate()
 
 	// 验证实际 bounds
 	// actualContainer := gc.container.BoundsPixels()
@@ -1090,16 +1113,19 @@ func (gc *GroupCard) Cleanup() {
 // SelectItem 选中卡片内指定索引的图标
 func (gc *GroupCard) SelectItem(idx int) {
 	if gc.selectedItemIdx != idx {
+		oldIdx := gc.selectedItemIdx
 		gc.selectedItemIdx = idx
-		gc.bodyWidget.Invalidate()
+		gc.invalidateTile(oldIdx)
+		gc.invalidateTile(idx)
 	}
 }
 
 // ClearSelection 清除卡片内图标选中
 func (gc *GroupCard) ClearSelection() {
 	if gc.selectedItemIdx != -1 {
+		oldIdx := gc.selectedItemIdx
 		gc.selectedItemIdx = -1
-		gc.bodyWidget.Invalidate()
+		gc.invalidateTile(oldIdx)
 	}
 }
 
