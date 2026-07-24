@@ -1018,6 +1018,10 @@ func (gc *GroupCard) SetOnIconRightClick(fn func(card *GroupCard, idx int, item 
 // 所以这里必须让尺寸真正变化一次。
 // triggerRefresh: 是否触发 onRefreshAfterMove 回调（true=用户拖拽/缩放后，false=布局恢复时）
 func (gc *GroupCard) applyBounds(x, y, w, h int) {
+	// 记录旧位置屏幕坐标，移动后用于刷新桌面覆盖残留
+	var oldRect win.RECT
+	win.GetWindowRect(gc.container.Handle(), &oldRect)
+
 	// 1) 真实尺寸变化触发重新布局
 	gc.container.SetBoundsPixels(walk.Rectangle{X: x, Y: y, Width: w + 1, Height: h + 1})
 	gc.bodyWidget.SetBoundsPixels(walk.Rectangle{X: 0, Y: 0, Width: w + 1, Height: h + 1})
@@ -1027,6 +1031,17 @@ func (gc *GroupCard) applyBounds(x, y, w, h int) {
 	// 位置/尺寸变了，清除缓存
 	gc.clearBgCache()
 	gc.bodyWidget.Invalidate()
+
+	// 3) 刷新桌面 bodyWidget 旧区域，覆盖卡片移走后残留的屏幕像素
+	//    转成 bodyWidget 客户区坐标（bodyWidget 和 container 同级，坐标体系一致）
+	pt1 := win.POINT{X: oldRect.Left, Y: oldRect.Top}
+	pt2 := win.POINT{X: oldRect.Right, Y: oldRect.Bottom}
+	hwndBody := gc.bodyWidget.Handle()
+	win.ScreenToClient(hwndBody, &pt1)
+	win.ScreenToClient(hwndBody, &pt2)
+	bodyRect := win.RECT{Left: pt1.X, Top: pt1.Y, Right: pt2.X, Bottom: pt2.Y}
+	// 只无效+更新，不擦除（RDW_INVALIDATE|RDW_UPDATENOW），避免卡片闪烁
+	win.RedrawWindow(hwndBody, &bodyRect, 0, win.RDW_INVALIDATE|win.RDW_UPDATENOW)
 }
 
 // SetPosition 设置位置（相对坐标）
