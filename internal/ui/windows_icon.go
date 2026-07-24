@@ -33,10 +33,12 @@ var (
 	procDeleteDC           = gdi32.NewProc("DeleteDC")
 	procDeleteObject       = gdi32.NewProc("DeleteObject")
 
-	user32Icon          = syscall.NewLazyDLL("user32.dll")
-	procGetIconInfo     = user32Icon.NewProc("GetIconInfo")
-	procDestroyIcon     = user32Icon.NewProc("DestroyIcon")
-	procLoadImageW      = user32Icon.NewProc("LoadImageW")
+	user32Icon                  = syscall.NewLazyDLL("user32.dll")
+	procGetIconInfo             = user32Icon.NewProc("GetIconInfo")
+	procDestroyIcon             = user32Icon.NewProc("DestroyIcon")
+	procLoadImageW              = user32Icon.NewProc("LoadImageW")
+	procCreateIconFromResourceEx = user32Icon.NewProc("CreateIconFromResourceEx")
+	procLookupIconIdFromDirEx   = user32Icon.NewProc("LookupIconIdFromDirectoryEx")
 )
 
 const (
@@ -56,6 +58,7 @@ const (
 
 	IMAGE_ICON      = 1
 	LR_LOADFROMFILE = 0x00000010
+	LR_DEFAULTSIZE  = 0x00000040
 )
 
 // IID_IImageList GUID
@@ -442,6 +445,46 @@ func (ie *IconExtractor) extractIconExtraLarge(filePath string) (image.Image, er
 // 表现为中档/小档时某些 .ico/.lnk 图标变成空白 fallback。
 // 修复：始终用 48（最大标准尺寸）请求，缩放由调用方通过 DrawBitmapWithOpacityPixels
 // 按目标 rect 自动完成（walk 内部用高质量拉伸），避免反复重新提取。
+// ExtractIcoFromMemory 从内存中的 .ico 数据加载图标，无需写入临时文件
+func (ie *IconExtractor) ExtractIcoFromMemory(data []byte) image.Image {
+	// LookupIconIdFromDirectoryEx 找到最适合请求尺寸的图标条目索引
+	dirData := data
+	if len(data) < 6 {
+		return nil
+	}
+	// .ico 头前 4 字节保留，第 4-5 字节是图像数量
+	// 目录条目从第 6 字节开始
+	entryIdx, _, _ := procLookupIconIdFromDirEx.Call(
+		uintptr(unsafe.Pointer(&dirData[0])),
+		1, // 仅查找（不加载）
+		0, 0,
+		uintptr(LR_DEFAULTSIZE),
+	)
+	_ = entryIdx
+
+	// 用 CreateIconFromResourceEx 从内存创建 HICON
+	hIcon, _, _ := procCreateIconFromResourceEx.Call(
+		uintptr(unsafe.Pointer(&data[0])),
+		uintptr(len(data)),
+		1, // TRUE = 创建图标
+		0x00030000, // 版本 3.0
+		0, 0, // 默认尺寸
+		uintptr(LR_DEFAULTSIZE),
+	)
+	if hIcon == 0 {
+		logger.Warn("ExtractIcoFromMemory: CreateIconFromResourceEx failed")
+		return nil
+	}
+	defer procDestroyIcon.Call(hIcon)
+
+	img, err := ie.hIconToImage(hIcon)
+	if err != nil {
+		logger.Warn("ExtractIcoFromMemory: hIconToImage failed: %v", err)
+		return nil
+	}
+	return img
+}
+
 func (ie *IconExtractor) ExtractIcoFile(filePath string) image.Image {
 	target := DesktopIconSize()
 	logger.Debug("ExtractIcoFile: ENTER file=%q targetIconSize=%d (desktopIconSizeBase=%d, dpi=%d)",

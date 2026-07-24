@@ -14,7 +14,7 @@ type RecycleBinState struct {
 }
 
 // recycleBinCheckInterval 回收站检测间隔（毫秒）
-const recycleBinCheckInterval = 2000
+const recycleBinCheckInterval = 5000
 
 // initRecycleBinMonitor 初始化回收站状态定时监测
 // 每 2 秒检测回收站是否非空，状态变化时通知 UI 主线程更新图标

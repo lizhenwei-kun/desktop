@@ -28,28 +28,20 @@ func (dm *DesktopMode) paintDesktop(canvas *walk.Canvas, updateBounds walk.Recta
 }
 
 func (dm *DesktopMode) paintBackground(canvas *walk.Canvas, bounds walk.Rectangle) {
-	brush, err := walk.NewSolidColorBrush(walk.RGB(0x1A, 0x1A, 0x2E))
-	if err != nil {
-		return
+	if dm.bgBrush != nil {
+		canvas.FillRectanglePixels(dm.bgBrush, bounds)
 	}
-	defer brush.Dispose()
-	canvas.FillRectanglePixels(brush, bounds)
 }
 
 func (dm *DesktopMode) paintToolbar(canvas *walk.Canvas, bounds walk.Rectangle) {
-	font, _ := walk.NewFont("Microsoft YaHei", 14, 0)
-	if font == nil {
-		return
-	}
-	defer font.Dispose()
 	toolbarBounds := walk.Rectangle{X: bounds.Width - 140, Y: 10, Width: 120, Height: 30}
-	brush, err := walk.NewSolidColorBrush(walk.RGB(0x30, 0x34, 0x3C))
-	if err == nil {
-		canvas.FillRectanglePixels(brush, toolbarBounds)
-		brush.Dispose()
+	if dm.btnBrush != nil {
+		canvas.FillRectanglePixels(dm.btnBrush, toolbarBounds)
 	}
-	canvas.DrawTextPixels("+ 添加卡片", font, walk.RGB(0xFF, 0xFF, 0xFF),
-		toolbarBounds, walk.TextCenter|walk.TextVCenter|walk.TextSingleLine)
+	if dm.toolbarFont != nil {
+		canvas.DrawTextPixels("+ 添加卡片", dm.toolbarFont, walk.RGB(0xFF, 0xFF, 0xFF),
+			toolbarBounds, walk.TextCenter|walk.TextVCenter|walk.TextSingleLine)
+	}
 }
 
 func (dm *DesktopMode) paintDesktopDropHighlight(canvas *walk.Canvas, bounds walk.Rectangle) {
@@ -132,12 +124,16 @@ func drawIconLabel(canvas *walk.Canvas, font *walk.Font, lines []string, x, labe
 }
 
 // Refresh 刷新桌面模式
+var refreshCount int
+
 func (dm *DesktopMode) Refresh() {
-	logger.Debug("DesktopMode.Refresh: ENTER")
+	refreshCount++
+	if refreshCount <= 3 {
+		logger.Debug("DesktopMode.Refresh #%d", refreshCount)
+	}
 	// 窗口不可见时跳过刷新，避免触发 WM_PAINT 导致窗口意外显示
 	// 窗口重新显示时 showDesktopMode() 会调用 ReapplyCardPositionsAndRefresh() 完成完整刷新
 	if !dm.MainWindow.Visible() {
-		logger.Debug("DesktopMode.Refresh: window not visible, skipping")
 		return
 	}
 	// 刷新所有卡片内容

@@ -54,6 +54,11 @@ type GroupCard struct {
 	lastClickTime time.Time
 	lastClickIdx  int
 
+	// 缓存的卡片背景 Bitmap（纯色半透明），卡片尺寸或颜色变化时重建
+	bgCacheBmp *walk.Bitmap
+	bgCacheW   int
+	bgCacheH   int
+
 	// 拖拽状态（卡片整体拖拽）
 	isDragging    bool
 	isPressed     bool // 鼠标是否按下（用于长按检测）
@@ -664,15 +669,27 @@ func (gc *GroupCard) paintDragOutline(canvas *walk.Canvas, bounds walk.Rectangle
 
 // paintBackground 绘制卡片背景（半透明颜色）
 func (gc *GroupCard) paintBackground(canvas *walk.Canvas, bounds walk.Rectangle) {
-	// 用 draw.Draw 快速填充纯色位图，避免逐像素循环
+	// 缓存有效且尺寸未变时复用
+	if gc.bgCacheBmp != nil && gc.bgCacheW == bounds.Width && gc.bgCacheH == bounds.Height {
+		canvas.DrawBitmapWithOpacityPixels(gc.bgCacheBmp, bounds, gc.groupColor.A)
+		return
+	}
+	// 释放旧缓存
+	if gc.bgCacheBmp != nil {
+		gc.bgCacheBmp.Dispose()
+		gc.bgCacheBmp = nil
+	}
+	// 创建并缓存
 	bgImg := image.NewRGBA(image.Rect(0, 0, bounds.Width, bounds.Height))
 	draw.Draw(bgImg, bgImg.Bounds(), &image.Uniform{gc.groupColor}, image.Point{}, draw.Src)
-	bgBmp, err := walk.NewBitmapFromImage(bgImg)
+	bmp, err := walk.NewBitmapFromImage(bgImg)
 	if err != nil {
 		return
 	}
-	defer bgBmp.Dispose()
-	canvas.DrawBitmapWithOpacityPixels(bgBmp, bounds, gc.groupColor.A)
+	gc.bgCacheBmp = bmp
+	gc.bgCacheW = bounds.Width
+	gc.bgCacheH = bounds.Height
+	canvas.DrawBitmapWithOpacityPixels(bmp, bounds, gc.groupColor.A)
 }
 
 // paintHeader 绘制标题栏（含操作按钮）
@@ -893,21 +910,6 @@ func (gc *GroupCard) isCardItemInLabelArea(y int, idx int) bool {
 	labelStart := tileY + DesktopIconLabelTop()
 	labelEnd := labelStart + 2*DesktopIconLineHeight()
 	return y >= labelStart && y < labelEnd
-}
-
-// createColorBitmap 创建纯色位图
-func (gc *GroupCard) createColorBitmap(w, h int, c color.RGBA) *walk.Bitmap {
-	img := image.NewRGBA(image.Rect(0, 0, w, h))
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
-			img.SetRGBA(x, y, c)
-		}
-	}
-	bmp, err := walk.NewBitmapFromImage(img)
-	if err != nil {
-		return nil
-	}
-	return bmp
 }
 
 // Container 返回卡片容器

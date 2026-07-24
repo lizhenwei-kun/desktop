@@ -2,9 +2,8 @@ package ui
 
 import (
 	"image"
+	"image/draw"
 	"io/fs"
-	"os"
-	"path/filepath"
 	"strings"
 	"unsafe"
 
@@ -89,8 +88,6 @@ func (c *IconBmpCache) Clear() {
 	c.cache = make(map[string]*walk.Bitmap)
 }
 
-var systemIcoTempFiles = make(map[string]string) // shell:ID -> temp file path
-
 // extractAndCache 提取图标并加入缓存
 func (c *IconBmpCache) extractAndCache(path string) *walk.Bitmap {
 	extractor := NewIconExtractor()
@@ -119,29 +116,17 @@ func (c *IconBmpCache) extractAndCache(path string) *walk.Bitmap {
 	return bmp
 }
 
-// loadEmbeddedSystemIcon 加载系统图标：优先从嵌入 ico 文件加载，回退到系统提取
+// loadEmbeddedSystemIcon 加载系统图标：优先从嵌入 ico 数据（内存）加载，回退到系统提取
 func loadEmbeddedSystemIcon(shellPath string, extractor *IconExtractor) (image.Image, error) {
 	embeddedFile := embeddedIcoPath(shellPath)
 
-	// 先尝试从嵌入 FS 加载
+	// 从嵌入 FS 读取数据，直接从内存创建 HICON，避免写入临时文件
 	if embeddedFile != "" && EmbeddedIcoFS != nil {
 		data, err := fs.ReadFile(EmbeddedIcoFS, embeddedFile)
 		if err == nil {
-			tempDir := filepath.Join(os.TempDir(), "desktop_go_icons")
-			os.MkdirAll(tempDir, 0755)
-			tempPath := filepath.Join(tempDir, filepath.Base(embeddedFile))
-			if cached, ok := systemIcoTempFiles[shellPath]; ok {
-				tempPath = cached
-			}
-			if _, err := os.Stat(tempPath); os.IsNotExist(err) {
-				if err := os.WriteFile(tempPath, data, 0644); err != nil {
-					return nil, err
-				}
-				systemIcoTempFiles[shellPath] = tempPath
-			}
-			img := extractor.ExtractIcoFile(tempPath)
+			img := extractor.ExtractIcoFromMemory(data)
 			if img != nil {
-				logger.Debug("loadEmbeddedSystemIcon: embedded %s -> %s (%dx%d)", embeddedFile, tempPath, img.Bounds().Dx(), img.Bounds().Dy())
+				logger.Debug("loadEmbeddedSystemIcon: embedded %s from memory (%dx%d)", embeddedFile, img.Bounds().Dx(), img.Bounds().Dy())
 				return img, nil
 			}
 			logger.Warn("loadEmbeddedSystemIcon: embedded %s extract failed, fallback to system", embeddedFile)
@@ -197,11 +182,7 @@ func imageToBitmap(img image.Image) *walk.Bitmap {
 	if !ok {
 		b := img.Bounds()
 		rgbaImg = image.NewRGBA(b)
-		for iy := b.Min.Y; iy < b.Max.Y; iy++ {
-			for ix := b.Min.X; ix < b.Max.X; ix++ {
-				rgbaImg.Set(ix, iy, img.At(ix, iy))
-			}
-		}
+		draw.Draw(rgbaImg, b, img, b.Min, draw.Src)
 	}
 	bmp, err := walk.NewBitmapFromImage(rgbaImg)
 	if err != nil {

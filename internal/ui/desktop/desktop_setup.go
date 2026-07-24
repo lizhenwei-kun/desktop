@@ -67,6 +67,17 @@ func (dm *DesktopMode) Setup() error {
 	// 预加载壁纸
 	dm.WallpaperState.LoadWallpaper(dm.MainWindow.DPI, dm.WorkW, dm.WorkH)
 
+	// 创建缓存的绘制对象
+	bgBrush, _ := walk.NewSolidColorBrush(walk.RGB(0x1A, 0x1A, 0x2E))
+	if bgBrush != nil {
+		dm.bgBrush = bgBrush
+	}
+	btnBrush, _ := walk.NewSolidColorBrush(walk.RGB(0x30, 0x34, 0x3C))
+	if btnBrush != nil {
+		dm.btnBrush = btnBrush
+	}
+	dm.toolbarFont, _ = walk.NewFont("Microsoft YaHei", 14, 0)
+
 	// 创建 Composite 容器
 	var err error
 	dm.Container, err = walk.NewComposite(dm.MainWindow)

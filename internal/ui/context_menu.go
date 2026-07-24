@@ -613,23 +613,32 @@ type iShellFolder struct {
 // 图标操作辅助函数
 // ============================================================
 
+// copyUTF16ToGlobal 将 UTF16 数据复制到全局内存并返回 HANDLE
+func copyUTF16ToGlobal(path string) (win.HANDLE, bool) {
+	pathUTF16, _ := syscall.UTF16FromString(path + "\x00")
+	size := len(pathUTF16) * 2
+	hMem := win.GlobalAlloc(win.GMEM_MOVEABLE|win.GMEM_ZEROINIT, uintptr(size))
+	if hMem == 0 {
+		return 0, false
+	}
+	pMem := win.GlobalLock(hMem)
+	if uintptr(pMem) == 0 {
+		win.GlobalFree(hMem)
+		return 0, false
+	}
+	// 用 copy 替代手动逐元素循环
+	dst := (*[1 << 20]uint16)(unsafe.Pointer(pMem))[:len(pathUTF16):len(pathUTF16)]
+	copy(dst, pathUTF16)
+	win.GlobalUnlock(hMem)
+	return win.HANDLE(hMem), true
+}
+
 // CutFileToClipboard 剪切文件到剪贴板
 func CutFileToClipboard(path string) {
 	win.OpenClipboard(0)
 	win.EmptyClipboard()
-
-	pathUTF16, _ := syscall.UTF16FromString(path + "\x00")
-	size := len(pathUTF16) * 2
-	hMem := win.GlobalAlloc(win.GMEM_MOVEABLE|win.GMEM_ZEROINIT, uintptr(size))
-	if hMem != 0 {
-		pMem := win.GlobalLock(hMem)
-		if uintptr(pMem) != 0 {
-			for i, c := range pathUTF16 {
-				*(*uint16)(unsafe.Pointer(uintptr(pMem) + uintptr(i*2))) = c
-			}
-			win.GlobalUnlock(hMem)
-		}
-		win.SetClipboardData(win.CF_UNICODETEXT, win.HANDLE(hMem))
+	if hMem, ok := copyUTF16ToGlobal(path); ok {
+		win.SetClipboardData(win.CF_UNICODETEXT, hMem)
 	}
 	win.CloseClipboard()
 }
@@ -638,19 +647,8 @@ func CutFileToClipboard(path string) {
 func CopyFileToClipboard(path string) {
 	win.OpenClipboard(0)
 	win.EmptyClipboard()
-
-	pathUTF16, _ := syscall.UTF16FromString(path + "\x00")
-	size := len(pathUTF16) * 2
-	hMem := win.GlobalAlloc(win.GMEM_MOVEABLE|win.GMEM_ZEROINIT, uintptr(size))
-	if hMem != 0 {
-		pMem := win.GlobalLock(hMem)
-		if uintptr(pMem) != 0 {
-			for i, c := range pathUTF16 {
-				*(*uint16)(unsafe.Pointer(uintptr(pMem) + uintptr(i*2))) = c
-			}
-			win.GlobalUnlock(hMem)
-		}
-		win.SetClipboardData(win.CF_UNICODETEXT, win.HANDLE(hMem))
+	if hMem, ok := copyUTF16ToGlobal(path); ok {
+		win.SetClipboardData(win.CF_UNICODETEXT, hMem)
 	}
 	win.CloseClipboard()
 }

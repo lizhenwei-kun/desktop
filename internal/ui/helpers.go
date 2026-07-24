@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"image"
 	"image/color"
 	"strconv"
 	"strings"
@@ -156,6 +155,7 @@ var (
 	desktopIconItemWidth  = 132
 	desktopIconItemHeight = 104 // = DesktopIconLabelTop + DesktopIconLineHeight*2 + 4
 	tileSizeOnce          sync.Once
+	tileSizeMu            sync.Mutex // 保护 tileSizeOnce 重置的并发安全
 )
 
 // TileWidth 返回图标磁贴像素宽度（动态测量）
@@ -172,8 +172,9 @@ func TileColWidth() int { return desktopIconItemWidth + DesktopIconGap() }
 func EnsureTileSizeMeasured(_ *walk.Canvas) {
 	// 检查是否需要强制重新测量（图标大小变更后）
 	if IsTileRemeasureNeeded() {
-		// 重置 sync.Once，允许重新测量
+		tileSizeMu.Lock()
 		tileSizeOnce = sync.Once{}
+		tileSizeMu.Unlock()
 	}
 	tileSizeOnce.Do(func() {
 		font := GetIconFont()
@@ -544,17 +545,4 @@ func DrawSelectionRect(canvas *walk.Canvas, bounds walk.Rectangle) {
 	}
 }
 
-// CreateColorBitmap 创建纯色 RGBA 位图（公开方法，供 desktop 包使用）
-func CreateColorBitmap(w, h int, r, g, b, a byte) *walk.Bitmap {
-	img := image.NewRGBA(image.Rect(0, 0, w, h))
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
-			img.SetRGBA(x, y, color.RGBA{R: r, G: g, B: b, A: a})
-		}
-	}
-	bmp, err := walk.NewBitmapFromImage(img)
-	if err != nil {
-		return nil
-	}
-	return bmp
-}
+

@@ -1,6 +1,7 @@
 package desktop
 
 import (
+	"image"
 	"strings"
 	"syscall"
 	"time"
@@ -697,37 +698,51 @@ func (dm *DesktopMode) paintGhostIcon() {
 
 	tileW, tileH := dm.ghostWindowSize()
 
-	bmp, err := walk.NewBitmapWithTransparentPixelsForDPI(walk.Size{Width: tileW, Height: tileH}, dm.MainWindow.DPI())
-	if err != nil || bmp == nil {
+	// 尺寸变化或首次绘制时重建 DIB 缓存
+	if dm.ghostDibBmp == 0 || dm.ghostDibW != tileW || dm.ghostDibH != tileH {
+		// 释放旧缓存
+		dm.disposeGhostDib()
+
+		bmp, err := walk.NewBitmapWithTransparentPixelsForDPI(walk.Size{Width: tileW, Height: tileH}, dm.MainWindow.DPI())
+		if err != nil || bmp == nil {
+			return
+		}
+		defer bmp.Dispose()
+
+		canvas, err := walk.NewCanvasFromImage(bmp)
+		if err != nil || canvas == nil {
+			return
+		}
+		defer canvas.Dispose()
+
+		// 绘制图标（居中）
+		iconX := (tileW - ui.DesktopIconSize()) / 2
+		iconY := ui.DesktopIconTop()
+		canvas.DrawBitmapWithOpacityPixels(dm.GhostBmp,
+			walk.Rectangle{X: iconX, Y: iconY, Width: ui.DesktopIconSize(), Height: ui.DesktopIconSize()}, 255)
+
+		// 绘制文字
+		font := ui.GetIconFont()
+		if font != nil {
+			defer font.Dispose()
+			lines := ui.SplitTextToLines(dm.DragItemName, 4)
+			drawIconLabel(canvas, font, lines, 0, ui.DesktopIconLabelTop(), tileW)
+		}
+
+		img, err := bmp.ToImage()
+		if err != nil || img == nil {
+			return
+		}
+
+		// 创建 DIB 并缓存
+		dm.createGhostDib(tileW, tileH, img)
+	}
+
+	if dm.ghostDibBmp == 0 {
 		return
 	}
-	defer bmp.Dispose()
 
-	canvas, err := walk.NewCanvasFromImage(bmp)
-	if err != nil || canvas == nil {
-		return
-	}
-	defer canvas.Dispose()
-
-	// 绘制图标（居中）
-	iconX := (tileW - ui.DesktopIconSize()) / 2
-	iconY := ui.DesktopIconTop()
-	canvas.DrawBitmapWithOpacityPixels(dm.GhostBmp,
-		walk.Rectangle{X: iconX, Y: iconY, Width: ui.DesktopIconSize(), Height: ui.DesktopIconSize()}, 255)
-
-	// 绘制文字（选中状态：显示所有行）
-	font := ui.GetIconFont()
-	if font != nil {
-		defer font.Dispose()
-		lines := ui.SplitTextToLines(dm.DragItemName, 4)
-		drawIconLabel(canvas, font, lines, 0, ui.DesktopIconLabelTop(), tileW)
-	}
-
-	img, err := bmp.ToImage()
-	if err != nil || img == nil {
-		return
-	}
-
+	// 用缓存的 DIB 直接更新图层
 	hdcScreen := win.GetDC(0)
 	if hdcScreen == 0 {
 		return
@@ -740,61 +755,16 @@ func (dm *DesktopMode) paintGhostIcon() {
 	}
 	defer win.DeleteDC(hdcMem)
 
-	var bi win.BITMAPINFO
-	bi.BmiHeader.BiSize = uint32(unsafe.Sizeof(bi.BmiHeader))
-	bi.BmiHeader.BiWidth = int32(tileW)
-	bi.BmiHeader.BiHeight = -int32(tileH) // 顶向下
-	bi.BmiHeader.BiPlanes = 1
-	bi.BmiHeader.BiBitCount = 32
-	bi.BmiHeader.BiCompression = win.BI_RGB
-
-	var bits unsafe.Pointer
-	hBmp := win.CreateDIBSection(hdcMem, &bi.BmiHeader, win.DIB_RGB_COLORS, &bits, 0, 0)
-	if hBmp == 0 {
-		return
-	}
-	defer win.DeleteObject(win.HGDIOBJ(hBmp))
-
-	hOld := win.SelectObject(hdcMem, win.HGDIOBJ(hBmp))
+	hOld := win.SelectObject(hdcMem, win.HGDIOBJ(dm.ghostDibBmp))
 	if hOld == 0 {
 		return
 	}
 	defer win.SelectObject(hdcMem, hOld)
 
-	// 将 walk.Bitmap 像素复制到 DIB，并预乘 alpha（UpdateLayeredWindow 要求 premultiplied alpha）
-	// GDI 在透明 DIB 上绘制文字时 alpha 可能为 0，对文字区域（y >= DesktopIconLabelTop）的非黑色像素强制不透明
-	pixels := (*[1 << 24]byte)(bits)
-	imgW := img.Bounds().Dx()
-	imgH := img.Bounds().Dy()
-	n := 0
-	for y := 0; y < tileH; y++ {
-		inTextArea := y >= ui.DesktopIconLabelTop()
-		for x := 0; x < tileW; x++ {
-			if x >= imgW || y >= imgH {
-				pixels[n+0] = 0
-				pixels[n+1] = 0
-				pixels[n+2] = 0
-				pixels[n+3] = 0
-			} else {
-				c := img.RGBAAt(x, y)
-				a := c.A
-				// 文字区域：非黑色但 alpha 为 0 的像素，是被 GDI 错误标记的的文字，强制不透明
-				if inTextArea && a == 0 && (c.R != 0 || c.G != 0 || c.B != 0) {
-					a = 255
-				}
-				pixels[n+0] = byte(uint16(c.B) * uint16(a) / 255)
-				pixels[n+1] = byte(uint16(c.G) * uint16(a) / 255)
-				pixels[n+2] = byte(uint16(c.R) * uint16(a) / 255)
-				pixels[n+3] = a
-			}
-			n += 4
-		}
-	}
-
 	size := win.SIZE{CX: int32(tileW), CY: int32(tileH)}
 	ptSrc := win.POINT{X: 0, Y: 0}
 	blend := win.BLENDFUNCTION{
-		BlendOp:             0, // AC_SRC_OVER
+		BlendOp:             0,
 		BlendFlags:          0,
 		SourceConstantAlpha: 200,
 		AlphaFormat:         win.AC_SRC_ALPHA,
@@ -810,6 +780,77 @@ func (dm *DesktopMode) paintGhostIcon() {
 		0,
 		uintptr(unsafe.Pointer(&blend)),
 		_ULW_ALPHA)
+}
+
+// createGhostDib 创建并缓存 DIB，将 walk.Bitmap 像素预乘 alpha 后写入
+func (dm *DesktopMode) createGhostDib(tileW, tileH int, img *image.RGBA) {
+	hdcScreen := win.GetDC(0)
+	if hdcScreen == 0 {
+		return
+	}
+	defer win.ReleaseDC(0, hdcScreen)
+
+	hdcMem := win.CreateCompatibleDC(hdcScreen)
+	if hdcMem == 0 {
+		return
+	}
+	defer win.DeleteDC(hdcMem)
+
+	var bi win.BITMAPINFO
+	bi.BmiHeader.BiSize = uint32(unsafe.Sizeof(bi.BmiHeader))
+	bi.BmiHeader.BiWidth = int32(tileW)
+	bi.BmiHeader.BiHeight = -int32(tileH)
+	bi.BmiHeader.BiPlanes = 1
+	bi.BmiHeader.BiBitCount = 32
+	bi.BmiHeader.BiCompression = win.BI_RGB
+
+	var bits unsafe.Pointer
+	hBmp := win.CreateDIBSection(hdcMem, &bi.BmiHeader, win.DIB_RGB_COLORS, &bits, 0, 0)
+	if hBmp == 0 {
+		return
+	}
+
+	// 像素预乘 alpha
+	pixels := (*[1 << 24]byte)(bits)
+	imgW := img.Bounds().Dx()
+	imgH := img.Bounds().Dy()
+	n := 0
+	for y := 0; y < tileH; y++ {
+		inTextArea := y >= ui.DesktopIconLabelTop()
+		for x := 0; x < tileW; x++ {
+			if x >= imgW || y >= imgH {
+				pixels[n+0] = 0
+				pixels[n+1] = 0
+				pixels[n+2] = 0
+				pixels[n+3] = 0
+			} else {
+				c := img.RGBAAt(x, y)
+				a := c.A
+				if inTextArea && a == 0 && (c.R != 0 || c.G != 0 || c.B != 0) {
+					a = 255
+				}
+				pixels[n+0] = byte(uint16(c.B) * uint16(a) / 255)
+				pixels[n+1] = byte(uint16(c.G) * uint16(a) / 255)
+				pixels[n+2] = byte(uint16(c.R) * uint16(a) / 255)
+				pixels[n+3] = a
+			}
+			n += 4
+		}
+	}
+
+	dm.ghostDibBmp = hBmp
+	dm.ghostDibW = tileW
+	dm.ghostDibH = tileH
+	dm.ghostDibBits = bits
+}
+
+// disposeGhostDib 释放缓存的 DIB
+func (dm *DesktopMode) disposeGhostDib() {
+	if dm.ghostDibBmp != 0 {
+		win.DeleteObject(win.HGDIOBJ(dm.ghostDibBmp))
+		dm.ghostDibBmp = 0
+	}
+	dm.ghostDibBits = nil
 }
 
 // ghostWndProc 幽灵窗口消息处理
@@ -836,6 +877,7 @@ func (dm *DesktopMode) LoadGhostBmp(filePath string) {
 // DisposeGhostBmp 释放拖拽 ghost 图像
 func (dm *DesktopMode) DisposeGhostBmp() {
 	dm.GhostBmp = nil
+	dm.disposeGhostDib()
 }
 
 // ============================================================

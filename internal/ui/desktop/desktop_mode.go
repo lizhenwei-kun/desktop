@@ -193,6 +193,17 @@ type DesktopMode struct {
 	// Healthcheck 状态缓存，避免每次轮询都执行耗时检测
 	healthLastVisible bool      // 上次检测时的窗口可见性
 	healthLastParent  win.HWND  // 上次检测时的父窗口句柄
+
+	// 拖拽幽灵 DIB 缓存（避免每帧重建）
+	ghostDibBmp win.HBITMAP // 缓存的 DIB HBITMAP
+	ghostDibW   int         // 缓存的宽度
+	ghostDibH   int         // 缓存的高度
+	ghostDibBits unsafe.Pointer // DIB 像素数据指针
+
+	// 缓存绘制对象，避免每次重绘创建销毁
+	bgBrush     walk.Brush   // 背景色刷子（0x1A1A2E）
+	btnBrush    walk.Brush   // 工具栏按钮刷子（0x30343C）
+	toolbarFont *walk.Font   // 工具栏字体（Microsoft YaHei 14）
 }
 
 // NewDesktopMode 创建桌面模式
