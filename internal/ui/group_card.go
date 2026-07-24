@@ -115,8 +115,8 @@ type GroupCard struct {
 	// 缩放虚框回调（DesktopMode 在桌面层画边框）
 	onResizeOutline    func(card *GroupCard, newX, newY, newW, newH int)
 	onResizeOutlineEnd func(card *GroupCard)
-	// 移动前回传卡片原屏幕矩形（供 DesktopMode 擦除旧位置残留）
-	onOldBounds func(oldBounds walk.Rectangle)
+	// 移动/缩放后全局刷新回调（通知 DesktopMode 刷新所有卡片和桌面）
+	onRefreshAfterMove func()
 	// 获取桌面壁纸位图（工作区尺寸），卡片背景从真实壁纸合成
 	onGetWallpaper func() *walk.Bitmap
 }
@@ -324,11 +324,6 @@ func (gc *GroupCard) setupMouseEvents() {
 			gc.position.Y = float64(gc.dragNewY) / float64(gc.workH)
 			pixW := gc.pixelW()
 			pixH := gc.pixelH()
-			// 移动前通知 DesktopMode 擦除卡片原位置（防止 PaintNoErase 旧位置残留）
-			if gc.onOldBounds != nil {
-				ob := gc.container.BoundsPixels()
-				gc.onOldBounds(ob)
-			}
 			gc.applyBounds(gc.dragNewX, gc.dragNewY, pixW, pixH)
 			gc.manager.UpdateGroupPosition(gc.groupName, gc.position.X, gc.position.Y)
 		}
@@ -501,12 +496,6 @@ func (gc *GroupCard) endResize() {
 	gc.size.Height = float64(gc.resizeNewH) / float64(gc.workH)
 	gc.position.X = float64(gc.resizeNewX) / float64(gc.workW)
 	gc.position.Y = float64(gc.resizeNewY) / float64(gc.workH)
-
-	// 移动前通知 DesktopMode 擦除卡片原位置（防止 PaintNoErase 旧位置残留）
-	if gc.onOldBounds != nil {
-		ob := gc.container.BoundsPixels()
-		gc.onOldBounds(ob)
-	}
 
 	gc.applyBounds(gc.resizeNewX, gc.resizeNewY, gc.resizeNewW, gc.resizeNewH)
 
@@ -1039,17 +1028,16 @@ func (gc *GroupCard) applyBounds(x, y, w, h int) {
 	// 位置/尺寸变了，背景缓存不再适用，清除后下次重绘用新位置重建
 	gc.clearBgCache()
 	gc.bodyWidget.Invalidate()
+	// 通知 DesktopMode 全局刷新，清除原位置残留
+	if gc.onRefreshAfterMove != nil {
+		gc.onRefreshAfterMove()
+	}
 }
 
 // SetPosition 设置位置（相对坐标）
 func (gc *GroupCard) SetPosition(x, y float64) {
 	gc.position = config.Position{X: x, Y: y}
 	w, h := gc.pixelW(), gc.pixelH()
-	// 移动前通知 DesktopMode 擦除卡片原位置（防止 PaintNoErase 旧位置残留）
-	if gc.onOldBounds != nil {
-		ob := gc.container.BoundsPixels()
-		gc.onOldBounds(ob)
-	}
 	gc.applyBounds(gc.pixelX(), gc.pixelY(), w, h)
 }
 
@@ -1057,10 +1045,6 @@ func (gc *GroupCard) SetPosition(x, y float64) {
 func (gc *GroupCard) SetSize(w, h float64) {
 	gc.size = config.Size{Width: w, Height: h}
 	pw, ph := gc.pixelW(), gc.pixelH()
-	if gc.onOldBounds != nil {
-		ob := gc.container.BoundsPixels()
-		gc.onOldBounds(ob)
-	}
 	gc.applyBounds(gc.pixelX(), gc.pixelY(), pw, ph)
 }
 
@@ -1070,10 +1054,6 @@ func (gc *GroupCard) ReapplyBounds() {
 	h := gc.pixelH()
 	x := gc.pixelX()
 	y := gc.pixelY()
-	if gc.onOldBounds != nil {
-		ob := gc.container.BoundsPixels()
-		gc.onOldBounds(ob)
-	}
 	gc.applyBounds(x, y, w, h)
 
 	// 验证实际 bounds
@@ -1149,9 +1129,9 @@ func (gc *GroupCard) SetOnResizeOutlineEnd(fn func(card *GroupCard)) {
 	gc.onResizeOutlineEnd = fn
 }
 
-// SetOnOldBounds 设置移动前回调（回传卡片原屏幕矩形，供 DesktopMode 擦除旧位置残留）
-func (gc *GroupCard) SetOnOldBounds(fn func(oldBounds walk.Rectangle)) {
-	gc.onOldBounds = fn
+// SetOnRefreshAfterMove 设置移动/缩放后全局刷新回调
+func (gc *GroupCard) SetOnRefreshAfterMove(fn func()) {
+	gc.onRefreshAfterMove = fn
 }
 
 // SetOnGetWallpaper 设置获取桌面壁纸位图的回调

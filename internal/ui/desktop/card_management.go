@@ -1,7 +1,6 @@
 package desktop
 
 import (
-	"github.com/lxn/walk"
 	"github.com/lxn/win"
 
 	"desktop_go/internal/config"
@@ -143,19 +142,12 @@ func (dm *DesktopMode) setupCardActions(card *ui.GroupCard, grp config.Group) {
 	card.SetOnResizeOutline(dm.ResizeOutlineState.OnCardResizeOutline)
 	card.SetOnResizeOutlineEnd(dm.ResizeOutlineState.OnCardResizeOutlineEnd)
 
-	// 卡片移动/缩放前，先擦除原位置（防止 PaintNoErase 模式旧位置壁纸残留）
-	card.SetOnOldBounds(func(oldBounds walk.Rectangle) {
-		// 卡片是独立子窗口，必须用 InvalidateRect 显式擦除旧窗口区域，
-		// 并立即重绘（UpdateWindow），否则 SetBoundsPixels 移动窗口后
-		// body 的 WM_PAINT 可能延迟处理，旧区域残留卡片像素。
-		r := win.RECT{
-			Left:   int32(oldBounds.X),
-			Top:    int32(oldBounds.Y),
-			Right:  int32(oldBounds.X + oldBounds.Width),
-			Bottom: int32(oldBounds.Y + oldBounds.Height),
+	// 卡片移动/缩放后，全局刷新所有卡片和桌面，确保没有残留
+	card.SetOnRefreshAfterMove(func() {
+		dm.InvalidateBody()
+		for _, c := range dm.Cards {
+			_ = c.Container().Invalidate()
 		}
-		win.InvalidateRect(dm.BodyWidget.Handle(), &r, true)
-		win.UpdateWindow(dm.BodyWidget.Handle())
 	})
 
 	// 提供桌面壁纸位图，卡片背景从真实壁纸合成
