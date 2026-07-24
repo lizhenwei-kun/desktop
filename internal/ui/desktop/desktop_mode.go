@@ -1,6 +1,7 @@
 package desktop
 
 import (
+	"sync"
 	"time"
 	"unsafe"
 
@@ -26,6 +27,7 @@ type ScreenInfo struct {
 
 // WallpaperState 壁纸缓存状态
 type WallpaperState struct {
+	mu          sync.Mutex   // 保护 WallpaperBmp 的并发读写（异步加载 vs UI 绘制）
 	WallpaperBmp *walk.Bitmap // 缓存的壁纸 bitmap
 }
 

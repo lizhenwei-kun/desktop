@@ -29,7 +29,7 @@ func (dm *DesktopMode) paintDesktop(canvas *walk.Canvas, updateBounds walk.Recta
 	paintCount++
 	if paintCount <= 10 {
 		logger.Debug("paintDesktop #%d: bounds=(%d,%d,%dx%d), wallpaperBmp=%v",
-			paintCount, bounds.X, bounds.Y, bounds.Width, bounds.Height, dm.WallpaperBmp != nil)
+			paintCount, bounds.X, bounds.Y, bounds.Width, bounds.Height, dm.WallpaperState.getBitmap() != nil)
 	}
 	// 确保磁贴尺寸已测量（切换图标大小后 ForceTileRemeasure 会触发重新测量）
 	// 必须在 paintAllIcons 之前调用，否则 TileWidth/TileHeight 可能还是旧档位的值
@@ -162,7 +162,7 @@ func (dm *DesktopMode) Refresh() {
 // 用于窗口从隐藏变为可见后的完整刷新
 func (dm *DesktopMode) ReapplyCardPositionsAndRefresh() {
 	logger.Debug("ReapplyCardPositionsAndRefresh: paintDirty=%v, visible=%v, wallpaperBmp=%v",
-		dm.paintDirty, dm.MainWindow.Visible(), dm.WallpaperBmp != nil)
+		dm.paintDirty, dm.MainWindow.Visible(), dm.WallpaperState.getBitmap() != nil)
 
 	// 重新应用卡片位置
 	dm.reapplyCardPositions()

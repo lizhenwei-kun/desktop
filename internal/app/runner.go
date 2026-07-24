@@ -600,7 +600,7 @@ func (r *Runner) showDesktopMode() {
 	hwnd := r.mw.Handle()
 
 	logger.Debug("showDesktopMode: window from hidden to visible, work=(%d,%d,%dx%d), wallpaperBmp=%v",
-		dm.WorkX, dm.WorkY, dm.WorkW, dm.WorkH, dm.WallpaperBmp != nil)
+		dm.WorkX, dm.WorkY, dm.WorkW, dm.WorkH, dm.WallpaperState.HasWallpaper())
 
 	// 先设置 BodyWidget bounds 再 MoveWindow，确保 MoveWindow 触发的 WM_PAINT 使用正确尺寸
 	clientBounds := r.mw.ClientBoundsPixels()

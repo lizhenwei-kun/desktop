@@ -64,8 +64,8 @@ func (dm *DesktopMode) Setup() error {
 	bg, _ := walk.NewSolidColorBrush(walk.RGB(0x1A, 0x1A, 0x2E))
 	dm.MainWindow.SetBackground(bg)
 
-	// 预加载壁纸（全屏尺寸加载后裁剪工作区）
-	dm.WallpaperState.LoadWallpaper(dm.MainWindow.DPI, dm.ScreenW, dm.ScreenH, dm.WorkX, dm.WorkY, dm.WorkW, dm.WorkH)
+	// 预加载壁纸（按工作区尺寸）
+	dm.WallpaperState.LoadWallpaper(dm.MainWindow.DPI, dm.WorkW, dm.WorkH)
 
 	// 创建缓存的绘制对象
 	bgBrush, _ := walk.NewSolidColorBrush(walk.RGB(0x1A, 0x1A, 0x2E))
@@ -243,7 +243,7 @@ func (dm *DesktopMode) delayedSetup() {
 		dm.Container.SetBoundsPixels(walk.Rectangle{X: 0, Y: 0, Width: dm.WorkW, Height: fullH})
 		dm.BodyWidget.SetBoundsPixels(walk.Rectangle{X: 0, Y: 0, Width: dm.WorkW, Height: fullH})
 		dm.reapplyCardPositions()
-		dm.WallpaperState.LoadWallpaper(dm.MainWindow.DPI, dm.ScreenW, dm.ScreenH, dm.WorkX, dm.WorkY, dm.WorkW, dm.WorkH)
+		dm.WallpaperState.LoadWallpaper(dm.MainWindow.DPI, dm.WorkW, dm.WorkH)
 		dm.InvalidateBody()
 
 		// 注册系统事件回调（电源恢复、显示变更、会话结束等自动刷新桌面）
@@ -260,7 +260,7 @@ func (dm *DesktopMode) delayedSetup() {
 				logger.Debug("DPI changed: newDPI=%d, refreshing", newDPI)
 				ui.SetCurrentDPI(newDPI)
 				// 重新加载壁纸（DPI 变化后位图需要重新生成）
-				dm.WallpaperState.LoadWallpaper(dm.MainWindow.DPI, dm.ScreenW, dm.ScreenH, dm.WorkX, dm.WorkY, dm.WorkW, dm.WorkH)
+				dm.WallpaperState.LoadWallpaper(dm.MainWindow.DPI, dm.WorkW, dm.WorkH)
 				dm.reapplyCardPositions()
 				dm.InvalidateBody()
 			})
@@ -274,7 +274,7 @@ func (dm *DesktopMode) delayedSetup() {
 			time.Sleep(200 * time.Millisecond)
 			dm.Post(func() {
 				dm.reapplyCardPositions()
-				dm.WallpaperState.LoadWallpaper(dm.MainWindow.DPI, dm.ScreenW, dm.ScreenH, dm.WorkX, dm.WorkY, dm.WorkW, dm.WorkH)
+				dm.WallpaperState.LoadWallpaper(dm.MainWindow.DPI, dm.WorkW, dm.WorkH)
 				dm.Manager.ReloadDesktopItems()
 				dm.InvalidateBody()
 			})

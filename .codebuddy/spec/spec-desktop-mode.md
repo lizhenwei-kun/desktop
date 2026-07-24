@@ -6,6 +6,16 @@
 - **包**: `ui`
 - **依赖**: `walk`, `win`, `config`, `desktop`, `group`, `logger`
 
+## 全局原则
+
+### 1. 能用 Windows API 的尽量用
+
+所有功能优先使用 Windows 原生 API（`user32.dll`, `gdi32.dll`, `shell32.dll` 等），避免在 Go 层重复实现已有系统功能。例如：
+- 窗口操作：`SetWindowPos`, `MoveWindow`, `SetParent`
+- 壁纸路径：`SystemParametersInfoW`
+- 图标提取：`SHGetImageList`, `SHGetFileInfoW`
+- 右键菜单：COM `IContextMenu`
+
 ## 核心类型
 
 ```go
@@ -126,7 +136,8 @@ exitDesktopMode()
 ## 检查清单
 
 - [ ] 去边框后客户区正确铺满，无白边
-- [ ] 壁纸加载并正确显示
+- [ ] 壁纸按全屏尺寸加载后裁剪到工作区，1:1 绘制无缩放
+- [ ] 隐藏→显示时先设 bounds + SetPaintDirty，再 MoveWindow
 - [ ] Z序守护不会干扰用户打开其他程序
 - [ ] Alt+F6 正确退出桌面模式
 - [ ] 添加/删除分组后 UI 正确刷新

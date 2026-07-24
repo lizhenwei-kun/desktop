@@ -438,10 +438,26 @@ func (dm *DesktopMode) snapAllUngroupedToGrid() {
 	logger.Info("对齐网格: 吸附 %d 个未分组项到最近网格", len(entries))
 }
 
+var refreshDesktopPending bool
+
 // refreshDesktop 刷新桌面（整体刷新：壁纸 + 桌面项同步 + 重建卡片 + 图标缓存 + 重绘）
 // 耗时操作（文件 I/O、图片解码、COM 调用）在后台 strand 中执行，避免阻塞 UI 主线程
+// 连续多次调用会被合并为一次，防止竞态导致卡片状态混乱和背景跳动
 func (dm *DesktopMode) refreshDesktop() {
+	if refreshDesktopPending {
+		logger.Debug("refreshDesktop: already pending, skipping")
+		return
+	}
+	refreshDesktopPending = true
+
+	// 在 UI 线程捕获当前工作区尺寸快照，避免后台 goroutine 执行时尺寸已被其他逻辑（DPI/分辨率变化）修改，
+	// 导致加载的壁纸尺寸与绘制 bounds 不一致而跳动
+	workW, workH := dm.WorkW, dm.WorkH
+	dpiFn := dm.MainWindow.DPI
+
 	dm.Work.Post(func() {
+		defer func() { refreshDesktopPending = false }()
+
 		// 重新同步桌面项（以系统桌面目录为准）
 		dm.Manager.ReloadDesktopItems()
 
@@ -454,8 +470,8 @@ func (dm *DesktopMode) refreshDesktop() {
 			ui.GlobalIconBmpCache.LoadAll(freePaths)
 		}
 
-		// 重新加载壁纸（全屏尺寸加载后裁剪工作区）
-		dm.WallpaperState.LoadWallpaper(dm.MainWindow.DPI, dm.ScreenW, dm.ScreenH, dm.WorkX, dm.WorkY, dm.WorkW, dm.WorkH)
+		// 重新加载壁纸（按工作区尺寸快照）
+		dm.WallpaperState.LoadWallpaper(dpiFn, workW, workH)
 
 		// 重建卡片必须在 UI 主线程执行（操作 walk 控件树）
 		dm.Post(func() {
