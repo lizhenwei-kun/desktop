@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"image"
 	"image/color"
 	"strconv"
 	"strings"
@@ -517,14 +518,27 @@ func GetIconDisplayLines(name string, maxCJK int) []string {
 	return lines
 }
 
-// DrawHoverRect 绘制悬停高亮（半透明背景，细边框）
-func DrawHoverRect(canvas *walk.Canvas, bounds walk.Rectangle) {
-	// 半透明填充
-	fillBrush, err := walk.NewSolidColorBrush(walk.RGB(0x00, 0x45, 0x8A))
-	if err == nil {
-		canvas.FillRectanglePixels(fillBrush, bounds)
-		fillBrush.Dispose()
+// drawAlphaRect 用带 alpha 通道的位图在 bounds 上绘制半透明实色矩形。
+// DrawBitmapWithOpacityPixels 的 opacity 取 255（透明度由位图自身的 alpha 决定），
+// 这样半透明高亮是叠加在卡片半透明背景之上，不会出现"实色块盖住背景"的问题。
+func drawAlphaRect(canvas *walk.Canvas, bounds walk.Rectangle, r, g, b, a uint8) {
+	img := image.NewRGBA(image.Rect(0, 0, 1, 1))
+	img.Pix[0] = r
+	img.Pix[1] = g
+	img.Pix[2] = b
+	img.Pix[3] = a
+	bmp, err := walk.NewBitmapFromImage(img)
+	if err != nil {
+		return
 	}
+	defer bmp.Dispose()
+	canvas.DrawBitmapWithOpacityPixels(bmp, bounds, 255)
+}
+
+// DrawHoverRect 绘制悬停高亮（半透明蓝色背景，细边框）
+func DrawHoverRect(canvas *walk.Canvas, bounds walk.Rectangle) {
+	// 半透明填充（固定 ~35% 蓝）
+	drawAlphaRect(canvas, bounds, 0x00, 0x45, 0x8A, 90)
 	// 1px 边框
 	borderPen, err := walk.NewCosmeticPen(walk.PenSolid, walk.RGB(0x00, 0x5A, 0xAD))
 	if err == nil {
@@ -536,13 +550,10 @@ func DrawHoverRect(canvas *walk.Canvas, bounds walk.Rectangle) {
 	}
 }
 
-// DrawSelectionRect 绘制选中高亮（半透明填充，无边框）
+// DrawSelectionRect 绘制选中高亮（半透明蓝色背景，无边框）
 func DrawSelectionRect(canvas *walk.Canvas, bounds walk.Rectangle) {
-	brush, err := walk.NewSolidColorBrush(walk.RGB(0x00, 0x55, 0xAA))
-	if err == nil {
-		canvas.FillRectanglePixels(brush, bounds)
-		brush.Dispose()
-	}
+	// 半透明填充（固定 ~45% 蓝），叠加在卡片半透明背景之上
+	drawAlphaRect(canvas, bounds, 0x00, 0x55, 0xAA, 115)
 }
 
 

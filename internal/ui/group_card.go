@@ -675,11 +675,11 @@ func (gc *GroupCard) paintDragOutline(canvas *walk.Canvas, bounds walk.Rectangle
 }
 
 // paintBackground 绘制卡片背景（半透明颜色）
-// 使用 PaintNoErase 模式，canvas 直接对应屏幕 DC。每帧先从真实壁纸开始合成，
-// 再 AlphaBlend 一层半透明颜色——这样无论重绘多少次都不会累积变不透明，
-// 也不会在图标获焦/鼠标移出时残留上一帧叠加结果。
+// PaintBuffered 模式下 canvas 是内存缓冲，坐标原点为客户区 (0,0)。
+// 每帧先从真实壁纸开始合成，再 AlphaBlend 一层半透明颜色，
+// 重绘多少次都不会累积变不透明。
 func (gc *GroupCard) paintBackground(canvas *walk.Canvas, bounds walk.Rectangle) {
-	// 1) 先绘制当前卡片位置对应的真实壁纸作为底（覆盖上一帧残留，消除 AlphaBlend 累积）
+	// 1) 先绘制当前卡片位置对应的真实壁纸作为底（覆盖缓冲残留）
 	if gc.onGetWallpaper != nil {
 		if wp := gc.onGetWallpaper(); wp != nil {
 			src := walk.Rectangle{
@@ -692,18 +692,15 @@ func (gc *GroupCard) paintBackground(canvas *walk.Canvas, bounds walk.Rectangle)
 		}
 	}
 
-	// 2) 半透明颜色叠加（dst 已是真实壁纸，单次叠加不累积）
-	// 缓存有效且尺寸未变时复用纯色位图
+	// 2) 半透明颜色叠加
 	if gc.bgCacheBmp != nil && gc.bgCacheW == bounds.Width && gc.bgCacheH == bounds.Height {
 		canvas.DrawBitmapWithOpacityPixels(gc.bgCacheBmp, bounds, gc.groupColor.A)
 		return
 	}
-	// 释放旧缓存
 	if gc.bgCacheBmp != nil {
 		gc.bgCacheBmp.Dispose()
 		gc.bgCacheBmp = nil
 	}
-	// 创建并缓存
 	bgImg := image.NewRGBA(image.Rect(0, 0, bounds.Width, bounds.Height))
 	draw.Draw(bgImg, bgImg.Bounds(), &image.Uniform{gc.groupColor}, image.Point{}, draw.Src)
 	bmp, err := walk.NewBitmapFromImage(bgImg)
