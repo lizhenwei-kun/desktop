@@ -1087,6 +1087,7 @@ func (gc *GroupCard) ReapplyBounds() {
 	gc.bodyWidget.SetBoundsPixels(walk.Rectangle{X: 0, Y: 0, Width: w, Height: h})
 	gc.clearBgCache()
 	gc.bodyWidget.Invalidate()
+	logger.Debug("ReapplyBounds: %q bodyWidget.Invalidate called", gc.groupName)
 
 	// 验证实际 bounds
 	// actualContainer := gc.container.BoundsPixels()

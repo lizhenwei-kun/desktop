@@ -156,14 +156,23 @@ func (dm *DesktopMode) setupCardActions(card *ui.GroupCard, grp config.Group) {
 	})
 }
 
+var refreshCardsCount int
+
 // refreshCards 刷新所有卡片。
 // 关键：尽量复用现有卡片控件（就地 Refresh + ReapplyBounds），
 // 不要在每次刷新时销毁重建——Dispose 会让卡片窗口瞬间消失、再重建导致可见闪烁。
 // 仅当分组集合（增删分组）发生变化时才销毁/新建对应卡片。
 func (dm *DesktopMode) refreshCards() {
+	refreshCardsCount++
+	logger.Debug("refreshCards #%d: groups=%d cards=%d", refreshCardsCount, len(dm.Manager.GetGroups()), len(dm.Cards))
+
 	groups := dm.Manager.GetGroups()
 
-	// 冻结桌面 bodyWidget 重绘，所有卡片刷新完再一次性显示
+	// 冻结所有卡片和桌面重绘，所有操作完成后再一次性刷新
+	for _, card := range dm.Cards {
+		win.SendMessage(card.Container().Handle(), win.WM_SETREDRAW, 0, 0)
+		win.SendMessage(card.BodyWidgetHandle(), win.WM_SETREDRAW, 0, 0)
+	}
 	win.SendMessage(dm.BodyWidget.Handle(), win.WM_SETREDRAW, 0, 0)
 
 	// 当前分组名集合
@@ -212,7 +221,16 @@ func (dm *DesktopMode) refreshCards() {
 
 	dm.reapplyCardPositions()
 
-	// 解冻并一次性刷新
+	// 解冻并一次性刷新所有窗口
+	logger.Debug("refreshCards #%d: unfreeze + invalidate", refreshCardsCount)
+	for _, card := range dm.Cards {
+		win.SendMessage(card.Container().Handle(), win.WM_SETREDRAW, 1, 0)
+		win.SendMessage(card.BodyWidgetHandle(), win.WM_SETREDRAW, 1, 0)
+		win.InvalidateRect(card.Container().Handle(), nil, false)
+		win.InvalidateRect(card.BodyWidgetHandle(), nil, false)
+		win.UpdateWindow(card.Container().Handle())
+		win.UpdateWindow(card.BodyWidgetHandle())
+	}
 	win.SendMessage(dm.BodyWidget.Handle(), win.WM_SETREDRAW, 1, 0)
 	win.InvalidateRect(dm.BodyWidget.Handle(), nil, false)
 	win.UpdateWindow(dm.BodyWidget.Handle())
