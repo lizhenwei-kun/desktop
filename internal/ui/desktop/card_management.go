@@ -144,9 +144,13 @@ func (dm *DesktopMode) setupCardActions(card *ui.GroupCard, grp config.Group) {
 
 	// 卡片移动/缩放后，全局刷新所有卡片和桌面，确保没有残留
 	card.SetOnRefreshAfterMove(func() {
-		dm.InvalidateBody()
+		// 先刷新桌面壁纸（覆盖原卡片窗口区域）
+		win.InvalidateRect(dm.BodyWidget.Handle(), nil, true)
+		win.UpdateWindow(dm.BodyWidget.Handle())
+		// 再强制所有卡片重绘
 		for _, c := range dm.Cards {
 			_ = c.Container().Invalidate()
+			win.UpdateWindow(c.Container().Handle())
 		}
 	})
 
