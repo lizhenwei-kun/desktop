@@ -1,6 +1,7 @@
 package desktop
 
 import (
+	"github.com/lxn/walk"
 	"github.com/lxn/win"
 
 	"desktop_go/internal/config"
@@ -78,9 +79,13 @@ func (dm *DesktopMode) createGroupCards() {
 func (dm *DesktopMode) setupCardActions(card *ui.GroupCard, grp config.Group) {
 	card.SetOnPositionChanged(func(name string, x, y float64) {
 		dm.Manager.UpdateGroupPosition(name, x, y)
+		// 位置变了，需要重绘桌面以刷新卡片下方的壁纸背景
+		dm.InvalidateBody()
 	})
 	card.SetOnSizeChanged(func(name string, w, h float64) {
 		dm.Manager.UpdateGroupSize(name, w, h)
+		// 尺寸变了，需要重绘桌面以刷新卡片下方的壁纸背景
+		dm.InvalidateBody()
 	})
 	card.SetOnIconLeftClick(func(c *ui.GroupCard, idx int, item group.GroupItem) {
 		// 清除其他所有卡片的选中
@@ -137,6 +142,14 @@ func (dm *DesktopMode) setupCardActions(card *ui.GroupCard, grp config.Group) {
 	})
 	card.SetOnResizeOutline(dm.ResizeOutlineState.OnCardResizeOutline)
 	card.SetOnResizeOutlineEnd(dm.ResizeOutlineState.OnCardResizeOutlineEnd)
+
+	// 卡片移动/缩放前，先擦除原位置（防止 PaintNoErase 模式旧位置壁纸残留）
+	card.SetOnOldBounds(func(oldBounds walk.Rectangle) {
+		dm.InvalidateBody()
+	})
+
+	// 提供桌面壁纸位图，卡片背景每帧从真实壁纸合成，避免半透明色累积变不透明
+	card.SetOnGetWallpaper(dm.WallpaperState.getBitmap)
 
 	// 图标按下回调（通知 DesktopMode 通过 UnifiedDragState 统一管理拖拽）
 	card.SetOnIconPress(dm.handleCardIconPress)

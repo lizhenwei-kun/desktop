@@ -115,6 +115,10 @@ type GroupCard struct {
 	// 缩放虚框回调（DesktopMode 在桌面层画边框）
 	onResizeOutline    func(card *GroupCard, newX, newY, newW, newH int)
 	onResizeOutlineEnd func(card *GroupCard)
+	// 移动前回传卡片原屏幕矩形（供 DesktopMode 擦除旧位置残留）
+	onOldBounds func(oldBounds walk.Rectangle)
+	// 获取桌面壁纸位图（工作区尺寸），用于卡片背景从真实壁纸开始合成，避免 AlphaBlend 累积变不透明
+	onGetWallpaper func() *walk.Bitmap
 }
 
 // ResizeEdge 缩放方向
@@ -180,7 +184,7 @@ func NewGroupCard(parent walk.Container, grp config.Group, mgr *group.Manager, e
 	if err != nil {
 		return nil, err
 	}
-	gc.bodyWidget.SetPaintMode(walk.PaintBuffered)
+	gc.bodyWidget.SetPaintMode(walk.PaintNoErase)
 	gc.bodyWidget.SetInvalidatesOnResize(true)
 
 	// 手动设置 bodyWidget 填满 container（因为没有 Layout 自动管理）
@@ -320,15 +324,13 @@ func (gc *GroupCard) setupMouseEvents() {
 			gc.position.Y = float64(gc.dragNewY) / float64(gc.workH)
 			pixW := gc.pixelW()
 			pixH := gc.pixelH()
-			gc.container.SetBoundsPixels(walk.Rectangle{
-				X: gc.dragNewX, Y: gc.dragNewY,
-				Width: pixW, Height: pixH,
-			})
-			gc.bodyWidget.SetBoundsPixels(walk.Rectangle{
-				X: 0, Y: 0, Width: pixW, Height: pixH,
-			})
+			// 移动前通知 DesktopMode 擦除卡片原位置（防止 PaintNoErase 旧位置残留）
+			if gc.onOldBounds != nil {
+				ob := gc.container.BoundsPixels()
+				gc.onOldBounds(ob)
+			}
+			gc.applyBounds(gc.dragNewX, gc.dragNewY, pixW, pixH)
 			gc.manager.UpdateGroupPosition(gc.groupName, gc.position.X, gc.position.Y)
-			gc.bodyWidget.Invalidate()
 		}
 		// 通知 DesktopMode 重绘桌面 BodyWidget，清除卡片原位置残留
 		if gc.onCardDragOutlineEnd != nil {
@@ -500,12 +502,13 @@ func (gc *GroupCard) endResize() {
 	gc.position.X = float64(gc.resizeNewX) / float64(gc.workW)
 	gc.position.Y = float64(gc.resizeNewY) / float64(gc.workH)
 
-	gc.container.SetBoundsPixels(walk.Rectangle{
-		X: gc.resizeNewX, Y: gc.resizeNewY, Width: gc.resizeNewW, Height: gc.resizeNewH,
-	})
-	gc.bodyWidget.SetBoundsPixels(walk.Rectangle{
-		X: 0, Y: 0, Width: gc.resizeNewW, Height: gc.resizeNewH,
-	})
+	// 移动前通知 DesktopMode 擦除卡片原位置（防止 PaintNoErase 旧位置残留）
+	if gc.onOldBounds != nil {
+		ob := gc.container.BoundsPixels()
+		gc.onOldBounds(ob)
+	}
+
+	gc.applyBounds(gc.resizeNewX, gc.resizeNewY, gc.resizeNewW, gc.resizeNewH)
 
 	gc.manager.UpdateGroupSize(gc.groupName, gc.size.Width, gc.size.Height)
 	gc.manager.UpdateGroupPosition(gc.groupName, gc.position.X, gc.position.Y)
@@ -672,8 +675,25 @@ func (gc *GroupCard) paintDragOutline(canvas *walk.Canvas, bounds walk.Rectangle
 }
 
 // paintBackground 绘制卡片背景（半透明颜色）
+// 使用 PaintNoErase 模式，canvas 直接对应屏幕 DC。每帧先从真实壁纸开始合成，
+// 再 AlphaBlend 一层半透明颜色——这样无论重绘多少次都不会累积变不透明，
+// 也不会在图标获焦/鼠标移出时残留上一帧叠加结果。
 func (gc *GroupCard) paintBackground(canvas *walk.Canvas, bounds walk.Rectangle) {
-	// 缓存有效且尺寸未变时复用
+	// 1) 先绘制当前卡片位置对应的真实壁纸作为底（覆盖上一帧残留，消除 AlphaBlend 累积）
+	if gc.onGetWallpaper != nil {
+		if wp := gc.onGetWallpaper(); wp != nil {
+			src := walk.Rectangle{
+				X:      gc.pixelX(),
+				Y:      gc.pixelY(),
+				Width:  bounds.Width,
+				Height: bounds.Height,
+			}
+			_ = canvas.DrawBitmapPartWithOpacityPixels(wp, bounds, src, 255)
+		}
+	}
+
+	// 2) 半透明颜色叠加（dst 已是真实壁纸，单次叠加不累积）
+	// 缓存有效且尺寸未变时复用纯色位图
 	if gc.bgCacheBmp != nil && gc.bgCacheW == bounds.Width && gc.bgCacheH == bounds.Height {
 		canvas.DrawBitmapWithOpacityPixels(gc.bgCacheBmp, bounds, gc.groupColor.A)
 		return
@@ -949,8 +969,18 @@ func (gc *GroupCard) GroupColor() color.RGBA {
 // SetGroupColor 直接更新卡片颜色并重绘（避免销毁重建）
 func (gc *GroupCard) SetGroupColor(colorStr string) {
 	gc.groupColor = ParseHexColor(colorStr)
+	// 颜色变了，必须清除背景缓存，否则 paintBackground 会复用旧颜色的缓存位图
+	gc.clearBgCache()
 	if gc.bodyWidget != nil {
 		gc.bodyWidget.Invalidate()
+	}
+}
+
+// clearBgCache 释放缓存的背景位图
+func (gc *GroupCard) clearBgCache() {
+	if gc.bgCacheBmp != nil {
+		gc.bgCacheBmp.Dispose()
+		gc.bgCacheBmp = nil
 	}
 }
 
@@ -995,28 +1025,46 @@ func (gc *GroupCard) SetOnIconRightClick(fn func(card *GroupCard, idx int, item 
 	gc.onIconRightClick = fn
 }
 
+// applyBounds 统一应用容器与 body 的像素 bounds。
+// 关键：先产生一次真实的尺寸变化（宽度 +1 再移回），强制触发 walk 的
+// WM_WINDOWPOSCHANGED → FormBase.startLayout 用新的客户区大小重新布局，
+// 否则 PaintNoErase 模式下 bodyWidget 的 canvas DC 原点不会更新，
+// AlphaBlend 会叠加到旧屏幕位置的壁纸上（表现为"卡片显示了非当前区域的桌面背景"）。
+// 注意：SetWindowPos/SetBoundsPixels 若带 SWP_NOSIZE 会被 walk 跳过布局，
+// 所以这里必须让尺寸真正变化一次。
+func (gc *GroupCard) applyBounds(x, y, w, h int) {
+	// 1) 真实尺寸变化触发重新布局
+	gc.container.SetBoundsPixels(walk.Rectangle{X: x, Y: y, Width: w + 1, Height: h + 1})
+	gc.bodyWidget.SetBoundsPixels(walk.Rectangle{X: 0, Y: 0, Width: w + 1, Height: h + 1})
+	// 2) 移回目标尺寸（这次 WM_WINDOWPOSCHANGED 带 SWP_NOSIZE，但第 1 步已让布局刷新）
+	gc.container.SetBoundsPixels(walk.Rectangle{X: x, Y: y, Width: w, Height: h})
+	gc.bodyWidget.SetBoundsPixels(walk.Rectangle{X: 0, Y: 0, Width: w, Height: h})
+	// 位置/尺寸变了，背景缓存不再适用，清除后下次重绘用新位置重建
+	gc.clearBgCache()
+	gc.bodyWidget.Invalidate()
+}
+
 // SetPosition 设置位置（相对坐标）
 func (gc *GroupCard) SetPosition(x, y float64) {
 	gc.position = config.Position{X: x, Y: y}
 	w, h := gc.pixelW(), gc.pixelH()
-	gc.container.SetBoundsPixels(walk.Rectangle{
-		X: gc.pixelX(), Y: gc.pixelY(), Width: w, Height: h,
-	})
-	gc.bodyWidget.SetBoundsPixels(walk.Rectangle{
-		X: 0, Y: 0, Width: w, Height: h,
-	})
+	// 移动前通知 DesktopMode 擦除卡片原位置（防止 PaintNoErase 旧位置残留）
+	if gc.onOldBounds != nil {
+		ob := gc.container.BoundsPixels()
+		gc.onOldBounds(ob)
+	}
+	gc.applyBounds(gc.pixelX(), gc.pixelY(), w, h)
 }
 
 // SetSize 设置尺寸（相对坐标）
 func (gc *GroupCard) SetSize(w, h float64) {
 	gc.size = config.Size{Width: w, Height: h}
 	pw, ph := gc.pixelW(), gc.pixelH()
-	gc.container.SetBoundsPixels(walk.Rectangle{
-		X: gc.pixelX(), Y: gc.pixelY(), Width: pw, Height: ph,
-	})
-	gc.bodyWidget.SetBoundsPixels(walk.Rectangle{
-		X: 0, Y: 0, Width: pw, Height: ph,
-	})
+	if gc.onOldBounds != nil {
+		ob := gc.container.BoundsPixels()
+		gc.onOldBounds(ob)
+	}
+	gc.applyBounds(gc.pixelX(), gc.pixelY(), pw, ph)
 }
 
 // ReapplyBounds 重新应用位置和尺寸（用于布局变更后恢复绝对定位）
@@ -1025,16 +1073,11 @@ func (gc *GroupCard) ReapplyBounds() {
 	h := gc.pixelH()
 	x := gc.pixelX()
 	y := gc.pixelY()
-	gc.container.SetBoundsPixels(walk.Rectangle{
-		X: x, Y: y,
-		Width: w, Height: h,
-	})
-	gc.bodyWidget.SetBoundsPixels(walk.Rectangle{
-		X: 0, Y: 0,
-		Width: w, Height: h,
-	})
-	// 强制触发重绘，确保卡片内容可见
-	gc.bodyWidget.Invalidate()
+	if gc.onOldBounds != nil {
+		ob := gc.container.BoundsPixels()
+		gc.onOldBounds(ob)
+	}
+	gc.applyBounds(x, y, w, h)
 
 	// 验证实际 bounds
 	// actualContainer := gc.container.BoundsPixels()
@@ -1107,6 +1150,16 @@ func (gc *GroupCard) SetOnResizeOutline(fn func(card *GroupCard, newX, newY, new
 // SetOnResizeOutlineEnd 设置缩放虚框结束回调
 func (gc *GroupCard) SetOnResizeOutlineEnd(fn func(card *GroupCard)) {
 	gc.onResizeOutlineEnd = fn
+}
+
+// SetOnOldBounds 设置移动前回调（回传卡片原屏幕矩形，供 DesktopMode 擦除旧位置残留）
+func (gc *GroupCard) SetOnOldBounds(fn func(oldBounds walk.Rectangle)) {
+	gc.onOldBounds = fn
+}
+
+// SetOnGetWallpaper 设置获取桌面壁纸位图的回调（供卡片背景从真实壁纸合成，避免 AlphaBlend 累积）
+func (gc *GroupCard) SetOnGetWallpaper(fn func() *walk.Bitmap) {
+	gc.onGetWallpaper = fn
 }
 
 // GroupName 返回分组名称
