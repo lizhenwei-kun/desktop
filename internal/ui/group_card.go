@@ -324,7 +324,7 @@ func (gc *GroupCard) setupMouseEvents() {
 			gc.position.Y = float64(gc.dragNewY) / float64(gc.workH)
 			pixW := gc.pixelW()
 			pixH := gc.pixelH()
-			gc.applyBounds(gc.dragNewX, gc.dragNewY, pixW, pixH)
+			gc.applyBounds(gc.dragNewX, gc.dragNewY, pixW, pixH, true)
 			gc.manager.UpdateGroupPosition(gc.groupName, gc.position.X, gc.position.Y)
 		}
 		// 通知 DesktopMode 重绘桌面 BodyWidget，清除卡片原位置残留
@@ -497,7 +497,7 @@ func (gc *GroupCard) endResize() {
 	gc.position.X = float64(gc.resizeNewX) / float64(gc.workW)
 	gc.position.Y = float64(gc.resizeNewY) / float64(gc.workH)
 
-	gc.applyBounds(gc.resizeNewX, gc.resizeNewY, gc.resizeNewW, gc.resizeNewH)
+	gc.applyBounds(gc.resizeNewX, gc.resizeNewY, gc.resizeNewW, gc.resizeNewH, true)
 
 	gc.manager.UpdateGroupSize(gc.groupName, gc.size.Width, gc.size.Height)
 	gc.manager.UpdateGroupPosition(gc.groupName, gc.position.X, gc.position.Y)
@@ -1018,7 +1018,8 @@ func (gc *GroupCard) SetOnIconRightClick(fn func(card *GroupCard, idx int, item 
 // AlphaBlend 会叠加到旧屏幕位置的壁纸上（表现为"卡片显示了非当前区域的桌面背景"）。
 // 注意：SetWindowPos/SetBoundsPixels 若带 SWP_NOSIZE 会被 walk 跳过布局，
 // 所以这里必须让尺寸真正变化一次。
-func (gc *GroupCard) applyBounds(x, y, w, h int) {
+// triggerRefresh: 是否触发 onRefreshAfterMove 回调（true=用户拖拽/缩放后，false=布局恢复时）
+func (gc *GroupCard) applyBounds(x, y, w, h int, triggerRefresh ...bool) {
 	// 1) 真实尺寸变化触发重新布局
 	gc.container.SetBoundsPixels(walk.Rectangle{X: x, Y: y, Width: w + 1, Height: h + 1})
 	gc.bodyWidget.SetBoundsPixels(walk.Rectangle{X: 0, Y: 0, Width: w + 1, Height: h + 1})
@@ -1028,9 +1029,11 @@ func (gc *GroupCard) applyBounds(x, y, w, h int) {
 	// 位置/尺寸变了，背景缓存不再适用，清除后下次重绘用新位置重建
 	gc.clearBgCache()
 	gc.bodyWidget.Invalidate()
-	// 通知 DesktopMode 全局刷新，清除原位置残留
-	if gc.onRefreshAfterMove != nil {
-		gc.onRefreshAfterMove()
+	// 默认触发刷新（用户拖拽/缩放后），布局恢复时 caller 传 false
+	if len(triggerRefresh) == 0 || triggerRefresh[0] {
+		if gc.onRefreshAfterMove != nil {
+			gc.onRefreshAfterMove()
+		}
 	}
 }
 
@@ -1038,14 +1041,14 @@ func (gc *GroupCard) applyBounds(x, y, w, h int) {
 func (gc *GroupCard) SetPosition(x, y float64) {
 	gc.position = config.Position{X: x, Y: y}
 	w, h := gc.pixelW(), gc.pixelH()
-	gc.applyBounds(gc.pixelX(), gc.pixelY(), w, h)
+	gc.applyBounds(gc.pixelX(), gc.pixelY(), w, h, true)
 }
 
 // SetSize 设置尺寸（相对坐标）
 func (gc *GroupCard) SetSize(w, h float64) {
 	gc.size = config.Size{Width: w, Height: h}
 	pw, ph := gc.pixelW(), gc.pixelH()
-	gc.applyBounds(gc.pixelX(), gc.pixelY(), pw, ph)
+	gc.applyBounds(gc.pixelX(), gc.pixelY(), pw, ph, true)
 }
 
 // ReapplyBounds 重新应用位置和尺寸（用于布局变更后恢复绝对定位）
@@ -1054,7 +1057,7 @@ func (gc *GroupCard) ReapplyBounds() {
 	h := gc.pixelH()
 	x := gc.pixelX()
 	y := gc.pixelY()
-	gc.applyBounds(x, y, w, h)
+	gc.applyBounds(x, y, w, h, false)
 
 	// 验证实际 bounds
 	// actualContainer := gc.container.BoundsPixels()
