@@ -142,13 +142,6 @@ func (dm *DesktopMode) setupCardActions(card *ui.GroupCard, grp config.Group) {
 	card.SetOnResizeOutline(dm.ResizeOutlineState.OnCardResizeOutline)
 	card.SetOnResizeOutlineEnd(dm.ResizeOutlineState.OnCardResizeOutlineEnd)
 
-	// 卡片移动/缩放后，刷新桌面壁纸覆盖原卡片区域（applyBounds 中已用 RedrawWindow 清除旧位置）
-	card.SetOnRefreshAfterMove(func() {
-		// 桌面整窗口重绘，确保旧位置被壁纸覆盖
-		win.RedrawWindow(dm.BodyWidget.Handle(), nil, 0,
-			win.RDW_INVALIDATE|win.RDW_UPDATENOW)
-	})
-
 	// 提供桌面壁纸位图，卡片背景从真实壁纸合成
 	card.SetOnGetWallpaper(dm.WallpaperState.getBitmap)
 

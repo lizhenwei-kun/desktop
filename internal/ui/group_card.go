@@ -115,8 +115,6 @@ type GroupCard struct {
 	// 缩放虚框回调（DesktopMode 在桌面层画边框）
 	onResizeOutline    func(card *GroupCard, newX, newY, newW, newH int)
 	onResizeOutlineEnd func(card *GroupCard)
-	// 移动/缩放后全局刷新回调（通知 DesktopMode 刷新所有卡片和桌面）
-	onRefreshAfterMove func()
 	// 获取桌面壁纸位图（工作区尺寸），卡片背景从真实壁纸合成
 	onGetWallpaper func() *walk.Bitmap
 }
@@ -324,7 +322,7 @@ func (gc *GroupCard) setupMouseEvents() {
 			gc.position.Y = float64(gc.dragNewY) / float64(gc.workH)
 			pixW := gc.pixelW()
 			pixH := gc.pixelH()
-			gc.applyBounds(gc.dragNewX, gc.dragNewY, pixW, pixH, true)
+			gc.applyBounds(gc.dragNewX, gc.dragNewY, pixW, pixH)
 			gc.manager.UpdateGroupPosition(gc.groupName, gc.position.X, gc.position.Y)
 		}
 		// 通知 DesktopMode 重绘桌面 BodyWidget，清除卡片原位置残留
@@ -497,7 +495,7 @@ func (gc *GroupCard) endResize() {
 	gc.position.X = float64(gc.resizeNewX) / float64(gc.workW)
 	gc.position.Y = float64(gc.resizeNewY) / float64(gc.workH)
 
-	gc.applyBounds(gc.resizeNewX, gc.resizeNewY, gc.resizeNewW, gc.resizeNewH, true)
+	gc.applyBounds(gc.resizeNewX, gc.resizeNewY, gc.resizeNewW, gc.resizeNewH)
 
 	gc.manager.UpdateGroupSize(gc.groupName, gc.size.Width, gc.size.Height)
 	gc.manager.UpdateGroupPosition(gc.groupName, gc.position.X, gc.position.Y)
@@ -1019,50 +1017,30 @@ func (gc *GroupCard) SetOnIconRightClick(fn func(card *GroupCard, idx int, item 
 // 注意：SetWindowPos/SetBoundsPixels 若带 SWP_NOSIZE 会被 walk 跳过布局，
 // 所以这里必须让尺寸真正变化一次。
 // triggerRefresh: 是否触发 onRefreshAfterMove 回调（true=用户拖拽/缩放后，false=布局恢复时）
-func (gc *GroupCard) applyBounds(x, y, w, h int, triggerRefresh ...bool) {
-	// 0) 移动前用 RedrawWindow 强制父窗口重绘卡片旧区域，清除 PaintNoErase 残留的屏幕像素
-	var oldRect win.RECT
-	win.GetWindowRect(gc.container.Handle(), &oldRect)
-	parent := win.GetParent(gc.container.Handle())
-	if parent != 0 {
-		// 屏幕坐标转父窗口客户区坐标
-		pt1 := win.POINT{X: oldRect.Left, Y: oldRect.Top}
-		pt2 := win.POINT{X: oldRect.Right, Y: oldRect.Bottom}
-		win.ScreenToClient(parent, &pt1)
-		win.ScreenToClient(parent, &pt2)
-		oldRect = win.RECT{Left: pt1.X, Top: pt1.Y, Right: pt2.X, Bottom: pt2.Y}
-		win.RedrawWindow(parent, &oldRect, 0, win.RDW_INVALIDATE|win.RDW_ERASE|win.RDW_UPDATENOW)
-	}
-
+func (gc *GroupCard) applyBounds(x, y, w, h int) {
 	// 1) 真实尺寸变化触发重新布局
 	gc.container.SetBoundsPixels(walk.Rectangle{X: x, Y: y, Width: w + 1, Height: h + 1})
 	gc.bodyWidget.SetBoundsPixels(walk.Rectangle{X: 0, Y: 0, Width: w + 1, Height: h + 1})
-	// 2) 移回目标尺寸（这次 WM_WINDOWPOSCHANGED 带 SWP_NOSIZE，但第 1 步已让布局刷新）
+	// 2) 移回目标尺寸
 	gc.container.SetBoundsPixels(walk.Rectangle{X: x, Y: y, Width: w, Height: h})
 	gc.bodyWidget.SetBoundsPixels(walk.Rectangle{X: 0, Y: 0, Width: w, Height: h})
-	// 位置/尺寸变了，背景缓存不再适用，清除后下次重绘用新位置重建
+	// 位置/尺寸变了，清除缓存
 	gc.clearBgCache()
 	gc.bodyWidget.Invalidate()
-	// 默认触发刷新（用户拖拽/缩放后），布局恢复时 caller 传 false
-	if len(triggerRefresh) == 0 || triggerRefresh[0] {
-		if gc.onRefreshAfterMove != nil {
-			gc.onRefreshAfterMove()
-		}
-	}
 }
 
 // SetPosition 设置位置（相对坐标）
 func (gc *GroupCard) SetPosition(x, y float64) {
 	gc.position = config.Position{X: x, Y: y}
 	w, h := gc.pixelW(), gc.pixelH()
-	gc.applyBounds(gc.pixelX(), gc.pixelY(), w, h, true)
+	gc.applyBounds(gc.pixelX(), gc.pixelY(), w, h)
 }
 
 // SetSize 设置尺寸（相对坐标）
 func (gc *GroupCard) SetSize(w, h float64) {
 	gc.size = config.Size{Width: w, Height: h}
 	pw, ph := gc.pixelW(), gc.pixelH()
-	gc.applyBounds(gc.pixelX(), gc.pixelY(), pw, ph, true)
+	gc.applyBounds(gc.pixelX(), gc.pixelY(), pw, ph)
 }
 
 // ReapplyBounds 重新应用位置和尺寸（用于布局变更后恢复绝对定位）
@@ -1071,7 +1049,7 @@ func (gc *GroupCard) ReapplyBounds() {
 	h := gc.pixelH()
 	x := gc.pixelX()
 	y := gc.pixelY()
-	gc.applyBounds(x, y, w, h, false)
+	gc.applyBounds(x, y, w, h)
 
 	// 验证实际 bounds
 	// actualContainer := gc.container.BoundsPixels()
@@ -1144,11 +1122,6 @@ func (gc *GroupCard) SetOnResizeOutline(fn func(card *GroupCard, newX, newY, new
 // SetOnResizeOutlineEnd 设置缩放虚框结束回调
 func (gc *GroupCard) SetOnResizeOutlineEnd(fn func(card *GroupCard)) {
 	gc.onResizeOutlineEnd = fn
-}
-
-// SetOnRefreshAfterMove 设置移动/缩放后全局刷新回调
-func (gc *GroupCard) SetOnRefreshAfterMove(fn func()) {
-	gc.onRefreshAfterMove = fn
 }
 
 // SetOnGetWallpaper 设置获取桌面壁纸位图的回调
