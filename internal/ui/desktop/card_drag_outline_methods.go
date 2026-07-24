@@ -218,7 +218,7 @@ func (s *CardDragOutline) OnCardDragOutline(card *ui.GroupCard, newX, newY int) 
 	s.moveDragGhost(screenX, screenY)
 }
 
-// OnCardDragOutlineEnd 卡片拖拽虚框结束 — 销毁幽灵窗口
+// OnCardDragOutlineEnd 卡片拖拽虚框结束 — 销毁幽灵窗口并刷新桌面
 func (s *CardDragOutline) OnCardDragOutlineEnd(card *ui.GroupCard) {
 	s.destroyDragGhost()
 	s.DragOutlineCard = nil

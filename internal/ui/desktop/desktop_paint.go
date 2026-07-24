@@ -9,18 +9,25 @@ import (
 
 var paintCount int
 
+var paintSkippedCount int
+
 func (dm *DesktopMode) paintDesktop(canvas *walk.Canvas, updateBounds walk.Rectangle) error {
 	bounds := dm.BodyWidget.ClientBoundsPixels()
 
 	// 脏标记检查：只有主动标记为脏时才执行全量绘制
 	// 系统触发的 WM_PAINT（窗口遮挡/恢复/Z序变化等）直接跳过，避免不必要的全量重绘
 	if !dm.paintDirty {
+		paintSkippedCount++
+		if paintSkippedCount <= 5 {
+			logger.Debug("paintDesktop: SKIPPED (paintDirty=false) #%d, bounds=(%d,%d,%dx%d)",
+				paintSkippedCount, bounds.X, bounds.Y, bounds.Width, bounds.Height)
+		}
 		return nil
 	}
 	dm.paintDirty = false
 
 	paintCount++
-	if paintCount <= 3 {
+	if paintCount <= 10 {
 		logger.Debug("paintDesktop #%d: bounds=(%d,%d,%dx%d), wallpaperBmp=%v",
 			paintCount, bounds.X, bounds.Y, bounds.Width, bounds.Height, dm.WallpaperBmp != nil)
 	}
@@ -154,6 +161,9 @@ func (dm *DesktopMode) Refresh() {
 // ReapplyCardPositionsAndRefresh 重新应用卡片位置并触发全量重绘
 // 用于窗口从隐藏变为可见后的完整刷新
 func (dm *DesktopMode) ReapplyCardPositionsAndRefresh() {
+	logger.Debug("ReapplyCardPositionsAndRefresh: paintDirty=%v, visible=%v, wallpaperBmp=%v",
+		dm.paintDirty, dm.MainWindow.Visible(), dm.WallpaperBmp != nil)
+
 	// 重新应用卡片位置
 	dm.reapplyCardPositions()
 

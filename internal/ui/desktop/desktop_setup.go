@@ -64,7 +64,7 @@ func (dm *DesktopMode) Setup() error {
 	bg, _ := walk.NewSolidColorBrush(walk.RGB(0x1A, 0x1A, 0x2E))
 	dm.MainWindow.SetBackground(bg)
 
-	// 按全屏尺寸预加载壁纸，对齐系统桌面
+	// 预加载壁纸（全屏尺寸加载后裁剪工作区）
 	dm.WallpaperState.LoadWallpaper(dm.MainWindow.DPI, dm.ScreenW, dm.ScreenH, dm.WorkX, dm.WorkY, dm.WorkW, dm.WorkH)
 
 	// 创建缓存的绘制对象

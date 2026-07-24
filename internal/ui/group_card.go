@@ -330,6 +330,10 @@ func (gc *GroupCard) setupMouseEvents() {
 			gc.manager.UpdateGroupPosition(gc.groupName, gc.position.X, gc.position.Y)
 			gc.bodyWidget.Invalidate()
 		}
+		// 通知 DesktopMode 重绘桌面 BodyWidget，清除卡片原位置残留
+		if gc.onCardDragOutlineEnd != nil {
+			gc.onCardDragOutlineEnd(gc)
+		}
 	})
 
 	gc.bodyWidget.MouseMove().Attach(func(x, y int, button walk.MouseButton) {

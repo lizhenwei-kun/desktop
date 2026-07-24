@@ -599,14 +599,21 @@ func (r *Runner) showDesktopMode() {
 	dm := r.dm
 	hwnd := r.mw.Handle()
 
-	// 确保窗口位置正确（嵌入式桌面可能需要重新定位）
-	r.winAPI.MoveWindow(hwnd, dm.WorkX, dm.WorkY, dm.WorkW, dm.WorkH)
+	logger.Debug("showDesktopMode: window from hidden to visible, work=(%d,%d,%dx%d), wallpaperBmp=%v",
+		dm.WorkX, dm.WorkY, dm.WorkW, dm.WorkH, dm.WallpaperBmp != nil)
 
-	// 重新设置 Container 和 BodyWidget 的 bounds（确保布局正确）
+	// 先设置 BodyWidget bounds 再 MoveWindow，确保 MoveWindow 触发的 WM_PAINT 使用正确尺寸
 	clientBounds := r.mw.ClientBoundsPixels()
 	fullH := clientBounds.Y + clientBounds.Height
+	logger.Debug("showDesktopMode: clientBounds=(%d,%d,%dx%d), fullH=%d", clientBounds.X, clientBounds.Y, clientBounds.Width, clientBounds.Height, fullH)
 	dm.Container.SetBoundsPixels(walk.Rectangle{X: 0, Y: 0, Width: dm.WorkW, Height: fullH})
 	dm.BodyWidget.SetBoundsPixels(walk.Rectangle{X: 0, Y: 0, Width: dm.WorkW, Height: fullH})
+
+	// 设置脏标记，确保后续 WM_PAINT 执行全量绘制
+	dm.SetPaintDirty()
+
+	// 确保窗口位置正确（嵌入式桌面可能需要重新定位）
+	r.winAPI.MoveWindow(hwnd, dm.WorkX, dm.WorkY, dm.WorkW, dm.WorkH)
 
 	// 重新加载桌面项目（同步隐藏期间可能错过的文件变更）
 	r.manager.ReloadDesktopItems()

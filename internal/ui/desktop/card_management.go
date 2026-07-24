@@ -101,7 +101,11 @@ func (dm *DesktopMode) setupCardActions(card *ui.GroupCard, grp config.Group) {
 		dm.clearSelectedItem()
 	})
 	card.SetOnCardDragOutline(dm.CardDragOutline.OnCardDragOutline)
-	card.SetOnCardDragOutlineEnd(dm.CardDragOutline.OnCardDragOutlineEnd)
+	card.SetOnCardDragOutlineEnd(func(card *ui.GroupCard) {
+		dm.CardDragOutline.OnCardDragOutlineEnd(card)
+		// 刷新桌面，清除卡片原位置残留
+		dm.InvalidateBody()
+	})
 	card.SetOnRename(func(name string) {
 		newName, ok := ui.ShowInputDialog(dm.MainWindow, "重命名分组", "请输入新名称：", name)
 		if ok && newName != "" && newName != name {

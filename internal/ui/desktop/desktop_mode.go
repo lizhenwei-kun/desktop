@@ -240,6 +240,12 @@ func (dm *DesktopMode) Post(fn func()) {
 	dm.MainWindow.Synchronize(fn)
 }
 
+// SetPaintDirty 强制设置脏标记，确保下次 WM_PAINT 执行全量绘制
+// 用于 showDesktopMode 等场景，在窗口尺寸变更前设置，避免系统触发的 WM_PAINT 使用旧尺寸
+func (dm *DesktopMode) SetPaintDirty() {
+	dm.paintDirty = true
+}
+
 // InvalidateBody 使 BodyWidget 无效化并触发重绘。
 // 设置脏标记确保 paintDesktop 执行全量绘制；窗口不可见时跳过。
 // 窗口重新显示时 showDesktopMode() 会调用 ReapplyCardPositionsAndRefresh() 完成完整刷新。
