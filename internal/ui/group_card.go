@@ -3,6 +3,7 @@ package ui
 import (
 	"image"
 	"image/color"
+	"image/draw"
 	"time"
 
 	"github.com/lxn/walk"
@@ -663,11 +664,15 @@ func (gc *GroupCard) paintDragOutline(canvas *walk.Canvas, bounds walk.Rectangle
 
 // paintBackground 绘制卡片背景（半透明颜色）
 func (gc *GroupCard) paintBackground(canvas *walk.Canvas, bounds walk.Rectangle) {
-	bgBmp := gc.createColorBitmap(bounds.Width, bounds.Height, gc.groupColor)
-	if bgBmp != nil {
-		defer bgBmp.Dispose()
-		canvas.DrawBitmapWithOpacityPixels(bgBmp, bounds, gc.groupColor.A)
+	// 用 draw.Draw 快速填充纯色位图，避免逐像素循环
+	bgImg := image.NewRGBA(image.Rect(0, 0, bounds.Width, bounds.Height))
+	draw.Draw(bgImg, bgImg.Bounds(), &image.Uniform{gc.groupColor}, image.Point{}, draw.Src)
+	bgBmp, err := walk.NewBitmapFromImage(bgImg)
+	if err != nil {
+		return
 	}
+	defer bgBmp.Dispose()
+	canvas.DrawBitmapWithOpacityPixels(bgBmp, bounds, gc.groupColor.A)
 }
 
 // paintHeader 绘制标题栏（含操作按钮）
@@ -707,15 +712,9 @@ func (gc *GroupCard) paintHeader(canvas *walk.Canvas, bounds walk.Rectangle) {
 				X: b.x, Y: btnY,
 				Width: actionBtnWidth, Height: actionBtnHeight,
 			}
-			bgImg := image.NewRGBA(image.Rect(0, 0, actionBtnWidth, actionBtnHeight))
-			for py := 0; py < actionBtnHeight; py++ {
-				for px := 0; px < actionBtnWidth; px++ {
-					bgImg.SetRGBA(px, py, color.RGBA{0, 0, 0, 80})
-				}
-			}
-			if bgBmp, err := walk.NewBitmapFromImage(bgImg); err == nil {
-				canvas.DrawBitmapWithOpacityPixels(bgBmp, btnRect, 80)
-				bgBmp.Dispose()
+			if btnBrush, err := walk.NewSolidColorBrush(walk.RGB(0, 0, 0)); err == nil {
+				canvas.FillRectanglePixels(btnBrush, btnRect)
+				btnBrush.Dispose()
 			}
 			// 按钮文字
 			canvas.DrawTextPixels(b.label, btnFont, walk.RGB(0xFF, 0xFF, 0xFF),

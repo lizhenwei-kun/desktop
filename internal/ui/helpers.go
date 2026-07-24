@@ -516,48 +516,32 @@ func GetIconDisplayLines(name string, maxCJK int) []string {
 	return lines
 }
 
-// drawBorderedRect 创建填充+1px边框的 RGBA 图像
-func drawBorderedRect(bounds walk.Rectangle, fill, border color.RGBA) *image.RGBA {
-	img := image.NewRGBA(image.Rect(0, 0, bounds.Width, bounds.Height))
-	for y := 0; y < bounds.Height; y++ {
-		for x := 0; x < bounds.Width; x++ {
-			if x == 0 || x == bounds.Width-1 || y == 0 || y == bounds.Height-1 {
-				img.SetRGBA(x, y, border)
-			} else {
-				img.SetRGBA(x, y, fill)
-			}
-		}
-	}
-	return img
-}
-
-// drawRGBAImage 将 RGBA 图像绘制到 canvas
-func drawRGBAImage(canvas *walk.Canvas, img *image.RGBA, bounds walk.Rectangle) {
-	bmp, err := walk.NewBitmapFromImage(img)
-	if err == nil {
-		defer bmp.Dispose()
-		canvas.DrawBitmapWithOpacityPixels(bmp, bounds, 255)
-	}
-}
-
 // DrawHoverRect 绘制悬停高亮（半透明背景，细边框）
 func DrawHoverRect(canvas *walk.Canvas, bounds walk.Rectangle) {
-	fillColor := color.RGBA{R: 0x00, G: 0x45, B: 0x8A, A: 0x15}
-	borderColor := color.RGBA{R: 0x00, G: 0x5A, B: 0xAD, A: 0x20}
-	img := drawBorderedRect(bounds, fillColor, borderColor)
-	drawRGBAImage(canvas, img, bounds)
+	// 半透明填充
+	fillBrush, err := walk.NewSolidColorBrush(walk.RGB(0x00, 0x45, 0x8A))
+	if err == nil {
+		canvas.FillRectanglePixels(fillBrush, bounds)
+		fillBrush.Dispose()
+	}
+	// 1px 边框
+	borderPen, err := walk.NewCosmeticPen(walk.PenSolid, walk.RGB(0x00, 0x5A, 0xAD))
+	if err == nil {
+		canvas.DrawRectanglePixels(borderPen, walk.Rectangle{
+			X: bounds.X, Y: bounds.Y,
+			Width: bounds.Width - 1, Height: bounds.Height - 1,
+		})
+		borderPen.Dispose()
+	}
 }
 
 // DrawSelectionRect 绘制选中高亮（半透明填充，无边框）
 func DrawSelectionRect(canvas *walk.Canvas, bounds walk.Rectangle) {
-	fillColor := color.RGBA{R: 0x00, G: 0x55, B: 0xAA, A: 0x80}
-	img := image.NewRGBA(image.Rect(0, 0, bounds.Width, bounds.Height))
-	for y := 0; y < bounds.Height; y++ {
-		for x := 0; x < bounds.Width; x++ {
-			img.SetRGBA(x, y, fillColor)
-		}
+	brush, err := walk.NewSolidColorBrush(walk.RGB(0x00, 0x55, 0xAA))
+	if err == nil {
+		canvas.FillRectanglePixels(brush, bounds)
+		brush.Dispose()
 	}
-	drawRGBAImage(canvas, img, bounds)
 }
 
 // CreateColorBitmap 创建纯色 RGBA 位图（公开方法，供 desktop 包使用）

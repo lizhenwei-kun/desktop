@@ -228,11 +228,16 @@ func (dm *DesktopMode) Post(fn func()) {
 // InvalidateBody 使 BodyWidget 无效化并触发重绘。
 // 窗口不可见时跳过，避免触发 WM_PAINT 导致隐藏的窗口意外显示。
 // 窗口重新显示时 showDesktopMode() 会调用 ReapplyCardPositionsAndRefresh() 完成完整刷新。
+var invalidateCount int
+
 func (dm *DesktopMode) InvalidateBody() {
 	if !dm.MainWindow.Visible() {
 		return
 	}
-	logger.Debug("DesktopMode.InvalidateBody: calling BodyWidget.Invalidate")
+	invalidateCount++
+	if invalidateCount <= 5 {
+		logger.Debug("DesktopMode.InvalidateBody #%d: calling BodyWidget.Invalidate", invalidateCount)
+	}
 	dm.BodyWidget.Invalidate()
 }
 

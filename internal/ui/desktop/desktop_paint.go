@@ -1,9 +1,6 @@
 package desktop
 
 import (
-	"image"
-	"image/color"
-
 	"github.com/lxn/walk"
 	"github.com/lxn/win"
 
@@ -16,8 +13,10 @@ var paintCount int
 func (dm *DesktopMode) paintDesktop(canvas *walk.Canvas, updateBounds walk.Rectangle) error {
 	bounds := dm.BodyWidget.ClientBoundsPixels()
 	paintCount++
-	logger.Debug("paintDesktop #%d: bounds=(%d,%d,%dx%d), wallpaperBmp=%v",
-		paintCount, bounds.X, bounds.Y, bounds.Width, bounds.Height, dm.WallpaperBmp != nil)
+	if paintCount <= 3 {
+		logger.Debug("paintDesktop #%d: bounds=(%d,%d,%dx%d), wallpaperBmp=%v",
+			paintCount, bounds.X, bounds.Y, bounds.Width, bounds.Height, dm.WallpaperBmp != nil)
+	}
 	// 确保磁贴尺寸已测量（切换图标大小后 ForceTileRemeasure 会触发重新测量）
 	// 必须在 paintAllIcons 之前调用，否则 TileWidth/TileHeight 可能还是旧档位的值
 	ui.EnsureTileSizeMeasured(canvas)
@@ -29,18 +28,12 @@ func (dm *DesktopMode) paintDesktop(canvas *walk.Canvas, updateBounds walk.Recta
 }
 
 func (dm *DesktopMode) paintBackground(canvas *walk.Canvas, bounds walk.Rectangle) {
-	bgColor := color.RGBA{R: 0x1A, G: 0x1A, B: 0x2E, A: 0xFF}
-	bgImg := image.NewRGBA(image.Rect(0, 0, bounds.Width, bounds.Height))
-	for y := 0; y < bounds.Height; y++ {
-		for x := 0; x < bounds.Width; x++ {
-			bgImg.SetRGBA(x, y, bgColor)
-		}
+	brush, err := walk.NewSolidColorBrush(walk.RGB(0x1A, 0x1A, 0x2E))
+	if err != nil {
+		return
 	}
-	bmp, err := walk.NewBitmapFromImage(bgImg)
-	if err == nil {
-		defer bmp.Dispose()
-		canvas.DrawBitmapWithOpacityPixels(bmp, bounds, 255)
-	}
+	defer brush.Dispose()
+	canvas.FillRectanglePixels(brush, bounds)
 }
 
 func (dm *DesktopMode) paintToolbar(canvas *walk.Canvas, bounds walk.Rectangle) {
@@ -50,17 +43,10 @@ func (dm *DesktopMode) paintToolbar(canvas *walk.Canvas, bounds walk.Rectangle) 
 	}
 	defer font.Dispose()
 	toolbarBounds := walk.Rectangle{X: bounds.Width - 140, Y: 10, Width: 120, Height: 30}
-	btnColor := color.RGBA{R: 0x30, G: 0x34, B: 0x3C, A: 0xBD}
-	btnImg := image.NewRGBA(image.Rect(0, 0, toolbarBounds.Width, toolbarBounds.Height))
-	for y := 0; y < toolbarBounds.Height; y++ {
-		for x := 0; x < toolbarBounds.Width; x++ {
-			btnImg.SetRGBA(x, y, btnColor)
-		}
-	}
-	btnBmp, err := walk.NewBitmapFromImage(btnImg)
+	brush, err := walk.NewSolidColorBrush(walk.RGB(0x30, 0x34, 0x3C))
 	if err == nil {
-		defer btnBmp.Dispose()
-		canvas.DrawBitmapWithOpacityPixels(btnBmp, toolbarBounds, byte(btnColor.A))
+		canvas.FillRectanglePixels(brush, toolbarBounds)
+		brush.Dispose()
 	}
 	canvas.DrawTextPixels("+ 添加卡片", font, walk.RGB(0xFF, 0xFF, 0xFF),
 		toolbarBounds, walk.TextCenter|walk.TextVCenter|walk.TextSingleLine)
