@@ -149,13 +149,57 @@ func (dm *DesktopMode) setupCardActions(card *ui.GroupCard, grp config.Group) {
 	})
 }
 
+// refreshCards 刷新所有卡片。
+// 关键：尽量复用现有卡片控件（就地 Refresh + ReapplyBounds），
+// 不要在每次刷新时销毁重建——Dispose 会让卡片窗口瞬间消失、再重建导致可见闪烁。
+// 仅当分组集合（增删分组）发生变化时才销毁/新建对应卡片。
 func (dm *DesktopMode) refreshCards() {
-	for _, card := range dm.Cards {
-		card.Cleanup()
-		card.Container().Dispose()
+	groups := dm.Manager.GetGroups()
+
+	// 当前分组名集合
+	groupNames := make(map[string]bool, len(groups))
+	for _, g := range groups {
+		groupNames[g.Name] = true
 	}
-	dm.Cards = nil
-	dm.createGroupCards()
+
+	// 1. 复用仍存在的卡片，移除已删除的卡片
+	kept := make([]*ui.GroupCard, 0, len(dm.Cards))
+	for _, card := range dm.Cards {
+		name := card.GroupName()
+		if groupNames[name] {
+			// 分组仍存在：就地刷新内容与位置（不销毁窗口，避免闪烁）
+			card.Refresh()
+			card.ReapplyBounds()
+			kept = append(kept, card)
+		} else {
+			// 分组已被删除：销毁卡片
+			card.Cleanup()
+			card.Container().Dispose()
+		}
+	}
+	dm.Cards = kept
+
+	// 2. 为新增的分组创建卡片
+	for _, grp := range groups {
+		exists := false
+		for _, card := range dm.Cards {
+			if card.GroupName() == grp.Name {
+				exists = true
+				break
+			}
+		}
+		if exists {
+			continue
+		}
+		card, err := ui.NewGroupCard(dm.MainWindow, grp, dm.Manager, dm.Executor, dm.MainWindow, dm.WorkW, dm.WorkH)
+		if err != nil {
+			logger.Debug("refreshCards: new card %q error: %v", grp.Name, err)
+			continue
+		}
+		dm.setupCardActions(card, grp)
+		dm.Cards = append(dm.Cards, card)
+	}
+
 	dm.reapplyCardPositions()
 	dm.InvalidateBody()
 }
