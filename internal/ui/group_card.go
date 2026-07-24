@@ -1020,6 +1020,20 @@ func (gc *GroupCard) SetOnIconRightClick(fn func(card *GroupCard, idx int, item 
 // 所以这里必须让尺寸真正变化一次。
 // triggerRefresh: 是否触发 onRefreshAfterMove 回调（true=用户拖拽/缩放后，false=布局恢复时）
 func (gc *GroupCard) applyBounds(x, y, w, h int, triggerRefresh ...bool) {
+	// 0) 移动前用 RedrawWindow 强制父窗口重绘卡片旧区域，清除 PaintNoErase 残留的屏幕像素
+	var oldRect win.RECT
+	win.GetWindowRect(gc.container.Handle(), &oldRect)
+	parent := win.GetParent(gc.container.Handle())
+	if parent != 0 {
+		// 屏幕坐标转父窗口客户区坐标
+		pt1 := win.POINT{X: oldRect.Left, Y: oldRect.Top}
+		pt2 := win.POINT{X: oldRect.Right, Y: oldRect.Bottom}
+		win.ScreenToClient(parent, &pt1)
+		win.ScreenToClient(parent, &pt2)
+		oldRect = win.RECT{Left: pt1.X, Top: pt1.Y, Right: pt2.X, Bottom: pt2.Y}
+		win.RedrawWindow(parent, &oldRect, 0, win.RDW_INVALIDATE|win.RDW_ERASE|win.RDW_UPDATENOW)
+	}
+
 	// 1) 真实尺寸变化触发重新布局
 	gc.container.SetBoundsPixels(walk.Rectangle{X: x, Y: y, Width: w + 1, Height: h + 1})
 	gc.bodyWidget.SetBoundsPixels(walk.Rectangle{X: 0, Y: 0, Width: w + 1, Height: h + 1})
