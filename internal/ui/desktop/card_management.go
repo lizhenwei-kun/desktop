@@ -148,6 +148,9 @@ func (dm *DesktopMode) setupCardActions(card *ui.GroupCard, grp config.Group) {
 		dm.InvalidateBody()
 	})
 
+	// 提供桌面壁纸位图，卡片背景从真实壁纸合成
+	card.SetOnGetWallpaper(dm.WallpaperState.getBitmap)
+
 	// 图标按下回调（通知 DesktopMode 通过 UnifiedDragState 统一管理拖拽）
 	card.SetOnIconPress(dm.handleCardIconPress)
 

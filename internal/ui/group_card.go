@@ -117,6 +117,8 @@ type GroupCard struct {
 	onResizeOutlineEnd func(card *GroupCard)
 	// 移动前回传卡片原屏幕矩形（供 DesktopMode 擦除旧位置残留）
 	onOldBounds func(oldBounds walk.Rectangle)
+	// 获取桌面壁纸位图（工作区尺寸），卡片背景从真实壁纸合成
+	onGetWallpaper func() *walk.Bitmap
 }
 
 // ResizeEdge 缩放方向
@@ -673,25 +675,24 @@ func (gc *GroupCard) paintDragOutline(canvas *walk.Canvas, bounds walk.Rectangle
 }
 
 // paintBackground 绘制卡片背景（半透明颜色）
-// 使用 PaintNoErase 模式。先用 BitBlt 从屏幕 DC 复制当前卡片位置的
-// 真实壁纸覆盖 canvas，再 AlphaBlend 半透明色——这样每帧都从干净的
-// 壁纸开始，不会累积变不透明，也不会出现壁纸源矩形错配。
+// 使用 PaintNoErase 模式。先从缓存的桌面壁纸位图中取卡片当前位置的区域
+// 作为底，再 AlphaBlend 半透明色——这样每帧都从干净壁纸开始，不会累积。
 func (gc *GroupCard) paintBackground(canvas *walk.Canvas, bounds walk.Rectangle) {
-	// 1) BitBlt 屏幕壁纸覆盖卡片区域（清除上一帧残留）
-	//    从屏幕 DC 复制卡片屏幕坐标区域的像素到 bodyWidget DC。
-	sb := gc.ScreenBounds()
-	screenDC := win.GetDC(0)
-	if screenDC != 0 {
-		bodyDC := win.GetDC(gc.bodyWidget.Handle())
-		if bodyDC != 0 {
-			win.BitBlt(bodyDC, 0, 0, int32(bounds.Width), int32(bounds.Height),
-				screenDC, int32(sb.X), int32(sb.Y), win.SRCCOPY)
-			win.ReleaseDC(gc.bodyWidget.Handle(), bodyDC)
+	// 1) 从桌面壁纸位图取卡片当前位置的壁纸区域作为底
+	if gc.onGetWallpaper != nil {
+		if wp := gc.onGetWallpaper(); wp != nil {
+			src := walk.Rectangle{
+				X:      gc.pixelX(),
+				Y:      gc.pixelY(),
+				Width:  bounds.Width,
+				Height: bounds.Height,
+			}
+			// 绘制壁纸底；如果失败（如尺寸不匹配），canvas 保持原样（屏幕壁纸）
+			_ = canvas.DrawBitmapPartWithOpacityPixels(wp, bounds, src, 255)
 		}
-		win.ReleaseDC(0, screenDC)
 	}
 
-	// 2) 半透明颜色叠加（dst 已是真实壁纸，单次叠加不累积）
+	// 2) 半透明颜色叠加
 	if gc.bgCacheBmp != nil && gc.bgCacheW == bounds.Width && gc.bgCacheH == bounds.Height {
 		canvas.DrawBitmapWithOpacityPixels(gc.bgCacheBmp, bounds, gc.groupColor.A)
 		return
@@ -1151,6 +1152,11 @@ func (gc *GroupCard) SetOnResizeOutlineEnd(fn func(card *GroupCard)) {
 // SetOnOldBounds 设置移动前回调（回传卡片原屏幕矩形，供 DesktopMode 擦除旧位置残留）
 func (gc *GroupCard) SetOnOldBounds(fn func(oldBounds walk.Rectangle)) {
 	gc.onOldBounds = fn
+}
+
+// SetOnGetWallpaper 设置获取桌面壁纸位图的回调
+func (gc *GroupCard) SetOnGetWallpaper(fn func() *walk.Bitmap) {
+	gc.onGetWallpaper = fn
 }
 
 // GroupName 返回分组名称
