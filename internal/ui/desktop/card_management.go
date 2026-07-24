@@ -145,7 +145,15 @@ func (dm *DesktopMode) setupCardActions(card *ui.GroupCard, grp config.Group) {
 
 	// 卡片移动/缩放前，先擦除原位置（防止 PaintNoErase 模式旧位置壁纸残留）
 	card.SetOnOldBounds(func(oldBounds walk.Rectangle) {
-		dm.InvalidateBody()
+		// 卡片是独立子窗口，InvalidateBody 只重绘 bodyWidget 自身，
+		// 无法覆盖卡片旧窗口区域。必须用 InvalidateRect 显式擦除。
+		r := win.RECT{
+			Left:   int32(oldBounds.X),
+			Top:    int32(oldBounds.Y),
+			Right:  int32(oldBounds.X + oldBounds.Width),
+			Bottom: int32(oldBounds.Y + oldBounds.Height),
+		}
+		win.InvalidateRect(dm.BodyWidget.Handle(), &r, true)
 	})
 
 	// 提供桌面壁纸位图，卡片背景从真实壁纸合成
