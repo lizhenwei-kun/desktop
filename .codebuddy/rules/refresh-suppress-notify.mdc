@@ -1,0 +1,40 @@
+---
+description: 刷新时使用 SuppressNotify 避免重复刷新导致闪烁
+alwaysApply: true
+enabled: true
+---
+
+## 刷新时抑制 notifyChange 回调
+
+**`refreshDesktop()` 中调用 `ReloadDesktopItems()` 前必须用 `SuppressNotify()` / `UnsuppressNotify()` 包裹，避免触发多余的 `dm.Refresh()`。**
+
+### 背景
+
+`refreshDesktop()` 是桌面"右键 → 刷新"的核心入口，流程如下：
+
+1. `Manager.ReloadDesktopItems()` 扫描桌面目录同步文件变更
+2. `ReloadDesktopItems` 末尾调用 `notifyChange()`，触发 `onChange` 回调
+3. `onChange` 回调注册为 `dm.Post(func() { dm.Refresh() })`，投递到 UI 线程
+4. `refreshDesktop()` 自身也会 `dm.Post(func() { dm.refreshCards() })` 投递到 UI 线程
+5. 两个投递先后执行，导致**每张卡片刷新两次** → 图标闪烁
+
+### 正确做法
+
+```go
+dm.Manager.SuppressNotify()
+dm.Manager.ReloadDesktopItems()
+dm.Manager.UnsuppressNotify()
+```
+
+`refreshCards()` 内部已包含全量刷新（`card.Refresh()` + `ReapplyBounds()` + 解冻重绘），无需额外的 `dm.Refresh()`。
+
+### Manager 的 SuppressNotify 机制
+
+- `SuppressNotify()`: 原子递增计数器，`notifyChange()` 检测到计数器 > 0 时跳过回调
+- `UnsuppressNotify()`: 原子递减计数器
+- 支持嵌套调用（`SuppressNotify`/`UnsuppressNotify` 成对出现）
+
+### 适用场景
+
+- `refreshDesktop()` — 右键刷新桌面
+- 任何需要批量修改 manager 数据后又主动调用 `refreshCards()`/`Refresh()` 的场景
