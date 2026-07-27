@@ -1023,15 +1023,6 @@ func SaveIconToFile(img image.Image, path string) error {
 	return png.Encode(f, img)
 }
 
-// GetCachedIconPath 获取缓存的图标路径，如果不存在则提取并缓存
-func GetCachedIconPath(filePath string) string {
-	extractor := NewIconExtractor()
-	pngPath, err := extractor.GetIconPNGPath(filePath)
-	if err != nil {
-		return ""
-	}
-	return pngPath
-}
 
 // CreateTrayIcon 创建系统托盘图标（蓝色圆形背景 + 白色网格图标 16x16）
 func CreateTrayIcon() *image.RGBA {
