@@ -4,12 +4,15 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
+
+var stopOnce sync.Once
 
 var (
 	l         *zap.SugaredLogger
@@ -159,23 +162,26 @@ func Sync() {
 
 // Stop 停止日志后台 goroutine，等待所有积压日志写入文件后关闭文件
 // 程序退出前必须调用，否则可能丢失日志
+// 可多次调用，只有第一次生效
 func Stop() {
-	if logCh == nil {
-		return
-	}
-	// 先刷 zap 内部 buffer
-	if l != nil {
-		_ = l.Sync()
-	}
-	// 标记关闭，后续 Write/Sync 直接跳过
-	atomic.StoreInt32(&closed, 1)
-	// 关闭 chan，writeLoop 退出 for range
-	close(logCh)
-	// 关闭文件
-	if curFile != nil {
-		_ = curFile.Close()
-		curFile = nil
-	}
+	stopOnce.Do(func() {
+		if logCh == nil {
+			return
+		}
+		// 先刷 zap 内部 buffer
+		if l != nil {
+			_ = l.Sync()
+		}
+		// 标记关闭，后续 Write/Sync 直接跳过
+		atomic.StoreInt32(&closed, 1)
+		// 关闭 chan，writeLoop 退出 for range
+		close(logCh)
+		// 关闭文件
+		if curFile != nil {
+			_ = curFile.Close()
+			curFile = nil
+		}
+	})
 }
 
 func Debug(format string, args ...interface{}) {
