@@ -821,17 +821,11 @@ func SetDesktopIconSize(size int) {
 	ClearIconCaches()
 }
 
-// ClearIconCaches 清空所有图标缓存（iconCache + GlobalIconBmpCache）
+// ClearIconCaches 清空所有图标缓存（GlobalIconBmpCache）
 // 切换图标档位或 DPI 变化后调用，确保新档位按目标尺寸重新加载
 func ClearIconCaches() {
-	cnt := 0
-	iconCache.Range(func(k, v interface{}) bool {
-		iconCache.Delete(k)
-		cnt++
-		return true
-	})
 	GlobalIconBmpCache.Clear()
-	logger.Info("ClearIconCaches: cleared iconCache entries=%d, GlobalIconBmpCache cleared", cnt)
+	logger.Info("ClearIconCaches: GlobalIconBmpCache cleared")
 }
 
 // setIconFontSize 线程安全地设置图标标签字号

@@ -11,7 +11,6 @@ import (
 	"runtime"
 	"sort"
 	"strings"
-	"sync"
 	"syscall"
 	"unsafe"
 
@@ -111,11 +110,6 @@ type BITMAPINFOHEADER struct {
 	BiClrImportant  uint32
 }
 
-// IconCache 图标缓存
-var iconCache sync.Map
-
-var iconCacheCleanOnce sync.Once
-
 var (
 	procCoInitializeEx = ole32.NewProc("CoInitializeEx")
 )
@@ -130,22 +124,11 @@ type IconExtractor struct{}
 
 // NewIconExtractor 创建图标提取器
 func NewIconExtractor() *IconExtractor {
-	// 首次创建时清理旧的 PNG 缓存，确保使用新的高清图标
-	iconCacheCleanOnce.Do(func() {
-		home, _ := os.UserHomeDir()
-		cacheDir := filepath.Join(home, ".desktop_go", "icon_cache")
-		os.RemoveAll(cacheDir)
-	})
 	return &IconExtractor{}
 }
 
 // GetIconImage 获取文件图标图片
 func (ie *IconExtractor) GetIconImage(filePath string) (image.Image, error) {
-	// 检查缓存
-	if cached, ok := iconCache.Load(filePath); ok {
-		return cached.(image.Image), nil
-	}
-
 	logger.Debug("GetIconImage: ENTER path=%q iconSizeBase=%d dpi=%d target=%d",
 		filePath, desktopIconSizeBase, CurrentDPI(), DesktopIconSize())
 
@@ -195,8 +178,6 @@ func (ie *IconExtractor) GetIconImage(filePath string) (image.Image, error) {
 		img = ie.getFallbackIcon(filePath)
 	}
 
-	// 缓存结果
-	iconCache.Store(filePath, img)
 	return img, nil
 }
 
