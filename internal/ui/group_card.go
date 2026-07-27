@@ -992,22 +992,12 @@ func (gc *GroupCard) SetOnDelete(fn func(name string)) {
 	gc.onDelete = fn
 }
 
-// refreshItems 从 Manager 加载分组项目并预加载图标缓存
+// refreshItems 从 Manager 加载分组项目并刷新显示
 func (gc *GroupCard) refreshItems() {
 	gc.items = gc.manager.GetGroupItems(gc.groupName)
-	gc.rebuildIconCache()
 	if gc.bodyWidget != nil {
 		gc.bodyWidget.Invalidate()
 	}
-}
-
-// rebuildIconCache 预加载当前分组所有图标到全局缓存
-func (gc *GroupCard) rebuildIconCache() {
-	paths := make([]string, len(gc.items))
-	for i, item := range gc.items {
-		paths[i] = item.Path
-	}
-	GlobalIconBmpCache.LoadAll(paths)
 }
 
 // Refresh 刷新卡片内容

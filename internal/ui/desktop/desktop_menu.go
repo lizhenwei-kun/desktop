@@ -468,14 +468,8 @@ func (dm *DesktopMode) refreshDesktop() {
 
 		dm.Manager.UnsuppressNotify()
 
-		// 预加载未分组图标缓存
-		freePaths := make([]string, 0)
-		for _, item := range dm.Manager.GetUngroupedItems() {
-			freePaths = append(freePaths, item.Path)
-		}
-		if len(freePaths) > 0 {
-			ui.GlobalIconBmpCache.LoadAll(freePaths)
-		}
+		// 预加载所有图标缓存（分组+未分组）
+		ui.GlobalIconBmpCache.LoadAllFromManager(dm.Manager)
 
 		// 重新加载壁纸（按工作区尺寸快照）
 		dm.WallpaperState.LoadWallpaper(dpiFn, workW, workH)

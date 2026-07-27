@@ -9,6 +9,7 @@ import (
 
 	"github.com/lxn/walk"
 
+	"desktop_go/internal/group"
 	"desktop_go/internal/logger"
 )
 
@@ -21,12 +22,14 @@ var GlobalIconBmpCache = newIconBmpCache()
 
 // IconBmpCache 图标 bitmap 缓存
 type IconBmpCache struct {
-	cache map[string]*walk.Bitmap
+	cache     map[string]*walk.Bitmap
+	extractor *IconExtractor // 复用图标提取器
 }
 
 func newIconBmpCache() *IconBmpCache {
 	return &IconBmpCache{
-		cache: make(map[string]*walk.Bitmap),
+		cache:     make(map[string]*walk.Bitmap),
+		extractor: NewIconExtractor(),
 	}
 }
 
@@ -44,32 +47,59 @@ func (c *IconBmpCache) GetOrLoad(path string) *walk.Bitmap {
 	return c.extractAndCache(path)
 }
 
-// LoadAll 批量预加载图标到缓存
+// LoadAll 全量刷新图标缓存：只保留 paths 中的条目，其余全部释放
 func (c *IconBmpCache) LoadAll(paths []string) {
-	extractor := NewIconExtractor()
-	logger.Debug("IconBmpCache.LoadAll: ENTER count=%d, currentCacheSize=%d", len(paths), len(c.cache))
+	oldSize := len(c.cache)
+
+	// 标记需要保留的路径
+	keep := make(map[string]bool, len(paths))
+	for _, path := range paths {
+		keep[path] = true
+	}
+
+	// 释放不再需要的缓存
+	deleted := 0
+	for path, bmp := range c.cache {
+		if !keep[path] {
+			bmp.Dispose()
+			delete(c.cache, path)
+			deleted++
+		}
+	}
+
+	// 加载新路径的图标
+	loaded := 0
 	for _, path := range paths {
 		if _, ok := c.cache[path]; ok {
 			continue
 		}
 		if strings.HasPrefix(path, "shell:") {
-			// 系统桌面项由 extractAndCache 按需加载，不做预加载
 			continue
 		}
-		iconImg, err := extractor.GetIconImage(path)
+		iconImg, err := c.extractor.GetIconImage(path)
 		if err != nil || iconImg == nil {
-			logger.Warn("IconBmpCache.LoadAll: GetIconImage failed for %q err=%v imgNil=%v", path, err, iconImg == nil)
 			continue
 		}
 		bmp := imageToBitmap(iconImg)
 		if bmp == nil {
-			bounds := iconImg.Bounds()
-			logger.Warn("IconBmpCache.LoadAll: imageToBitmap returned nil for %q (imageSize=%dx%d)", path, bounds.Dx(), bounds.Dy())
 			continue
 		}
 		c.cache[path] = bmp
+		loaded++
 	}
-	logger.Debug("IconBmpCache.LoadAll: DONE, newCacheSize=%d", len(c.cache))
+
+	logger.Info("IconBmpCache.LoadAll: hit=%d new=%d removed=%d total=%d (was %d)",
+		len(paths)-loaded, loaded, deleted, len(c.cache), oldSize)
+}
+
+// LoadAllFromManager 从 Manager 收集所有项目（分组+未分组）一次性预加载图标缓存
+func (c *IconBmpCache) LoadAllFromManager(mgr *group.Manager) {
+	all := mgr.GetAllItems()
+	paths := make([]string, 0, len(all))
+	for _, item := range all {
+		paths = append(paths, item.Path)
+	}
+	c.LoadAll(paths)
 }
 
 // Remove 移除并释放单个缓存
@@ -90,15 +120,13 @@ func (c *IconBmpCache) Clear() {
 
 // extractAndCache 提取图标并加入缓存
 func (c *IconBmpCache) extractAndCache(path string) *walk.Bitmap {
-	extractor := NewIconExtractor()
-
 	var iconImg image.Image
 	var err error
 
 	if strings.HasPrefix(path, "shell:") {
-		iconImg, err = loadEmbeddedSystemIcon(path, extractor)
+		iconImg, err = loadEmbeddedSystemIcon(path, c.extractor)
 	} else {
-		iconImg, err = extractor.GetIconImage(path)
+		iconImg, err = c.extractor.GetIconImage(path)
 	}
 
 	if err != nil || iconImg == nil {

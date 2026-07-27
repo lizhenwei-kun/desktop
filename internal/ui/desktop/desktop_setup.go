@@ -186,14 +186,8 @@ func (dm *DesktopMode) Setup() error {
 	// 创建卡片
 	dm.createGroupCards()
 
-	// 预加载图标缓存
-	freePaths := make([]string, 0)
-	for _, item := range dm.Manager.GetUngroupedItems() {
-		freePaths = append(freePaths, item.Path)
-	}
-	if len(freePaths) > 0 {
-		ui.GlobalIconBmpCache.LoadAll(freePaths)
-	}
+	// 预加载所有图标缓存（分组+未分组）
+	ui.GlobalIconBmpCache.LoadAllFromManager(dm.Manager)
 
 	// 启动回收站状态定时监测
 	dm.initRecycleBinMonitor()
