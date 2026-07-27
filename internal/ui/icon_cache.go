@@ -73,19 +73,9 @@ func (c *IconBmpCache) LoadAll(paths []string) {
 		if _, ok := c.cache[path]; ok {
 			continue
 		}
-		if strings.HasPrefix(path, "shell:") {
-			continue
+		if c.extractAndCache(path) != nil {
+			loaded++
 		}
-		iconImg, err := c.extractor.GetIconImage(path)
-		if err != nil || iconImg == nil {
-			continue
-		}
-		bmp := imageToBitmap(iconImg)
-		if bmp == nil {
-			continue
-		}
-		c.cache[path] = bmp
-		loaded++
 	}
 
 	logger.Info("IconBmpCache.LoadAll: hit=%d new=%d removed=%d total=%d (was %d)",
