@@ -4,6 +4,7 @@ import (
 	"github.com/lxn/walk"
 	"github.com/lxn/win"
 
+	"desktop_go/internal/logger"
 	"desktop_go/internal/ui"
 )
 
@@ -52,8 +53,10 @@ func (dm *DesktopMode) checkItemHover(x, y int) bool {
 func (dm *DesktopMode) paintAllIcons(canvas *walk.Canvas, bounds walk.Rectangle) {
 	items := dm.Manager.GetUngroupedItems()
 	if len(items) == 0 {
+		logger.Debug("paintAllIcons: no ungrouped items")
 		return
 	}
+	logger.Debug("paintAllIcons: %d ungrouped items, bounds=%dx%d", len(items), bounds.Width, bounds.Height)
 
 	effectiveH := bounds.Height
 	if effectiveH < 100 {
@@ -62,7 +65,9 @@ func (dm *DesktopMode) paintAllIcons(canvas *walk.Canvas, bounds walk.Rectangle)
 
 	for idx, item := range items {
 		px, py := dm.getFreeItemPixelPos(item.Path, idx)
+		logger.Debug("paintAllIcons: item[%d] %q pos=(%d,%d) tile=%dx%d effH=%d", idx, item.Name, px, py, ui.TileWidth(), ui.TileHeight(), effectiveH)
 		if py+ui.TileHeight() > effectiveH {
+			logger.Debug("paintAllIcons: item[%d] %q SKIPPED (out of bounds)", idx, item.Name)
 			continue
 		}
 
@@ -88,6 +93,7 @@ func (dm *DesktopMode) paintAllIcons(canvas *walk.Canvas, bounds walk.Rectangle)
 
 		// 绘制图标
 		bmp := ui.GlobalIconBmpCache.GetOrLoad(item.Path)
+		logger.Debug("paintAllIcons: item[%d] bmp=%v", idx, bmp != nil)
 		if bmp != nil {
 			iconX := px + (ui.TileWidth()-ui.DesktopIconSize())/2
 			iconY := py + ui.DesktopIconTop()

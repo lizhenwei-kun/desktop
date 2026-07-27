@@ -31,15 +31,15 @@ const (
 
 // Runner 应用运行器
 type Runner struct {
-	mode      string
-	manager   *group.Manager
-	winAPI    *desktop.WindowsAPI
-	lifecycle *ui.LifecycleManager
-	mw        *walk.MainWindow
-	ni        *walk.NotifyIcon
-	work      *dowork.GoWork // 定时器工作器
-	dm        *desktopmode.DesktopMode // 桌面模式 UI（仅桌面模式非 nil）
-	userHidden bool // 用户主动隐藏窗口标记，healthcheck 检测到不可见时若为 true 则跳过恢复
+	mode       string
+	manager    *group.Manager
+	winAPI     *desktop.WindowsAPI
+	lifecycle  *ui.LifecycleManager
+	mw         *walk.MainWindow
+	ni         *walk.NotifyIcon
+	work       *dowork.GoWork           // 定时器工作器
+	dm         *desktopmode.DesktopMode // 桌面模式 UI（仅桌面模式非 nil）
+	userHidden bool                     // 用户主动隐藏窗口标记，healthcheck 检测到不可见时若为 true 则跳过恢复
 }
 
 // NewRunner 创建应用运行器
@@ -443,9 +443,9 @@ func (r *Runner) showTrayContextMenu() {
 		defer procDestroyMenuTray.Call(fontMenu)
 		curPreset := ui.GetCardFontPreset()
 		fontItems := []struct {
-			cmd     uintptr
-			text    string
-			preset  string
+			cmd    uintptr
+			text   string
+			preset string
 		}{
 			{trayCmdFontConsolas, "等宽 (Consolas)", "consolas"},
 			{trayCmdFontSegoeUI, "拉丁 (Segoe UI)", "segoeui"},
@@ -484,7 +484,10 @@ func (r *Runner) showTrayContextMenu() {
 			r.userHidden = false
 			r.mw.SetVisible(true)
 			if r.mode == ModeDesktop {
-				r.showDesktopMode()
+				// Post 到消息队列末尾，等窗口完成显示后再处理
+				r.dm.Post(func() {
+					r.showDesktopMode()
+				})
 			} else {
 				r.winAPI.ForceShowAndRaise(r.mw.Handle())
 			}
@@ -604,29 +607,28 @@ func (r *Runner) showDesktopMode() {
 	logger.Debug("showDesktopMode: window from hidden to visible, work=(%d,%d,%dx%d), wallpaperBmp=%v",
 		dm.WorkX, dm.WorkY, dm.WorkW, dm.WorkH, dm.WallpaperState.HasWallpaper())
 
-	// 先设置 BodyWidget bounds 再 MoveWindow，确保 MoveWindow 触发的 WM_PAINT 使用正确尺寸
 	clientBounds := r.mw.ClientBoundsPixels()
 	fullH := clientBounds.Y + clientBounds.Height
 	logger.Debug("showDesktopMode: clientBounds=(%d,%d,%dx%d), fullH=%d", clientBounds.X, clientBounds.Y, clientBounds.Width, clientBounds.Height, fullH)
+
+	// 去边框后布局修复：先 SetWindowPosNoRedraw(w+1,h+1) 再 MoveWindow(w,h)，
+	// 产生真实尺寸变化触发 WM_WINDOWPOSCHANGED，让 walk 用新客户区重新布局
+	dm.WinAPI.SetWindowPosNoRedraw(win.HWND(hwnd), dm.WorkX, dm.WorkY, dm.WorkW+1, dm.WorkH+1)
+	r.winAPI.MoveWindow(hwnd, dm.WorkX, dm.WorkY, dm.WorkW, dm.WorkH)
+
+	// 铺满 Container 和 BodyWidget
 	dm.Container.SetBoundsPixels(walk.Rectangle{X: 0, Y: 0, Width: dm.WorkW, Height: fullH})
 	dm.BodyWidget.SetBoundsPixels(walk.Rectangle{X: 0, Y: 0, Width: dm.WorkW, Height: fullH})
-
-	// 设置脏标记，确保后续 WM_PAINT 执行全量绘制
-	dm.SetPaintDirty()
-
-	// 确保窗口位置正确（嵌入式桌面可能需要重新定位）
-	r.winAPI.MoveWindow(hwnd, dm.WorkX, dm.WorkY, dm.WorkW, dm.WorkH)
 
 	// 重新加载桌面项目（同步隐藏期间可能错过的文件变更）
 	r.manager.ReloadDesktopItems()
 
-	// 重新应用卡片位置并完整刷新（内部已处理 BodyWidget Z 序置顶）
-	dm.ReapplyCardPositionsAndRefresh()
-
-	// 延迟 100ms 再次确保 BodyWidget Z 序置顶，避免 walk 布局系统后续重排覆盖
-	safego.Go("ZOrderGuard", func() {
+	// 窗口刚显示时 walk 内部 buffer 尚未就绪，立即绘制无效。
+	// 延迟 100ms 等窗口完全显示后，再通过 Post 刷新卡片和触发重绘。
+	safego.Go("showDesktopRefresh", func() {
 		time.Sleep(100 * time.Millisecond)
 		dm.Post(func() {
+			dm.ReapplyCardPositionsAndRefresh()
 			win.SetWindowPos(dm.BodyWidget.Handle(), win.HWND_TOP, 0, 0, 0, 0,
 				win.SWP_NOMOVE|win.SWP_NOSIZE|win.SWP_NOACTIVATE)
 		})

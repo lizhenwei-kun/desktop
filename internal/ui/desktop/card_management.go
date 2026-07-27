@@ -231,6 +231,9 @@ func (dm *DesktopMode) refreshCards() {
 		win.SendMessage(card.BodyWidgetHandle(), win.WM_SETREDRAW, 1, 0)
 	}
 	win.SendMessage(dm.BodyWidget.Handle(), win.WM_SETREDRAW, 1, 0)
+
+	// 解冻后强制触发 BodyWidget 重绘，确保未分组图标（由 paintAllIcons 绘制）重新显示
+	dm.InvalidateBody()
 }
 
 // reapplyCardPositions 重新应用所有卡片的绝对定位，并确保卡片 Z-order 在 bodyWidget 上方

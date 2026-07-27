@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"time"
 
 	"go.uber.org/zap"
@@ -18,6 +19,7 @@ var (
 	curFile   *os.File
 	curSize   int64  // 当前文件已写入字节数
 	curDate   string // "20060102"，跨天轮转
+	closed    int32  // atomic: 1=Stop 已调用
 )
 
 const (
@@ -82,6 +84,9 @@ func Init(level string, logDir string) {
 type chanSyncer struct{}
 
 func (s *chanSyncer) Write(p []byte) (int, error) {
+	if atomic.LoadInt32(&closed) != 0 {
+		return len(p), nil
+	}
 	buf := make([]byte, len(p))
 	copy(buf, p)
 	select {
@@ -92,6 +97,9 @@ func (s *chanSyncer) Write(p []byte) (int, error) {
 }
 
 func (s *chanSyncer) Sync() error {
+	if atomic.LoadInt32(&closed) != 0 {
+		return nil
+	}
 	done := make(chan struct{})
 	logCh <- done
 	<-done
@@ -159,6 +167,8 @@ func Stop() {
 	if l != nil {
 		_ = l.Sync()
 	}
+	// 标记关闭，后续 Write/Sync 直接跳过
+	atomic.StoreInt32(&closed, 1)
 	// 关闭 chan，writeLoop 退出 for range
 	close(logCh)
 	// 关闭文件
