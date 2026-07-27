@@ -286,6 +286,19 @@ func (dm *DesktopMode) exitDesktopMode() {
 	dm.stopDesktopWatcher()
 	// 注销外部文件拖放
 	dm.UnregisterExternalDropTarget()
+	// 释放缓存的绘制对象
+	if dm.bgBrush != nil {
+		dm.bgBrush.Dispose()
+		dm.bgBrush = nil
+	}
+	if dm.btnBrush != nil {
+		dm.btnBrush.Dispose()
+		dm.btnBrush = nil
+	}
+	if dm.toolbarFont != nil {
+		dm.toolbarFont.Dispose()
+		dm.toolbarFont = nil
+	}
 	hwnd := dm.MainWindow.Handle()
 	// 从桌面层脱离
 	dm.WinAPI.DetachFromDesktop(win.HWND(hwnd))
