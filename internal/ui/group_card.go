@@ -12,6 +12,7 @@ import (
 	"desktop_go/internal/config"
 	"desktop_go/internal/group"
 	"desktop_go/internal/logger"
+	"desktop_go/internal/safego"
 )
 
 // 卡片最小尺寸
@@ -260,7 +261,7 @@ func (gc *GroupCard) setupMouseEvents() {
 			gc.dragCardY = gc.pixelY()
 			gc.dragStartTime = time.Now()
 			gc.isDragging = false
-			go gc.checkDragStart()
+			safego.Go("checkDragStart", gc.checkDragStart)
 			return
 		}
 

@@ -10,6 +10,7 @@ import (
 	"github.com/fsnotify/fsnotify"
 
 	"desktop_go/internal/logger"
+	"desktop_go/internal/safego"
 	"desktop_go/internal/ui"
 )
 
@@ -54,17 +55,11 @@ func (dm *DesktopMode) initDesktopWatcher() {
 	dm.DesktopWatcherState.stopCh = make(chan struct{})
 
 	// 启动监听 goroutine
-	go dm.watchDesktopDirectory(desktopDir)
+	safego.Go("watchDesktopDirectory", func() { dm.watchDesktopDirectory(desktopDir) })
 }
 
 // watchDesktopDirectory 在独立 goroutine 中使用 fsnotify 监听桌面目录
 func (dm *DesktopMode) watchDesktopDirectory(dir string) {
-	defer func() {
-		if r := recover(); r != nil {
-			logger.Error("desktopWatcher: panic: %v", r)
-		}
-	}()
-
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		logger.Warn("desktopWatcher: fsnotify.NewWatcher failed: %v", err)

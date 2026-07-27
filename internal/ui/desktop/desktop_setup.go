@@ -1,31 +1,16 @@
 package desktop
 
 import (
-	"fmt"
 	"os"
-	"runtime/debug"
 	"time"
 
 	"github.com/lxn/walk"
 	"github.com/lxn/win"
 
 	"desktop_go/internal/logger"
+	"desktop_go/internal/safego"
 	"desktop_go/internal/ui"
 )
-
-// recoverGoroutine 在 goroutine 中捕获 panic 并写入日志
-func recoverGoroutine(name string) {
-	if r := recover(); r != nil {
-		stack := string(debug.Stack())
-		logger.Error("PANIC in %s: %v\n%s", name, r, stack)
-		logger.Sync()
-		crashFile, err := os.OpenFile("log/crash.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-		if err == nil {
-			fmt.Fprintf(crashFile, "PANIC in %s: %v\n%s\n", name, r, stack)
-			crashFile.Close()
-		}
-	}
-}
 
 // Setup 设置桌面模式 UI
 func (dm *DesktopMode) Setup() error {
@@ -103,12 +88,12 @@ func (dm *DesktopMode) Setup() error {
 
 	// 监听尺寸变化
 	dm.Container.SizeChanged().Attach(func() {
-		go func() {
+		safego.Go("containerSizeChanged", func() {
 			time.Sleep(50 * time.Millisecond)
 			dm.Post(func() {
 				dm.reapplyCardPositions()
 			})
-		}()
+		})
 	})
 
 	// 热键
@@ -198,13 +183,12 @@ func (dm *DesktopMode) Setup() error {
 	// 启动右键菜单缓存定时更新
 	dm.initContextMenuCache()
 
-	go dm.delayedSetup()
+	safego.Go("delayedSetup", dm.delayedSetup)
 	return nil
 }
 
 // delayedSetup 消息循环启动后去边框、嵌入桌面层级
 func (dm *DesktopMode) delayedSetup() {
-	defer recoverGoroutine("delayedSetup")
 	time.Sleep(300 * time.Millisecond)
 
 	dm.Post(func() {
@@ -263,8 +247,7 @@ func (dm *DesktopMode) delayedSetup() {
 		logger.Debug("delayedSetup done: window=(%d,%d,%dx%d)", clientBounds.X, clientBounds.Y, clientBounds.Width, clientBounds.Height)
 		dm.Lifecycle.MarkReady()
 
-		go func() {
-			defer recoverGoroutine("postLayoutCardFix")
+		safego.Go("postLayoutCardFix", func() {
 			time.Sleep(200 * time.Millisecond)
 			dm.Post(func() {
 				dm.reapplyCardPositions()
@@ -272,7 +255,7 @@ func (dm *DesktopMode) delayedSetup() {
 				dm.Manager.ReloadDesktopItems()
 				dm.InvalidateBody()
 			})
-		}()
+		})
 	})
 }
 

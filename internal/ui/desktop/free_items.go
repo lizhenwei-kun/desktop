@@ -12,6 +12,7 @@ import (
 
 	"desktop_go/internal/group"
 	"desktop_go/internal/logger"
+	"desktop_go/internal/safego"
 	"desktop_go/internal/ui"
 )
 
@@ -556,8 +557,7 @@ func (dm *DesktopMode) startIconDrag(sourceGroup, itemPath, itemName string, cli
 	dm.DragScreenY = clientY
 	dm.LastMoveTime = time.Now()
 
-	go func() {
-		defer recoverGoroutine("startIconDrag")
+	safego.Go("startIconDrag", func() {
 		time.Sleep(ui.IconDragDelay)
 		dm.Post(func() {
 			if !dm.DragPressed || dm.DragActive {
@@ -588,7 +588,7 @@ func (dm *DesktopMode) startIconDrag(sourceGroup, itemPath, itemName string, cli
 			dm.createGhostWindow()
 			win.SetCapture(dm.BodyWidget.Handle())
 		})
-	}()
+	})
 }
 
 // handleCardIconPress 卡片内图标按下回调（由 GroupCard.onIconPress 直接回调）

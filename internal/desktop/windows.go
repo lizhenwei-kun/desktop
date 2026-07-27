@@ -568,14 +568,14 @@ func subclassProc(hwnd uintptr, msg uint32, wParam, lParam, uIDSubclass, dwRefDa
 	case WM_QUERYENDSESSION:
 		// 系统请求结束会话（注销/关机），记录日志并允许关机
 		logger.Debug("subclassProc: WM_QUERYENDSESSION (lParam=0x%X)", lParam)
-		logger.Sync()
+		logger.Stop()
 		// 返回 TRUE 允许系统继续关机流程
 		return 1
 	case WM_ENDSESSION:
 		// 会话正在结束（注销/关机），记录日志后退出
 		if wParam != 0 { // wParam=TRUE 表示会话确实结束
 			logger.Debug("subclassProc: WM_ENDSESSION: system session ending, exiting gracefully")
-			logger.Sync()
+			logger.Stop()
 			// 通知系统事件回调执行清理（如从桌面层脱离、恢复桌面图标）
 			if systemEventCallback != nil {
 				systemEventCallback()

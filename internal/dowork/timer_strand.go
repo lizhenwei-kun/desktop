@@ -6,6 +6,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"desktop_go/internal/safego"
 )
 
 type execTimer struct {
@@ -62,11 +64,11 @@ func NewStrandTimer(tickTime int, ctx context.Context, strand GoPost) *StrandTim
 func (w *StrandTimer) Start() {
 	w.startOnce.Do(func() {
 		w.Add(1)
-		go func() {
+		safego.Go("StrandTimer", func() {
 			defer w.Done()
 			w.loop()
 			w.isStop.Store(true)
-		}()
+		})
 	})
 }
 

@@ -54,7 +54,7 @@ func main() {
 			}
 			// 同时尝试写入 logger（受日志级别控制，仅在 error 及以上级别写入）
 			logger.Error("PANIC: %v\n%s", r, stack)
-			logger.Sync()
+			logger.Stop()
 			fmt.Fprintf(os.Stderr, "PANIC: %v\n%s\n", r, stack)
 			os.Exit(2)
 		}
@@ -75,13 +75,15 @@ func main() {
 		os.Exit(0)
 	}
 
-	// 注册控制台 Ctrl 事件处理函数，防止子进程崩溃时波及本进程
-	// 即使使用 -H windowsgui 编译，子进程崩溃仍可能发送 Ctrl 信号到父进程
+	// 注册控制台 Ctrl 事件处理函数，当子进程崩溃发送信号时优雅退出
 	procSetConsoleCtrlHandler.Call(
 		uintptr(syscall.NewCallback(func(ctrlType uint32) uintptr {
-			// CTRL_CLOSE_EVENT=2: 忽略控制台关闭事件，防止子进程崩溃触发本进程退出
-			// CTRL_C_EVENT=0, CTRL_BREAK_EVENT=1: 同样忽略
-			return 1 // TRUE: 已处理，系统不会调用 ExitProcess
+			// CTRL_CLOSE_EVENT=2: 控制台窗口关闭（通常由子进程崩溃触发）
+			// CTRL_C_EVENT=0, CTRL_BREAK_EVENT=1: 同样处理
+			logger.Info("Ctrl handler received signal: ctrlType=%d, exiting gracefully", ctrlType)
+			logger.Stop()
+			os.Exit(0)
+			return 1
 		})),
 		1, // Add handler
 	)
@@ -102,7 +104,12 @@ func main() {
 
 	// 运行应用（内部包含消息循环）
 	if err := runner.Run(); err != nil {
+		logger.Error("运行错误: %v", err)
+		logger.Stop()
 		fmt.Fprintf(os.Stderr, "运行错误: %v\n", err)
 		os.Exit(1)
 	}
+
+	// 正常退出时确保日志落盘
+	logger.Stop()
 }

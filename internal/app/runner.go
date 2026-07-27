@@ -18,6 +18,7 @@ import (
 	"desktop_go/internal/dowork"
 	"desktop_go/internal/group"
 	"desktop_go/internal/logger"
+	"desktop_go/internal/safego"
 	"desktop_go/internal/ui"
 	desktopmode "desktop_go/internal/ui/desktop"
 )
@@ -44,7 +45,7 @@ type Runner struct {
 // NewRunner 创建应用运行器
 func NewRunner(logLevel string) (*Runner, error) {
 	// 初始化日志（debug 级别保留完整诊断信息，用户可通过 --log-level 控制输出级别）
-	logger.Init(logLevel, "./log/desktop_go.log")
+	logger.Init(logLevel, "./log")
 
 	r := &Runner{
 		manager:   group.NewManager(),
@@ -498,6 +499,7 @@ func (r *Runner) showTrayContextMenu() {
 		if r.ni != nil {
 			r.ni.Dispose()
 		}
+		logger.Stop()
 		walk.App().Exit(0)
 	case trayCmdFontConsolas, trayCmdFontSegoeUI, trayCmdFontYaHei:
 		var preset string
@@ -622,13 +624,13 @@ func (r *Runner) showDesktopMode() {
 	dm.ReapplyCardPositionsAndRefresh()
 
 	// 延迟 100ms 再次确保 BodyWidget Z 序置顶，避免 walk 布局系统后续重排覆盖
-	go func() {
+	safego.Go("ZOrderGuard", func() {
 		time.Sleep(100 * time.Millisecond)
 		dm.Post(func() {
 			win.SetWindowPos(dm.BodyWidget.Handle(), win.HWND_TOP, 0, 0, 0, 0,
 				win.SWP_NOMOVE|win.SWP_NOSIZE|win.SWP_NOACTIVATE)
 		})
-	}()
+	})
 }
 
 // startTimer 启动定时器，注册清理时优先停止

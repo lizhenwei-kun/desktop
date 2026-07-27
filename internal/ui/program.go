@@ -7,6 +7,7 @@ import (
 	"syscall"
 
 	"desktop_go/internal/logger"
+	"desktop_go/internal/safego"
 )
 
 // Windows 进程创建标志
@@ -26,7 +27,7 @@ func NewProgramExecutor() *ProgramExecutor {
 // Execute 执行程序或打开文件（在后台 goroutine 中异步执行，不阻塞 UI 主线程）
 func (pe *ProgramExecutor) Execute(path string) error {
 	logger.Debug("ProgramExecutor.Execute: path=%q", path)
-	go pe.executeAsync(path)
+	safego.Go("executeAsync", func() { pe.executeAsync(path) })
 	return nil
 }
 
