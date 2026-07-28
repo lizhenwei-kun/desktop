@@ -55,7 +55,10 @@ func Init(level string, logDir string) {
 
 	var writeSyncer zapcore.WriteSyncer
 	if logDir != "" {
-		_ = os.MkdirAll(logDir, 0755)
+		if err := os.MkdirAll(logDir, 0755); err != nil {
+			fmt.Fprintf(os.Stderr, "logger: 创建日志目录失败 %s: %v\n", logDir, err)
+			os.Exit(1)
+		}
 		dir = logDir
 		progName = filepath.Base(os.Args[0])
 		if ext := filepath.Ext(progName); ext != "" {
