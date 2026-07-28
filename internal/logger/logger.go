@@ -15,14 +15,16 @@ import (
 var stopOnce sync.Once
 
 var (
-	l         *zap.SugaredLogger
-	logCh     chan interface{}
-	dir       string
-	progName  string
-	curFile   *os.File
-	curSize   int64  // 当前文件已写入字节数
-	curDate   string // "20060102"，跨天轮转
-	closed    int32  // atomic: 1=Stop 已调用
+	l          *zap.SugaredLogger
+	logCh      chan interface{}
+	dir        string
+	progName   string
+	startTime  string    // 程序启动时间 "20060102150405"，无分隔符
+	curFile    *os.File
+	curSize    int64     // 当前文件已写入字节数
+	curDate    string    // "20060102"，跨天轮转
+	curSeq     int       // 当天文件轮转编号
+	closed     int32     // atomic: 1=Stop 已调用
 )
 
 const (
@@ -32,6 +34,10 @@ const (
 
 // Init 初始化日志，level: "debug", "info", "warn", "error"
 // logDir 日志目录（如 "./log"），会在其中按文件名格式生成日志文件
+// 文件名格式: <程序名>-<启动时间>-<年_月_日>-<时_分_秒>_<轮转编号>.log
+// 示例: desktop_go-20260728143025-2026_07_28-14_30_25_00.log
+//   - 启动时间: 无分隔符紧凑格式，固定在该次程序启动时生成
+//   - 轮转编号: 两位小数（00-99），同一天内每轮转一次 +1，跨天重置为 00
 func Init(level string, logDir string) {
 	var zapLevel zapcore.Level
 	switch level {
@@ -55,6 +61,7 @@ func Init(level string, logDir string) {
 		if ext := filepath.Ext(progName); ext != "" {
 			progName = progName[:len(progName)-len(ext)]
 		}
+		startTime = time.Now().Format("20060102150405")
 		openLogFile(time.Now().Format("20060102"))
 		logCh = make(chan interface{}, chanBufSize)
 		go writeLoop()
@@ -136,12 +143,18 @@ func writeLoop() {
 	}
 }
 
+// openLogFile 创建新的日志文件。
+// 文件名包含程序启动时间（固定不变）、当前日期时间、以及当天轮转编号。
+// 轮转编号在跨天时重置为 0，同一天内每次调用 +1。
 func openLogFile(date string) {
 	now := time.Now()
-	filename := fmt.Sprintf("%s_%s.log",
-		progName,
-		now.Format("2006_02_01-15_04_05"),
-	)
+	// 跨天时重置轮转编号
+	if date != curDate {
+		curSeq = 0
+	}
+	timeStr := now.Format("15_04_05")
+	dateStr := now.Format("2006_01_02")
+	filename := fmt.Sprintf("%s-%s-%s-%s_%02d.log", progName, startTime, dateStr, timeStr, curSeq)
 	path := filepath.Join(dir, filename)
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
