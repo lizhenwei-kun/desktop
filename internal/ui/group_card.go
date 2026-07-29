@@ -318,12 +318,23 @@ func (gc *GroupCard) setupMouseEvents() {
 			if gc.onCardDragOutlineEnd != nil {
 				gc.onCardDragOutlineEnd(gc)
 			}
-			// 应用拖拽新位置到容器
-			gc.position.X = float64(gc.dragNewX) / float64(gc.workW)
-			gc.position.Y = float64(gc.dragNewY) / float64(gc.workH)
+			// 确保最终位置不超出工作区边界
 			pixW := gc.pixelW()
 			pixH := gc.pixelH()
-			gc.applyBounds(gc.dragNewX, gc.dragNewY, pixW, pixH)
+			maxX := gc.workW - pixW
+			if maxX < 0 {
+				maxX = 0
+			}
+			maxY := gc.workH - pixH
+			if maxY < 0 {
+				maxY = 0
+			}
+			finalX := ClampInt(gc.dragNewX, 0, maxX)
+			finalY := ClampInt(gc.dragNewY, 0, maxY)
+			// 应用拖拽新位置到容器
+			gc.position.X = float64(finalX) / float64(gc.workW)
+			gc.position.Y = float64(finalY) / float64(gc.workH)
+			gc.applyBounds(finalX, finalY, pixW, pixH)
 			gc.manager.UpdateGroupPosition(gc.groupName, gc.position.X, gc.position.Y)
 		}
 		// 通知 DesktopMode 重绘桌面 BodyWidget，清除卡片原位置残留
@@ -468,8 +479,46 @@ func (gc *GroupCard) handleResize(x, y int) {
 	}
 
 	// 限制最小尺寸
-	newW = ClampInt(newW, cardMinWidth, 2000)
-	newH = ClampInt(newH, cardMinHeight, 2000)
+	newW = ClampInt(newW, cardMinWidth, gc.workW)
+	newH = ClampInt(newH, cardMinHeight, gc.workH)
+
+	// 限制不超出工作区边界
+	if newX+newW > gc.workW {
+		if gc.resizeEdge == ResizeLeft || gc.resizeEdge == ResizeTopLeft || gc.resizeEdge == ResizeBottomLeft {
+			// 左边界缩放：限制 newX >= 0，宽度受右边界约束
+			newX = 0
+			newW = gc.workW
+		} else {
+			// 右边界缩放：限制宽度不超出右边界
+			newW = gc.workW - newX
+		}
+	}
+	if newX < 0 {
+		// 左边界缩小时，超出左边界则裁剪
+		newW += newX // 宽度补偿移出部分
+		newX = 0
+		if newW < cardMinWidth {
+			newW = cardMinWidth
+		}
+	}
+	if newY+newH > gc.workH {
+		if gc.resizeEdge == ResizeTop || gc.resizeEdge == ResizeTopLeft || gc.resizeEdge == ResizeTopRight {
+			newY = 0
+			newH = gc.workH
+		} else {
+			newH = gc.workH - newY
+		}
+	}
+	if newY < 0 {
+		newH += newY
+		newY = 0
+		if newH < cardMinHeight {
+			newH = cardMinHeight
+		}
+	}
+	// 再次确保最小尺寸
+	newW = ClampInt(newW, cardMinWidth, gc.workW)
+	newH = ClampInt(newH, cardMinHeight, gc.workH)
 
 	// 仅保存计算结果（不改变容器/body尺寸），通知 DesktopMode 绘制缩放边框
 	gc.resizeNewX = newX
@@ -494,13 +543,27 @@ func (gc *GroupCard) endResize() {
 		gc.onResizeOutlineEnd(gc)
 	}
 
-	// 将拖拽中累积的新尺寸应用到实际容器
-	gc.size.Width = float64(gc.resizeNewW) / float64(gc.workW)
-	gc.size.Height = float64(gc.resizeNewH) / float64(gc.workH)
-	gc.position.X = float64(gc.resizeNewX) / float64(gc.workW)
-	gc.position.Y = float64(gc.resizeNewY) / float64(gc.workH)
+	// 再次确保最终位置和尺寸不超出工作区边界
+	maxX := gc.workW - cardMinWidth
+	if maxX < 0 {
+		maxX = 0
+	}
+	maxY := gc.workH - cardMinHeight
+	if maxY < 0 {
+		maxY = 0
+	}
+	newX := ClampInt(gc.resizeNewX, 0, maxX)
+	newY := ClampInt(gc.resizeNewY, 0, maxY)
+	newW := ClampInt(gc.resizeNewW, cardMinWidth, gc.workW-newX)
+	newH := ClampInt(gc.resizeNewH, cardMinHeight, gc.workH-newY)
 
-	gc.applyBounds(gc.resizeNewX, gc.resizeNewY, gc.resizeNewW, gc.resizeNewH)
+	// 将拖拽中累积的新尺寸应用到实际容器
+	gc.size.Width = float64(newW) / float64(gc.workW)
+	gc.size.Height = float64(newH) / float64(gc.workH)
+	gc.position.X = float64(newX) / float64(gc.workW)
+	gc.position.Y = float64(newY) / float64(gc.workH)
+
+	gc.applyBounds(newX, newY, newW, newH)
 
 	gc.manager.UpdateGroupSize(gc.groupName, gc.size.Width, gc.size.Height)
 	gc.manager.UpdateGroupPosition(gc.groupName, gc.position.X, gc.position.Y)
@@ -552,9 +615,13 @@ func (gc *GroupCard) handleDrag(x, y int) {
 		return
 	}
 
-	// 计算新位置但不移动容器
-	gc.dragNewX = gc.dragCardX + dx
-	gc.dragNewY = gc.dragCardY + dy
+	// 计算新位置但不移动容器，限制不超出工作区边界
+	pixW := gc.pixelW()
+	pixH := gc.pixelH()
+	newX := ClampInt(gc.dragCardX+dx, 0, gc.workW-pixW)
+	newY := ClampInt(gc.dragCardY+dy, 0, gc.workH-pixH)
+	gc.dragNewX = newX
+	gc.dragNewY = newY
 
 	if gc.onCardDragOutline != nil {
 		gc.onCardDragOutline(gc, gc.dragNewX, gc.dragNewY)
@@ -673,14 +740,54 @@ func (gc *GroupCard) paintBackground(canvas *walk.Canvas, bounds walk.Rectangle)
 	// 1) 从桌面壁纸位图取卡片当前位置的壁纸区域作为底
 	if gc.onGetWallpaper != nil {
 		if wp := gc.onGetWallpaper(); wp != nil {
-			src := walk.Rectangle{
-				X:      gc.pixelX(),
-				Y:      gc.pixelY(),
-				Width:  bounds.Width,
-				Height: bounds.Height,
+			srcX := gc.pixelX()
+			srcY := gc.pixelY()
+			// 裁剪：src 矩形不能超出壁纸位图边界 (0,0,workW,workH)
+			if srcX < 0 {
+				srcX = 0
 			}
-			// 绘制壁纸底；如果失败（如尺寸不匹配），canvas 保持原样（屏幕壁纸）
-			_ = canvas.DrawBitmapPartWithOpacityPixels(wp, bounds, src, 255)
+			if srcY < 0 {
+				srcY = 0
+			}
+			srcW := bounds.Width
+			srcH := bounds.Height
+			if srcX+srcW > gc.workW {
+				srcW = gc.workW - srcX
+			}
+			if srcY+srcH > gc.workH {
+				srcH = gc.workH - srcY
+			}
+
+			// dst 矩形也需要对应裁剪，保持 src→dst 映射正确
+			dstX := bounds.X + (gc.pixelX() - srcX)
+			dstY := bounds.Y + (gc.pixelY() - srcY)
+			if dstX < 0 {
+				dstX = 0
+			}
+			if dstY < 0 {
+				dstY = 0
+			}
+			// 重新计算有效的 dst 宽高
+			dstW := srcW
+			dstH := srcH
+			if dstX+dstW > bounds.X+bounds.Width {
+				dstW = bounds.X + bounds.Width - dstX
+				if srcW > dstW {
+					srcW = dstW
+				}
+			}
+			if dstY+dstH > bounds.Y+bounds.Height {
+				dstH = bounds.Y + bounds.Height - dstY
+				if srcH > dstH {
+					srcH = dstH
+				}
+			}
+
+			if srcW > 0 && srcH > 0 {
+				src := walk.Rectangle{X: srcX, Y: srcY, Width: srcW, Height: srcH}
+				dst := walk.Rectangle{X: dstX, Y: dstY, Width: dstW, Height: dstH}
+				_ = canvas.DrawBitmapPartWithOpacityPixels(wp, dst, src, 255)
+			}
 		}
 	}
 
