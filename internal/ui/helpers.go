@@ -566,4 +566,11 @@ func DrawSelectionRect(canvas *walk.Canvas, bounds walk.Rectangle) {
 	}
 }
 
+// ============================================================
+// Win32 函数（供组内 group_card.go 等文件使用）
+// ============================================================
 
+var (
+	user32DLL           = syscall.NewLazyDLL("user32.dll")
+	procCreateWindowExW = user32DLL.NewProc("CreateWindowExW")
+)

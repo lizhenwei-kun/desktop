@@ -154,6 +154,11 @@ func (dm *DesktopMode) setupCardActions(card *ui.GroupCard, grp config.Group) {
 		dm.SourceCard = nil
 		dm.SourceItemIdx = -1
 	})
+
+	// 图标重命名回调（通知 DesktopMode 提交文件重命名）
+	card.SetOnItemRename(func(oldPath, newName string) {
+		dm.commitItemRename(newName, oldPath)
+	})
 }
 
 var refreshCardsCount int
