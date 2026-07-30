@@ -48,6 +48,17 @@
 4. **闪烁处理**：拖拽中只移动 container，bodyWidget 作为子控件自动跟随，无需重复 SetBoundsPixels。使用 container.SetBoundsPixels 正常触发重绘，不额外 suppress redraw，避免残留。
 5. **拖拽速度**：每次 MouseMove 计算完整的屏幕偏移（不是增量累加），确保卡片与鼠标 1:1 跟随，不加速不滞后。
 
+### 拖拽/缩放结束后的重叠重绘（⚠️ 关键坑）
+
+walk 中每张卡片是独立的 `Container` 子窗口，拖拽/缩放结束后 `applyBounds` 只使当前卡片自身窗口无效化。被移动卡片覆盖的其他卡片**不会**收到 `WM_PAINT`，导致重叠区域不重绘。
+
+**正确做法**：在 `OnCardDragOutlineEnd` / `OnResizeOutlineEnd` 回调中，遍历所有其他卡片，用矩形相交检测（`cx < ox+ow && cx+cw > ox && cy < oy+oh && cy+ch > oy`）判断是否有交集，对相交卡片调用 `win.InvalidateRect(c.BodyWidgetHandle(), nil, false)`。
+
+- **不能**无差别 invalidate 所有卡片，否则导致不必要的闪烁
+- **不能**只依赖 `dm.InvalidateBody()`，它只刷新桌面背景（壁纸 + 未分组图标），不刷新卡片内部
+- 实现位置：`internal/ui/desktop/card_management.go` 的 `setupCardActions` 中
+- GroupCard 需导出 `PixelX()` / `PixelY()` 方法供 desktop 包调用
+
 ## 缩放方向检测
 
 8px 热区判定规则：

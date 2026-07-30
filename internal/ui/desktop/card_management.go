@@ -107,6 +107,18 @@ func (dm *DesktopMode) setupCardActions(card *ui.GroupCard, grp config.Group) {
 	card.SetOnCardDragOutline(dm.CardDragOutline.OnCardDragOutline)
 	card.SetOnCardDragOutlineEnd(func(card *ui.GroupCard) {
 		dm.CardDragOutline.OnCardDragOutlineEnd(card)
+		// 仅使与被移动卡片新位置有交集的其他卡片重绘，避免全量刷新导致闪烁
+		cx, cy, cw, ch := card.PixelX(), card.PixelY(), card.PixelW(), card.PixelH()
+		logger.Debug("dragEnd: card=%q pos=(%d,%d,%dx%d) totalCards=%d", card.GroupName(), cx, cy, cw, ch, len(dm.Cards))
+		for _, c := range dm.Cards {
+			if c == card {
+				continue
+			}
+			ox, oy, ow, oh := c.PixelX(), c.PixelY(), c.PixelW(), c.PixelH()
+			if cx < ox+ow && cx+cw > ox && cy < oy+oh && cy+ch > oy {
+				win.InvalidateRect(c.BodyWidgetHandle(), nil, false)
+			}
+		}
 		// 刷新桌面，清除卡片原位置残留
 		dm.InvalidateBody()
 	})
@@ -140,7 +152,23 @@ func (dm *DesktopMode) setupCardActions(card *ui.GroupCard, grp config.Group) {
 		}
 	})
 	card.SetOnResizeOutline(dm.ResizeOutlineState.OnCardResizeOutline)
-	card.SetOnResizeOutlineEnd(dm.ResizeOutlineState.OnCardResizeOutlineEnd)
+	card.SetOnResizeOutlineEnd(func(card *ui.GroupCard) {
+		dm.ResizeOutlineState.OnCardResizeOutlineEnd(card)
+		// 仅使与缩放后卡片新位置有交集的其他卡片重绘，避免全量刷新导致闪烁
+		cx, cy, cw, ch := card.PixelX(), card.PixelY(), card.PixelW(), card.PixelH()
+		logger.Debug("resizeEnd: card=%q pos=(%d,%d,%dx%d) totalCards=%d", card.GroupName(), cx, cy, cw, ch, len(dm.Cards))
+		for _, c := range dm.Cards {
+			if c == card {
+				continue
+			}
+			ox, oy, ow, oh := c.PixelX(), c.PixelY(), c.PixelW(), c.PixelH()
+			if cx < ox+ow && cx+cw > ox && cy < oy+oh && cy+ch > oy {
+				win.InvalidateRect(c.BodyWidgetHandle(), nil, false)
+			}
+		}
+		// 缩放后位置/尺寸变化，也刷新桌面背景
+		dm.InvalidateBody()
+	})
 
 	// 提供桌面壁纸位图，卡片背景从真实壁纸合成
 	card.SetOnGetWallpaper(dm.WallpaperState.getBitmap)

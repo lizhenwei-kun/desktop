@@ -1488,3 +1488,9 @@ func (gc *GroupCard) PixelW() int { return gc.pixelW() }
 
 // PixelH 返回像素高度
 func (gc *GroupCard) PixelH() int { return gc.pixelH() }
+
+// PixelX 返回像素X坐标
+func (gc *GroupCard) PixelX() int { return gc.pixelX() }
+
+// PixelY 返回像素Y坐标
+func (gc *GroupCard) PixelY() int { return gc.pixelY() }
