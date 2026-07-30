@@ -1102,6 +1102,9 @@ func (gc *GroupCard) startCardItemEdit(idx int) {
 		gc.editHwnd = 0
 	}
 
+	// 清除选中状态，避免编辑模式下残留选中框
+	gc.ClearSelection()
+
 	tileX, tileY := gc.getIconTileBounds(idx)
 	labelX := tileX
 	labelY := tileY + DesktopIconLabelTop()

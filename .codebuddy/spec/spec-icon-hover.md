@@ -106,3 +106,46 @@ MouseMove:
 - [ ] 鼠标离开图标区域后高亮消失（idx 变 -1）
 - [ ] 拖拽/缩放中不触发悬停检测
 - [ ] 填充和边框使用像素级 alpha 位图，无需 Pen
+
+## 图标选中状态
+
+### 选中/悬停透明度
+
+| 状态 | 函数 | 颜色 | Alpha | 边框 |
+|------|------|------|-------|------|
+| **选中** | `DrawSelectionRect` | `(0x00, 0x55, 0xAA)` 深蓝 | 70 (≈28%) | 1px `#003A7A` |
+| **悬停** | `DrawHoverRect` | `(0x00, 0x45, 0x8A)` 浅蓝 | 50 (≈20%) | 1px `#003A7A` |
+
+透明度通过 `DrawBitmapWithOpacityPixels` 的 `opacity` 参数控制（位图自身 alpha 固定为 255），而非位图像素 alpha。这样 walk 的 `alphaBlendPart` 中 `opacity != 255` 就不会走 `StretchBlt` 优化分支，始终走 `AlphaBlend`，透明通道正确。
+
+### 长文字选中显示不全的根因与修复
+
+**根因**：卡片使用 `PaintNoErase` 模式，`WM_PAINT` 中 `BeginPaint` 返回的 HDC 自带裁剪区域（`ps.RcPaint`），只包含 `InvalidateRect` 标记的无效矩形。`invalidateTile` 原来只用 `desktopIconItemHeight`（2 行文字高度）标记无效区域，选中时扩展的文字区域（3-4 行）不在重绘区域内，被 HDC 裁剪。
+
+桌面版未分组图标使用 `PaintBuffered` 模式，先画到全尺寸内存位图再 `BitBlt` 到屏幕，不受 `ps.RcPaint` 裁剪影响，所以无此问题。
+
+**修复方案**：`invalidateTile` 始终用最大文字高度（4 行）计算无效矩形，不区分选中/非选中。这样选中时扩展区域在重绘范围内，取消选中时扩展区域的选中框残留也能被正确清除。
+
+```go
+// invalidateTile — 始终用最大可能高度（4行文字）
+func (gc *GroupCard) invalidateTile(idx int) {
+    x, y := gc.getIconTileBounds(idx)
+    lines := SplitTextToLines(gc.items[idx].Name, 4)
+    tileH := DesktopIconLabelTop() + len(lines)*DesktopIconLineHeight() + 8
+    if tileH < desktopIconItemHeight {
+        tileH = desktopIconItemHeight
+    }
+    r := win.RECT{
+        Left: int32(x), Top: int32(y),
+        Right:  int32(x + TileColWidth()),
+        Bottom: int32(y + tileH),
+    }
+    win.InvalidateRect(gc.bodyWidget.Handle(), &r, false)
+}
+```
+
+### 编辑模式下选中框残留
+
+**问题**：进入图标标题编辑模式（`startCardItemEdit`）时，编辑框覆盖在磁贴上方，但上一帧画出的选中框没有被清除，编辑模式下 `paintIconTile` 检测到 `isEditing` 直接 `return` 跳过绘制，残留的选中框仍然可见。
+
+**修复**：`startCardItemEdit` 开头调用 `gc.ClearSelection()`，清除选中状态并触发对应区域的 invalidation，编辑框出现时选中框已被清除。
