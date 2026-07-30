@@ -551,10 +551,19 @@ func DrawHoverRect(canvas *walk.Canvas, bounds walk.Rectangle) {
 	}
 }
 
-// DrawSelectionRect 绘制选中高亮（半透明蓝色背景，无边框）
+// DrawSelectionRect 绘制选中/焦点高亮（半透明蓝色背景，细边框）
 func DrawSelectionRect(canvas *walk.Canvas, bounds walk.Rectangle) {
 	// 半透明填充（固定 ~28% 蓝），叠加在卡片半透明背景之上
 	drawAlphaRect(canvas, bounds, 0x00, 0x55, 0xAA, 70)
+	// 1px 边框
+	borderPen, err := walk.NewCosmeticPen(walk.PenSolid, walk.RGB(0x00, 0x3A, 0x7A))
+	if err == nil {
+		canvas.DrawRectanglePixels(borderPen, walk.Rectangle{
+			X: bounds.X, Y: bounds.Y,
+			Width: bounds.Width - 1, Height: bounds.Height - 1,
+		})
+		borderPen.Dispose()
+	}
 }
 
 

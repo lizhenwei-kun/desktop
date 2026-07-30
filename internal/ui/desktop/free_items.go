@@ -369,9 +369,16 @@ func (dm *DesktopMode) startItemEdit(itemPath string) {
 	hwnd := dm.BodyWidget.Handle()
 	className := syscall.StringToUTF16Ptr("EDIT")
 	windowText := syscall.StringToUTF16Ptr(foundItem.Name)
-	style := uintptr(win.WS_CHILD | win.WS_VISIBLE | win.WS_BORDER | win.ES_LEFT | win.ES_AUTOHSCROLL)
+	// 使用 ES_MULTILINE + ES_CENTER 使编辑框内文字与绘制文字位置一致：
+	//   - 去掉 WS_BORDER：避免边框导致客户区偏移
+	//   - ES_MULTILINE：支持多行显示，文字从顶部开始，与绘制对齐
+	//   - ES_CENTER：文字居中，与 DrawTextPixels 的 TextCenter 一致
+	//   - ES_AUTOHSCROLL → ES_AUTOVSCROLL：多行模式下垂直滚动
+	//   - WS_CLIPCHILDREN：防止闪烁
+	style := uintptr(win.WS_CHILD | win.WS_VISIBLE | win.ES_MULTILINE | win.ES_CENTER | win.ES_AUTOVSCROLL | win.WS_CLIPCHILDREN)
+	// WS_EX_CLIENTEDGE 提供柔和的内嵌边框，替代 WS_BORDER
 	editHwnd, _, _ := procCreateWindowExW.Call(
-		0,
+		uintptr(win.WS_EX_CLIENTEDGE),
 		uintptr(unsafe.Pointer(className)),
 		uintptr(unsafe.Pointer(windowText)),
 		style,
@@ -411,7 +418,9 @@ func (dm *DesktopMode) startItemEdit(itemPath string) {
 		font.Dispose()
 	}
 
+	// EM_SETTEXTCOLOR = WM_USER + 68 (richedit 消息，对普通 EDIT 也有效)
 	win.SendMessage(editHWND, win.EM_SETBKGNDCOLOR, 0, uintptr(win.RGB(0x30, 0x34, 0x3C)))
+	win.SendMessage(editHWND, win.WM_USER+68, 0, uintptr(win.RGB(0xFF, 0xFF, 0xFF)))
 	win.SendMessage(editHWND, win.EM_SETSEL, 0, ^uintptr(0))
 	win.SetFocus(editHWND)
 	dm.EditHwnd = editHWND
