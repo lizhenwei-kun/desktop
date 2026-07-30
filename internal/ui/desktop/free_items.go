@@ -339,6 +339,10 @@ func (dm *DesktopMode) clearSelectedItem() {
 
 // startItemEdit 开始编辑图标的标题
 func (dm *DesktopMode) startItemEdit(itemPath string) {
+	// 清除选中状态，避免编辑模式下残留选中框
+	dm.SelectedPath = ""
+	dm.InvalidateBody()
+
 	dm.EditingPath = itemPath
 	items := dm.Manager.GetUngroupedItems()
 	var foundItem *group.GroupItem

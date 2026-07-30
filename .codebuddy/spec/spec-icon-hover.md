@@ -146,6 +146,8 @@ func (gc *GroupCard) invalidateTile(idx int) {
 
 ### 编辑模式下选中框残留
 
-**问题**：进入图标标题编辑模式（`startCardItemEdit`）时，编辑框覆盖在磁贴上方，但上一帧画出的选中框没有被清除，编辑模式下 `paintIconTile` 检测到 `isEditing` 直接 `return` 跳过绘制，残留的选中框仍然可见。
+**问题**：进入图标标题编辑模式时，编辑框覆盖在磁贴上方，但上一帧画出的选中框没有被清除，编辑模式下绘制函数检测到 `isEditing`/`EditingPath` 直接跳过绘制选中框，残留的选中框仍然可见。
 
-**修复**：`startCardItemEdit` 开头调用 `gc.ClearSelection()`，清除选中状态并触发对应区域的 invalidation，编辑框出现时选中框已被清除。
+**修复**：编辑模式入口处清除选中状态并触发重绘。
+- **卡片内**（`startCardItemEdit`）：调用 `gc.ClearSelection()`
+- **未分组**（`startItemEdit`）：设置 `dm.SelectedPath = ""` + `dm.InvalidateBody()`
