@@ -541,7 +541,7 @@ func DrawHoverRect(canvas *walk.Canvas, bounds walk.Rectangle) {
 	// 半透明填充（固定 ~20% 蓝）
 	drawAlphaRect(canvas, bounds, 0x00, 0x45, 0x8A, 50)
 	// 1px 边框
-	borderPen, err := walk.NewCosmeticPen(walk.PenSolid, walk.RGB(0x00, 0x5A, 0xAD))
+	borderPen, err := walk.NewCosmeticPen(walk.PenSolid, walk.RGB(0x00, 0x3A, 0x7A))
 	if err == nil {
 		canvas.DrawRectanglePixels(borderPen, walk.Rectangle{
 			X: bounds.X, Y: bounds.Y,
