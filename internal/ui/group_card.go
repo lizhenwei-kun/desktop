@@ -1072,11 +1072,13 @@ func (gc *GroupCard) invalidateTile(idx int) {
 		return
 	}
 	x, y := gc.getIconTileBounds(idx)
-	// 选中时磁贴高度可能大于标准高度（长文字展开），需要 invalidate 更大的区域
-	tileH := desktopIconItemHeight
-	if idx == gc.selectedItemIdx {
-		lines := SplitTextToLines(gc.items[idx].Name, 4)
-		tileH = DesktopIconLabelTop() + len(lines)*DesktopIconLineHeight() + 8
+	// 始终用最大可能高度（4行文字）invalidate，确保选中→非选中时
+	// 扩展区域的选中框残留能被清除。PaintNoErase 模式下 BeginPaint
+	// 的裁剪区域由无效矩形决定，高度不足会导致扩展区域不被重绘。
+	lines := SplitTextToLines(gc.items[idx].Name, 4)
+	tileH := DesktopIconLabelTop() + len(lines)*DesktopIconLineHeight() + 8
+	if tileH < desktopIconItemHeight {
+		tileH = desktopIconItemHeight
 	}
 	r := win.RECT{
 		Left:   int32(x),
