@@ -926,6 +926,8 @@ func (gc *GroupCard) paintIconGrid(canvas *walk.Canvas, bounds walk.Rectangle) {
 		x := startX + col*colWidth
 		y := startY + row*desktopIconItemHeight
 
+		// 用标准磁贴高度判断是否超出卡片边界，确保图标始终可见
+		// 选中时的扩展高度由 paintIconTile 在绘制时限制
 		if y+desktopIconItemHeight > bounds.Y+bounds.Height {
 			logger.Debug("paintIconGrid: card=%q BREAK at item[%d] name=%q (y=%d + tileH=%d > bottom=%d)",
 				gc.groupName, i, item.Name, y, desktopIconItemHeight, bounds.Y+bounds.Height)
@@ -946,7 +948,7 @@ func (gc *GroupCard) paintIconTile(canvas *walk.Canvas, item group.GroupItem, x,
 	lines := SplitTextToLines(item.Name, 4)
 	selH := desktopIconItemHeight
 	if selected {
-		selH = DesktopIconLabelTop() + len(lines)*DesktopIconLineHeight() + 4
+		selH = DesktopIconLabelTop() + len(lines)*DesktopIconLineHeight() + 8
 	}
 
 	// 绘制选中/悬停高亮
@@ -1003,6 +1005,7 @@ func (gc *GroupCard) paintIconTile(canvas *walk.Canvas, item group.GroupItem, x,
 		}
 		if selected {
 			// 选中状态：显示所有行，不加省略号
+			// 超出卡片底部的内容由 Windows 自动裁剪，不做行数限制
 			for i, line := range lines {
 				lineY := labelTop + i*DesktopIconLineHeight()
 				drawLabel(line, lineY)
@@ -1069,11 +1072,17 @@ func (gc *GroupCard) invalidateTile(idx int) {
 		return
 	}
 	x, y := gc.getIconTileBounds(idx)
+	// 选中时磁贴高度可能大于标准高度（长文字展开），需要 invalidate 更大的区域
+	tileH := desktopIconItemHeight
+	if idx == gc.selectedItemIdx {
+		lines := SplitTextToLines(gc.items[idx].Name, 4)
+		tileH = DesktopIconLabelTop() + len(lines)*DesktopIconLineHeight() + 8
+	}
 	r := win.RECT{
 		Left:   int32(x),
 		Top:    int32(y),
 		Right:  int32(x + TileColWidth()),
-		Bottom: int32(y + desktopIconItemHeight),
+		Bottom: int32(y + tileH),
 	}
 	win.InvalidateRect(gc.bodyWidget.Handle(), &r, false)
 }

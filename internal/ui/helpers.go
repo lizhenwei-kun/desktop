@@ -107,6 +107,7 @@ func DesktopIconLineHeight() int {
 	if lineH < 14 {
 		lineH = 14 // 最小行高保护
 	}
+	lineH += 2 // 额外 padding 防止文字底部被裁剪
 	return DpiPx(lineH)
 }
 
