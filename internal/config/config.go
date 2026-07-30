@@ -20,10 +20,11 @@ type Size struct {
 
 // Group 表示分组
 type Group struct {
-	Name     string   `json:"name"`
-	Position Position `json:"position"`
-	Size     Size     `json:"size"`
-	Color    string   `json:"color"`
+	Name      string   `json:"name"`
+	Position  Position `json:"position"`
+	Size      Size     `json:"size"`
+	Color     string   `json:"color"`
+	Collapsed bool     `json:"collapsed,omitempty"` // 是否收缩（只显示标题栏）
 }
 
 // SystemItem 系统桌面项（如"此电脑"）

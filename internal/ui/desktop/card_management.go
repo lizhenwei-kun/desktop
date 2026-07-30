@@ -187,6 +187,13 @@ func (dm *DesktopMode) setupCardActions(card *ui.GroupCard, grp config.Group) {
 	card.SetOnItemRename(func(oldPath, newName string) {
 		dm.commitItemRename(newName, oldPath)
 	})
+
+	// 折叠/展开回调
+	card.SetOnCollapseToggle(func(name string, collapsed bool) {
+		dm.Manager.UpdateGroupCollapsed(name, collapsed)
+		// 收缩后卡片高度变了，刷新桌面背景
+		dm.InvalidateBody()
+	})
 }
 
 var refreshCardsCount int

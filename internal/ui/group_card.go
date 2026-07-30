@@ -40,6 +40,7 @@ type GroupCard struct {
 	groupColor color.RGBA
 	position   config.Position // 相对坐标 (0~1)
 	size       config.Size     // 相对尺寸 (0~1)
+	isCollapsed bool           // 是否收缩（只显示标题栏）
 	items      []group.GroupItem
 	manager    *group.Manager
 	executor   *ProgramExecutor
@@ -93,6 +94,7 @@ type GroupCard struct {
 	onRename          func(name string)
 	onColor           func(name string)
 	onDelete          func(name string)
+	onCollapseToggle  func(name string, collapsed bool)
 
 	// 拖放目标指示
 	isDropTarget bool
@@ -151,6 +153,7 @@ func NewGroupCard(parent walk.Container, grp config.Group, mgr *group.Manager, e
 		groupColor:      ParseHexColor(grp.Color),
 		position:        grp.Position,
 		size:            grp.Size,
+		isCollapsed:     grp.Collapsed,
 		manager:         mgr,
 		executor:        executor,
 		owner:           owner,
@@ -175,6 +178,9 @@ func NewGroupCard(parent walk.Container, grp config.Group, mgr *group.Manager, e
 	pixelY := int(grp.Position.Y * float64(workH))
 	pixelW := int(grp.Size.Width * float64(workW))
 	pixelH := int(grp.Size.Height * float64(workH))
+	if gc.isCollapsed {
+		pixelH = cardHeaderHeight + 4
+	}
 
 	gc.container.SetBoundsPixels(walk.Rectangle{
 		X:      pixelX,
@@ -276,6 +282,8 @@ func (gc *GroupCard) setupMouseEvents() {
 					if gc.onDelete != nil {
 						gc.onDelete(gc.groupName)
 					}
+				case "collapse":
+					gc.toggleCollapse()
 				}
 				return
 			}
@@ -291,6 +299,14 @@ func (gc *GroupCard) setupMouseEvents() {
 			gc.dragStartTime = time.Now()
 			gc.isDragging = false
 			safego.Go("checkDragStart", gc.checkDragStart)
+			return
+		}
+
+		// 收缩状态不处理图标区域事件
+		if gc.isCollapsed {
+			if gc.onCardBodyClick != nil {
+				gc.onCardBodyClick()
+			}
 			return
 		}
 
@@ -356,6 +372,9 @@ func (gc *GroupCard) setupMouseEvents() {
 			// 确保最终位置不超出工作区边界
 			pixW := gc.pixelW()
 			pixH := gc.pixelH()
+			if gc.isCollapsed {
+				pixH = cardHeaderHeight + 4
+			}
 			maxX := gc.workW - pixW
 			if maxX < 0 {
 				maxX = 0
@@ -383,6 +402,8 @@ func (gc *GroupCard) setupMouseEvents() {
 			gc.handleResize(x, y)
 		} else if gc.isDragging {
 			gc.handleDrag(x, y)
+		} else if gc.isCollapsed {
+			gc.bodyWidget.SetCursor(walk.CursorArrow())
 		} else {
 			gc.updateCursor(x, y)
 			idx := gc.getItemIndexAt(x, y)
@@ -683,7 +704,7 @@ func (gc *GroupCard) updateCursor(x, y int) {
 // getActionButtonAt 根据 x 坐标判断点击了哪个操作按钮
 func (gc *GroupCard) getActionButtonAt(x int) string {
 	bounds := gc.bodyWidget.ClientBoundsPixels()
-	// 按钮从右到左排列：[×] [色] [✎]
+	// 按钮从右到左排列：[×] [色] [✎] [▼/▲]
 	btnRight := bounds.X + bounds.Width - 4
 	btnLeft := btnRight - actionBtnWidth
 
@@ -693,15 +714,21 @@ func (gc *GroupCard) getActionButtonAt(x int) string {
 	}
 	btnRight = btnLeft - actionBtnGap
 	btnLeft = btnRight - actionBtnWidth
-	// 色 颜色（中间）
+	// 色 颜色（中间偏右）
 	if x > btnLeft && x < btnRight {
 		return "color"
 	}
 	btnRight = btnLeft - actionBtnGap
 	btnLeft = btnRight - actionBtnWidth
-	// ✎ 重命名（最左）
+	// ✎ 重命名（中间偏左）
 	if x > btnLeft && x < btnRight {
 		return "rename"
+	}
+	btnRight = btnLeft - actionBtnGap
+	btnLeft = btnRight - actionBtnWidth
+	// ▼/▲ 折叠/展开（最左）
+	if x > btnLeft && x < btnRight {
+		return "collapse"
 	}
 	return ""
 }
@@ -734,8 +761,11 @@ func (gc *GroupCard) paintBody(canvas *walk.Canvas, updateBounds walk.Rectangle)
 	// 绘制标题栏
 	gc.paintHeader(canvas, bounds)
 
-	// 绘制图标网格
-	gc.paintIconGrid(canvas, bounds)
+	// 收缩状态只画标题栏，不画图标网格
+	if !gc.isCollapsed {
+		// 绘制图标网格
+		gc.paintIconGrid(canvas, bounds)
+	}
 
 	// 绘制拖放目标高亮边框
 	if gc.isDropTarget {
@@ -849,8 +879,8 @@ func (gc *GroupCard) paintBackground(canvas *walk.Canvas, bounds walk.Rectangle)
 
 // paintHeader 绘制标题栏（含操作按钮）
 func (gc *GroupCard) paintHeader(canvas *walk.Canvas, bounds walk.Rectangle) {
-	// 标题文字（预留按钮空间）
-	btnAreaW := (actionBtnWidth+actionBtnGap)*3 + 4
+	// 标题文字（预留按钮空间：4个按钮 = 折叠/展开 + 重命名 + 颜色 + 删除）
+	btnAreaW := (actionBtnWidth+actionBtnGap)*4 + 4
 	titleFont := GetCardTitleFont()
 	if titleFont != nil {
 		defer titleFont.Dispose()
@@ -872,10 +902,16 @@ func (gc *GroupCard) paintHeader(canvas *walk.Canvas, bounds walk.Rectangle) {
 			label string
 			x     int
 		}
+		// 折叠/展开按钮标签：▼ 表示展开（可收缩），▲ 表示收缩（可展开）
+		collapseLabel := "▼"
+		if gc.isCollapsed {
+			collapseLabel = "▲"
+		}
 		btns := []btnDef{
-			{"×", btnRight - actionBtnWidth},                                   // 删除
-			{"色", btnRight - (actionBtnWidth+actionBtnGap)*2 + actionBtnGap},   // 颜色
-			{"✎", btnRight - (actionBtnWidth+actionBtnGap)*3 + actionBtnGap*2}, // 重命名
+			{"×", btnRight - actionBtnWidth},                                                   // 删除
+			{"色", btnRight - (actionBtnWidth+actionBtnGap)*2 + actionBtnGap},                   // 颜色
+			{"✎", btnRight - (actionBtnWidth+actionBtnGap)*3 + actionBtnGap*2},                 // 重命名
+			{collapseLabel, btnRight - (actionBtnWidth+actionBtnGap)*4 + actionBtnGap*3}, // 折叠/展开
 		}
 
 		for _, b := range btns {
@@ -1302,6 +1338,50 @@ func (gc *GroupCard) SetOnDelete(fn func(name string)) {
 	gc.onDelete = fn
 }
 
+// SetOnCollapseToggle 设置折叠/展开切换回调
+func (gc *GroupCard) SetOnCollapseToggle(fn func(name string, collapsed bool)) {
+	gc.onCollapseToggle = fn
+}
+
+// toggleCollapse 切换折叠/展开状态
+func (gc *GroupCard) toggleCollapse() {
+	gc.isCollapsed = !gc.isCollapsed
+
+	// 展开时提升到 Z-order 最上层
+	if !gc.isCollapsed {
+		win.SetWindowPos(gc.container.Handle(), win.HWND_TOP, 0, 0, 0, 0,
+			win.SWP_NOMOVE|win.SWP_NOSIZE|win.SWP_NOACTIVATE)
+	}
+
+	// 更新卡片高度
+	gc.applyCollapsedBounds()
+
+	// 通知 DesktopMode 持久化状态
+	if gc.onCollapseToggle != nil {
+		gc.onCollapseToggle(gc.groupName, gc.isCollapsed)
+	}
+}
+
+// applyCollapsedBounds 根据折叠状态重新应用卡片高度
+func (gc *GroupCard) applyCollapsedBounds() {
+	x := gc.pixelX()
+	y := gc.pixelY()
+	w := gc.pixelW()
+	if gc.isCollapsed {
+		// 收缩：只显示标题栏高度
+		h := cardHeaderHeight + 4 // 标题栏 + 少量内边距
+		gc.applyBounds(x, y, w, h)
+	} else {
+		// 展开：恢复原始尺寸
+		h := gc.pixelH()
+		// 如果原始高度小于最小高度，使用最小高度
+		if h < cardMinHeight {
+			h = cardMinHeight
+		}
+		gc.applyBounds(x, y, w, h)
+	}
+}
+
 // refreshItems 从 Manager 加载分组项目并刷新显示
 func (gc *GroupCard) refreshItems() {
 	gc.items = gc.manager.GetGroupItems(gc.groupName)
@@ -1381,6 +1461,9 @@ func (gc *GroupCard) SetSize(w, h float64) {
 func (gc *GroupCard) ReapplyBounds() {
 	w := gc.pixelW()
 	h := gc.pixelH()
+	if gc.isCollapsed {
+		h = cardHeaderHeight + 4
+	}
 	x := gc.pixelX()
 	y := gc.pixelY()
 	gc.container.SetBoundsPixels(walk.Rectangle{X: x, Y: y, Width: w, Height: h})

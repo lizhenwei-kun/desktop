@@ -765,6 +765,20 @@ func (m *Manager) UpdateGroupSize(name string, w, h float64) {
 	m.save()
 }
 
+// UpdateGroupCollapsed 更新分组折叠状态并持久化
+func (m *Manager) UpdateGroupCollapsed(name string, collapsed bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for i, g := range m.cfg.Groups {
+		if g.Name == name {
+			m.cfg.Groups[i].Collapsed = collapsed
+			break
+		}
+	}
+	m.save()
+}
+
 // UpdateGroupColor 更新分组颜色并持久化
 // 注意：不调用 notifyChange，因为调用方（onColor 回调）之后会调用 refreshCards() 完成完整 UI 刷新。
 // 避免 notifyChange 通过 Synchronize 投递 dm.Refresh() 到消息队列后，
