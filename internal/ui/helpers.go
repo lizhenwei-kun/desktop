@@ -401,6 +401,11 @@ func ColorToHex(c color.RGBA) string {
 	return "#" + hexByte(c.R) + hexByte(c.G) + hexByte(c.B) + hexByte(c.A)
 }
 
+// ColorToHexRGB 将颜色转换为 #RRGGBB 格式（忽略 Alpha，仅 RGB）
+func ColorToHexRGB(c color.RGBA) string {
+	return "#" + hexByte(c.R) + hexByte(c.G) + hexByte(c.B)
+}
+
 func hexByte(b byte) string {
 	const hexChars = "0123456789ABCDEF"
 	return string([]byte{hexChars[b>>4], hexChars[b&0x0F]})

@@ -124,10 +124,14 @@ func (dm *DesktopMode) setupCardActions(card *ui.GroupCard, grp config.Group) {
 		}
 	})
 	card.SetOnColor(func(name string) {
-		// 以卡片当前颜色作为初始选中色，其余为预设色
-		preset := append([]string{ui.ColorToHex(card.GroupColor())}, ui.PresetColors...)
+		// 以卡片当前颜色（仅 RGB）作为初始选中色，其余为预设色
+		preset := append([]string{ui.ColorToHexRGB(card.GroupColor())}, ui.PresetColors...)
 		colorStr, ok := ui.ShowColorDialog(dm.MainWindow, "修改颜色", preset)
 		if ok && colorStr != "" {
+			// 透明度统一采用新建卡片默认色的 Alpha，忽略对话框返回的透明度
+			c := ui.ParseHexColor(colorStr)
+			c.A = ui.DefaultCardColorAlpha
+			colorStr = ui.ColorToHex(c)
 			dm.Manager.UpdateGroupColor(name, colorStr)
 			card.SetGroupColor(colorStr)
 			dm.InvalidateBody()

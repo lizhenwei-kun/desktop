@@ -21,6 +21,10 @@ const (
 	swpNoActivate = 0x0010
 
 	spiGetWorkArea = 0x0030
+
+	// DefaultCardColorAlpha 卡片统一透明度：取新建分组默认色 #30343CBD 的 Alpha（0xBD）
+	// 改颜色对话框返回的透明度不采用，卡片透明度统一用此值
+	DefaultCardColorAlpha = 0xBD
 )
 
 type chooseColorW struct {
