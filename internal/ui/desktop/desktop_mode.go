@@ -82,6 +82,8 @@ type CardDragOutline struct {
 	DragGhostH      int
 	workX           int
 	workY           int
+	workW           int
+	workH           int
 
 	guideHwnd      win.HWND
 	guideLastCheck int64
@@ -98,6 +100,12 @@ func (s *CardDragOutline) Inject(workX, workY int) {
 	s.guideColorR = 0xFF
 	s.guideColorG = 0x00
 	s.guideColorB = 0x00 // 默认红色
+}
+
+// SetWorkArea 设置工作区尺寸（参考线窗口覆盖整个工作区）
+func (s *CardDragOutline) SetWorkArea(w, h int) {
+	s.workW = w
+	s.workH = h
 }
 
 // SetGuideColor 设置参考线颜色（r,g,b 各 0-255）

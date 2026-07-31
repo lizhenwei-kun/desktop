@@ -7,6 +7,7 @@ import (
 
 	"github.com/lxn/win"
 
+	"desktop_go/internal/logger"
 	"desktop_go/internal/ui"
 )
 
@@ -197,6 +198,7 @@ func (s *CardDragOutline) OnCardDragOutlineEx(card *ui.GroupCard, newX, newY int
 	}
 
 	hLines, vLines := s.detectAlignment(card, newX, newY, cards)
+	logger.Debug("OnCardDragOutlineEx: newX=%d newY=%d hLines=%v vLines=%v", newX, newY, hLines, vLines)
 	s.updateGuideWindow(hLines, vLines)
 	s.guideLastCheck = now
 	s.guideLastX = newX

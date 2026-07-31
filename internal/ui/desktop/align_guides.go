@@ -5,18 +5,32 @@ import (
 	"unsafe"
 
 	"github.com/lxn/win"
+
+	"desktop_go/internal/logger"
 )
 
 const (
-	guideLineWidth = 1
+	guideLineWidth = 2 // 参考线宽度（px）
 )
 
+// 参考线窗口用 WS_EX_LAYERED + UpdateLayeredWindow 绘制，
+// 这样 GDI 内容能可靠显示（与卡片拖拽幽灵窗口同款技术）。
 var (
-	guideGDIDLL   = syscall.NewLazyDLL("gdi32.dll")
-	procCreatePen = guideGDIDLL.NewProc("CreatePen")
-	procSelectObj = guideGDIDLL.NewProc("SelectObject")
-	procMoveToEx  = guideGDIDLL.NewProc("MoveToEx")
-	procLineTo    = guideGDIDLL.NewProc("LineTo")
+	guideDLLUser32 = syscall.NewLazyDLL("user32.dll")
+	guideDLLGdi32  = syscall.NewLazyDLL("gdi32.dll")
+
+	guideCreateWindowEx  = guideDLLUser32.NewProc("CreateWindowExW")
+	guideDestroyWindow   = guideDLLUser32.NewProc("DestroyWindow")
+	guideUpdateLayered   = guideDLLUser32.NewProc("UpdateLayeredWindow")
+	guideCreateCompatibleDC = guideDLLGdi32.NewProc("CreateCompatibleDC")
+	guideDeleteDC         = guideDLLGdi32.NewProc("DeleteDC")
+	guideCreateDIBSection = guideDLLGdi32.NewProc("CreateDIBSection")
+	guideSelectObj        = guideDLLGdi32.NewProc("SelectObject")
+	guideDeleteObject     = guideDLLGdi32.NewProc("DeleteObject")
+	guideBitBlt           = guideDLLGdi32.NewProc("BitBlt")
+	guideCreatePen        = guideDLLGdi32.NewProc("CreatePen")
+	guideMoveToEx         = guideDLLGdi32.NewProc("MoveToEx")
+	guideLineTo           = guideDLLGdi32.NewProc("LineTo")
 )
 
 func guideWndProc(hwnd win.HWND, msg uint32, wParam, lParam uintptr) uintptr {
@@ -38,9 +52,11 @@ func (s *CardDragOutline) ensureGuideWindow() {
 	wc.LpszClassName = className
 	win.RegisterClassEx(&wc)
 
-	exStyle := uint32(win.WS_EX_TRANSPARENT | win.WS_EX_TOPMOST | win.WS_EX_TOOLWINDOW)
+	// WS_EX_LAYERED: 用 UpdateLayeredWindow 可靠绘制
+	// WS_EX_TRANSPARENT: 点击穿透
+	exStyle := uint32(win.WS_EX_LAYERED | win.WS_EX_TRANSPARENT | win.WS_EX_TOPMOST | win.WS_EX_TOOLWINDOW)
 	style := uint32(win.WS_POPUP)
-	hwnd, _, _ := procCreateWindowExW_.Call(
+	hwnd, _, _ := guideCreateWindowEx.Call(
 		uintptr(exStyle),
 		uintptr(unsafe.Pointer(className)),
 		0,
@@ -65,150 +81,124 @@ func (s *CardDragOutline) updateGuideWindow(hLines, vLines []int) {
 		return
 	}
 
-	minX, minY, maxX, maxY := calcGuideBounds(hLines, vLines)
-	w := maxX - minX
-	h := maxY - minY
+	logger.Debug("updateGuideWindow: hLines=%v vLines=%v workArea=%dx%d color=RGB(%d,%d,%d)",
+		hLines, vLines, s.workW, s.workH, s.guideColorR, s.guideColorG, s.guideColorB)
+
+	w := s.workW
+	h := s.workH
 	if w < 1 {
-		w = 1
+		w = 4000
 	}
 	if h < 1 {
-		h = 1
+		h = 2000
 	}
 
-	win.SetWindowPos(s.guideHwnd, win.HWND_TOPMOST,
-		int32(s.workX+minX), int32(s.workY+minY),
-		int32(w), int32(h),
-		win.SWP_NOACTIVATE)
-
-	halfW := guideLineWidth / 2
-	combinedRgn := uintptr(0)
-	first := true
-
-	for _, lineY := range hLines {
-		ly := lineY - minY
-		rgn, _, _ := procCreateRectRgn_.Call(uintptr(0), uintptr(ly-halfW), uintptr(w), uintptr(ly+halfW+1))
-		if rgn == 0 {
-			continue
-		}
-		if first {
-			combinedRgn = rgn
-			first = false
-		} else {
-			tmpRgn, _, _ := procCreateRectRgn_.Call(0, 0, 0, 0)
-			procCombineRgn_.Call(tmpRgn, combinedRgn, rgn, uintptr(2))
-			procDeleteObject_.Call(combinedRgn)
-			procDeleteObject_.Call(rgn)
-			combinedRgn = tmpRgn
-		}
-	}
-
-	for _, lineX := range vLines {
-		lx := lineX - minX
-		rgn, _, _ := procCreateRectRgn_.Call(uintptr(lx-halfW), uintptr(0), uintptr(lx+halfW+1), uintptr(h))
-		if rgn == 0 {
-			continue
-		}
-		if first {
-			combinedRgn = rgn
-			first = false
-		} else {
-			tmpRgn, _, _ := procCreateRectRgn_.Call(0, 0, 0, 0)
-			procCombineRgn_.Call(tmpRgn, combinedRgn, rgn, uintptr(2))
-			procDeleteObject_.Call(combinedRgn)
-			procDeleteObject_.Call(rgn)
-			combinedRgn = tmpRgn
-		}
-	}
-
-	if first {
-		win.ShowWindow(s.guideHwnd, win.SW_HIDE)
+	// 创建 32-bit BGRA DIB 位图，全透明背景
+	hdcScreen := win.GetDC(0)
+	if hdcScreen == 0 {
 		return
 	}
+	defer win.ReleaseDC(0, hdcScreen)
 
-	procSetWindowRgn_.Call(uintptr(s.guideHwnd), combinedRgn, uintptr(1))
-
-	hdcWnd := win.GetDC(s.guideHwnd)
-	if hdcWnd != 0 {
-	pen, _, _ := procCreatePen.Call(uintptr(win.PS_SOLID), uintptr(guideLineWidth),
-		uintptr(win.RGB(s.guideColorR, s.guideColorG, s.guideColorB)))
-		if pen != 0 {
-			oldPen, _, _ := procSelectObj.Call(uintptr(hdcWnd), pen)
-			for _, lineY := range hLines {
-				ly := lineY - minY
-				procMoveToEx.Call(uintptr(hdcWnd), uintptr(0), uintptr(ly), 0)
-				procLineTo.Call(uintptr(hdcWnd), uintptr(w), uintptr(ly))
-			}
-			for _, lineX := range vLines {
-				lx := lineX - minX
-				procMoveToEx.Call(uintptr(hdcWnd), uintptr(lx), uintptr(0), 0)
-				procLineTo.Call(uintptr(hdcWnd), uintptr(lx), uintptr(h))
-			}
-			if oldPen != 0 {
-				procSelectObj.Call(uintptr(hdcWnd), oldPen)
-			}
-			procDeleteObject_.Call(pen)
-		}
-		win.ReleaseDC(s.guideHwnd, hdcWnd)
+	hdcMem, _, _ := guideCreateCompatibleDC.Call(uintptr(hdcScreen))
+	if hdcMem == 0 {
+		return
 	}
+	defer guideDeleteDC.Call(hdcMem)
+
+	var bi win.BITMAPINFO
+	bi.BmiHeader.BiSize = uint32(unsafe.Sizeof(bi.BmiHeader))
+	bi.BmiHeader.BiWidth = int32(w)
+	bi.BmiHeader.BiHeight = -int32(h)
+	bi.BmiHeader.BiPlanes = 1
+	bi.BmiHeader.BiBitCount = 32
+	bi.BmiHeader.BiCompression = win.BI_RGB
+
+	var bits unsafe.Pointer
+	hBmp, _, _ := guideCreateDIBSection.Call(hdcMem, uintptr(unsafe.Pointer(&bi.BmiHeader)),
+		uintptr(win.DIB_RGB_COLORS), uintptr(unsafe.Pointer(&bits)), 0, 0)
+	if hBmp == 0 {
+		return
+	}
+	defer guideDeleteObject.Call(hBmp)
+
+	hOld, _, _ := guideSelectObj.Call(hdcMem, hBmp)
+	if hOld == 0 {
+		return
+	}
+	defer guideSelectObj.Call(hdcMem, hOld)
+
+	// 初始化为全透明（BGRA，alpha=0）
+	pixels := (*[1 << 24]byte)(bits)
+	for i := 0; i < w*h*4; i += 4 {
+		pixels[i+3] = 0
+	}
+
+	// 手动绘制参考线像素（BGRA 格式，alpha=255 不透明）
+	// 注意：DIB 是 BGRA 自顶向下，像素排列为 [b,g,r,a]
+	halfW := guideLineWidth / 2
+	for _, lineY := range hLines {
+		for y := lineY - halfW; y <= lineY+halfW; y++ {
+			if y < 0 || y >= h {
+				continue
+			}
+			for x := 0; x < w; x++ {
+				idx := (y*w + x) * 4
+				pixels[idx+0] = s.guideColorB
+				pixels[idx+1] = s.guideColorG
+				pixels[idx+2] = s.guideColorR
+				pixels[idx+3] = 255
+			}
+		}
+	}
+	for _, lineX := range vLines {
+		for x := lineX - halfW; x <= lineX+halfW; x++ {
+			if x < 0 || x >= w {
+				continue
+			}
+			for y := 0; y < h; y++ {
+				idx := (y*w + x) * 4
+				pixels[idx+0] = s.guideColorB
+				pixels[idx+1] = s.guideColorG
+				pixels[idx+2] = s.guideColorR
+				pixels[idx+3] = 255
+			}
+		}
+	}
+
+	// UpdateLayeredWindow 显示
+	var pt win.POINT
+	var size win.SIZE
+	size.CX = int32(w)
+	size.CY = int32(h)
+	var blend win.BLENDFUNCTION
+	blend.BlendOp = 0
+	blend.BlendFlags = 0
+	blend.SourceConstantAlpha = 255
+	blend.AlphaFormat = win.AC_SRC_ALPHA
+
+	guideUpdateLayered.Call(
+		uintptr(s.guideHwnd),
+		uintptr(hdcScreen),
+		0,
+		uintptr(unsafe.Pointer(&size)),
+		uintptr(hdcMem),
+		uintptr(unsafe.Pointer(&pt)),
+		0,
+		uintptr(unsafe.Pointer(&blend)),
+		uintptr(2)) // ULW_ALPHA
+
+	win.SetWindowPos(s.guideHwnd, win.HWND_TOPMOST,
+		int32(s.workX), int32(s.workY),
+		int32(w), int32(h),
+		win.SWP_NOACTIVATE|win.SWP_SHOWWINDOW)
 
 	win.ShowWindow(s.guideHwnd, win.SW_SHOWNA)
 }
 
-func calcGuideBounds(hLines, vLines []int) (minX, minY, maxX, maxY int) {
-	minX = 99999
-	minY = 99999
-	maxX = -1
-	maxY = -1
-
-	for _, y := range hLines {
-		y1 := y - guideLineWidth
-		y2 := y + guideLineWidth
-		if y1 < minY {
-			minY = y1
-		}
-		if y2 > maxY {
-			maxY = y2
-		}
-	}
-
-	for _, x := range vLines {
-		x1 := x - guideLineWidth
-		x2 := x + guideLineWidth
-		if x1 < minX {
-			minX = x1
-		}
-		if x2 > maxX {
-			maxX = x2
-		}
-	}
-
-	if len(hLines) == 0 {
-		minY = 0
-		maxY = 2000
-	}
-	if len(vLines) == 0 {
-		minX = 0
-		maxX = 4000
-	}
-
-	if minX > 4 {
-		minX -= 4
-	} else {
-		minX = 0
-	}
-	if minY > 4 {
-		minY -= 4
-	} else {
-		minY = 0
-	}
-	maxX += 4
-	maxY += 4
-	return
-}
-
 func (s *CardDragOutline) destroyGuideWindow() {
 	if s.guideHwnd != 0 {
-		procDestroyWindow_.Call(uintptr(s.guideHwnd))
+		guideDestroyWindow.Call(uintptr(s.guideHwnd))
 		s.guideHwnd = 0
 	}
 }
