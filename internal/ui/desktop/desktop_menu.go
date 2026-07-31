@@ -360,6 +360,7 @@ func (dm *DesktopMode) changeGuideLineColor() {
 	dm.Manager.SetGuideLineColor(colorStr)
 	c := ui.ParseHexColor(colorStr)
 	dm.CardDragOutline.SetGuideColor(c.R, c.G, c.B)
+	dm.ResizeOutlineState.SetGuideColor(c.R, c.G, c.B)
 	logger.Info("参考线颜色已改为 %s", colorStr)
 }
 

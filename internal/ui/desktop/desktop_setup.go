@@ -38,12 +38,14 @@ func (dm *DesktopMode) Setup() error {
 	// === 注入子结构体能力 ===
 	dm.CardDragOutline.Inject(dm.WorkX, dm.WorkY)
 	dm.CardDragOutline.SetWorkArea(dm.WorkW, dm.WorkH)
+	dm.ResizeOutlineState.Inject(dm.WorkX, dm.WorkY)
+	dm.ResizeOutlineState.SetWorkArea(dm.WorkX, dm.WorkY, dm.WorkW, dm.WorkH)
 	// 应用参考线颜色（从配置，默认红色）
 	if gc := dm.Manager.GetConfig(); gc != nil && gc.GuideLineColor != "" {
 		c := ui.ParseHexColor(gc.GuideLineColor)
 		dm.CardDragOutline.SetGuideColor(c.R, c.G, c.B)
+		dm.ResizeOutlineState.SetGuideColor(c.R, c.G, c.B)
 	}
-	dm.ResizeOutlineState.Inject(dm.WorkX, dm.WorkY)
 
 	// 设置主窗口尺寸为工作区
 	dm.MainWindow.SetBoundsPixels(walk.Rectangle{

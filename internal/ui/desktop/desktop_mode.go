@@ -85,34 +85,28 @@ type CardDragOutline struct {
 	workW           int
 	workH           int
 
-	guideHwnd      win.HWND
+	guide          guideLineWindow // 拖动参考线（左上角对齐）
 	guideLastCheck int64
 	guideLastX     int
 	guideLastY     int
-	guideColorR    byte
-	guideColorG    byte
-	guideColorB    byte
 }
 
 func (s *CardDragOutline) Inject(workX, workY int) {
 	s.workX = workX
 	s.workY = workY
-	s.guideColorR = 0xFF
-	s.guideColorG = 0x00
-	s.guideColorB = 0x00 // 默认红色
+	s.guide.setColor(0xFF, 0x00, 0x00) // 默认红色
 }
 
 // SetWorkArea 设置工作区尺寸（参考线窗口覆盖整个工作区）
 func (s *CardDragOutline) SetWorkArea(w, h int) {
 	s.workW = w
 	s.workH = h
+	s.guide.setArea(s.workX, s.workY, w, h)
 }
 
 // SetGuideColor 设置参考线颜色（r,g,b 各 0-255）
 func (s *CardDragOutline) SetGuideColor(r, g, b byte) {
-	s.guideColorR = r
-	s.guideColorG = g
-	s.guideColorB = b
+	s.guide.setColor(r, g, b)
 }
 
 type ResizeOutlineState struct {
@@ -128,6 +122,9 @@ type ResizeOutlineState struct {
 
 	resizeOutline popupFrameOverlay
 
+	guide          guideLineWindow // 缩放参考线（右下角对齐）
+	guideLastCheck int64
+
 	resizeWorkX func() int
 	resizeWorkY func() int
 }
@@ -135,6 +132,16 @@ type ResizeOutlineState struct {
 func (s *ResizeOutlineState) Inject(workX, workY int) {
 	s.resizeWorkX = func() int { return workX }
 	s.resizeWorkY = func() int { return workY }
+}
+
+// SetWorkArea 设置缩放参考线工作区尺寸
+func (s *ResizeOutlineState) SetWorkArea(x, y, w, h int) {
+	s.guide.setArea(x, y, w, h)
+}
+
+// SetGuideColor 设置缩放参考线颜色
+func (s *ResizeOutlineState) SetGuideColor(r, g, b byte) {
+	s.guide.setColor(r, g, b)
 }
 
 type ContextMenuState struct {

@@ -152,7 +152,9 @@ func (dm *DesktopMode) setupCardActions(card *ui.GroupCard, grp config.Group) {
 			dm.Refresh()
 		}
 	})
-	card.SetOnResizeOutline(dm.ResizeOutlineState.OnCardResizeOutline)
+	card.SetOnResizeOutline(func(c *ui.GroupCard, newX, newY, newW, newH int) {
+		dm.ResizeOutlineState.OnCardResizeOutlineEx(c, newX, newY, newW, newH, dm.Cards)
+	})
 	card.SetOnResizeOutlineEnd(func(card *ui.GroupCard) {
 		dm.ResizeOutlineState.OnCardResizeOutlineEnd(card)
 		cx, cy, cw, ch := card.PixelX(), card.PixelY(), card.PixelW(), card.PixelH()

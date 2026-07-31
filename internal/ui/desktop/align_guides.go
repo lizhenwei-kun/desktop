@@ -14,7 +14,7 @@ const (
 )
 
 // 参考线窗口用 WS_EX_LAYERED + UpdateLayeredWindow 绘制，
-// 这样 GDI 内容能可靠显示（与卡片拖拽幽灵窗口同款技术）。
+// 支持拖动（左上角对齐）和缩放（右下角对齐）两种场景复用。
 var (
 	guideDLLUser32 = syscall.NewLazyDLL("user32.dll")
 	guideDLLGdi32  = syscall.NewLazyDLL("gdi32.dll")
@@ -27,18 +27,42 @@ var (
 	guideCreateDIBSection = guideDLLGdi32.NewProc("CreateDIBSection")
 	guideSelectObj        = guideDLLGdi32.NewProc("SelectObject")
 	guideDeleteObject     = guideDLLGdi32.NewProc("DeleteObject")
-	guideBitBlt           = guideDLLGdi32.NewProc("BitBlt")
-	guideCreatePen        = guideDLLGdi32.NewProc("CreatePen")
-	guideMoveToEx         = guideDLLGdi32.NewProc("MoveToEx")
-	guideLineTo           = guideDLLGdi32.NewProc("LineTo")
 )
 
 func guideWndProc(hwnd win.HWND, msg uint32, wParam, lParam uintptr) uintptr {
 	return win.DefWindowProc(hwnd, msg, wParam, lParam)
 }
 
-func (s *CardDragOutline) ensureGuideWindow() {
-	if s.guideHwnd != 0 {
+// guideLineWindow 参考线顶层窗口，覆盖整个工作区，
+// 在指定位置绘制横贯工作区的参考线（其余全透明，点击穿透）。
+type guideLineWindow struct {
+	hwnd   win.HWND
+	workX  int
+	workY  int
+	workW  int
+	workH  int
+	colorR byte
+	colorG byte
+	colorB byte
+}
+
+// setArea 设置工作区位置与尺寸
+func (g *guideLineWindow) setArea(x, y, w, h int) {
+	g.workX = x
+	g.workY = y
+	g.workW = w
+	g.workH = h
+}
+
+// setColor 设置参考线颜色
+func (g *guideLineWindow) setColor(red, green, blue byte) {
+	g.colorR = red
+	g.colorG = green
+	g.colorB = blue
+}
+
+func (g *guideLineWindow) ensureCreated() {
+	if g.hwnd != 0 {
 		return
 	}
 	hInst := win.GetModuleHandle(nil)
@@ -52,8 +76,6 @@ func (s *CardDragOutline) ensureGuideWindow() {
 	wc.LpszClassName = className
 	win.RegisterClassEx(&wc)
 
-	// WS_EX_LAYERED: 用 UpdateLayeredWindow 可靠绘制
-	// WS_EX_TRANSPARENT: 点击穿透
 	exStyle := uint32(win.WS_EX_LAYERED | win.WS_EX_TRANSPARENT | win.WS_EX_TOPMOST | win.WS_EX_TOOLWINDOW)
 	style := uint32(win.WS_POPUP)
 	hwnd, _, _ := guideCreateWindowEx.Call(
@@ -66,26 +88,27 @@ func (s *CardDragOutline) ensureGuideWindow() {
 	if hwnd == 0 {
 		return
 	}
-	s.guideHwnd = win.HWND(hwnd)
+	g.hwnd = win.HWND(hwnd)
 }
 
-func (s *CardDragOutline) updateGuideWindow(hLines, vLines []int) {
-	if s.guideHwnd == 0 {
-		s.ensureGuideWindow()
+// show 绘制并显示参考线。hLines 为水平线 Y 坐标，vLines 为垂直线 X 坐标（工作区坐标）。
+func (g *guideLineWindow) show(hLines, vLines []int) {
+	if g.hwnd == 0 {
+		g.ensureCreated()
 	}
-	if s.guideHwnd == 0 {
+	if g.hwnd == 0 {
 		return
 	}
 	if len(hLines) == 0 && len(vLines) == 0 {
-		win.ShowWindow(s.guideHwnd, win.SW_HIDE)
+		win.ShowWindow(g.hwnd, win.SW_HIDE)
 		return
 	}
 
-	logger.Debug("updateGuideWindow: hLines=%v vLines=%v workArea=%dx%d color=RGB(%d,%d,%d)",
-		hLines, vLines, s.workW, s.workH, s.guideColorR, s.guideColorG, s.guideColorB)
+	logger.Debug("guideLineWindow.show: hLines=%v vLines=%v workArea=%dx%d color=RGB(%d,%d,%d)",
+		hLines, vLines, g.workW, g.workH, g.colorR, g.colorG, g.colorB)
 
-	w := s.workW
-	h := s.workH
+	w := g.workW
+	h := g.workH
 	if w < 1 {
 		w = 4000
 	}
@@ -93,7 +116,6 @@ func (s *CardDragOutline) updateGuideWindow(hLines, vLines []int) {
 		h = 2000
 	}
 
-	// 创建 32-bit BGRA DIB 位图，全透明背景
 	hdcScreen := win.GetDC(0)
 	if hdcScreen == 0 {
 		return
@@ -134,8 +156,7 @@ func (s *CardDragOutline) updateGuideWindow(hLines, vLines []int) {
 		pixels[i+3] = 0
 	}
 
-	// 手动绘制参考线像素（BGRA 格式，alpha=255 不透明）
-	// 注意：DIB 是 BGRA 自顶向下，像素排列为 [b,g,r,a]
+	// 手动绘制参考线像素（BGRA 自顶向下 [b,g,r,a]）
 	halfW := guideLineWidth / 2
 	for _, lineY := range hLines {
 		for y := lineY - halfW; y <= lineY+halfW; y++ {
@@ -144,9 +165,9 @@ func (s *CardDragOutline) updateGuideWindow(hLines, vLines []int) {
 			}
 			for x := 0; x < w; x++ {
 				idx := (y*w + x) * 4
-				pixels[idx+0] = s.guideColorB
-				pixels[idx+1] = s.guideColorG
-				pixels[idx+2] = s.guideColorR
+				pixels[idx+0] = g.colorB
+				pixels[idx+1] = g.colorG
+				pixels[idx+2] = g.colorR
 				pixels[idx+3] = 255
 			}
 		}
@@ -158,15 +179,14 @@ func (s *CardDragOutline) updateGuideWindow(hLines, vLines []int) {
 			}
 			for y := 0; y < h; y++ {
 				idx := (y*w + x) * 4
-				pixels[idx+0] = s.guideColorB
-				pixels[idx+1] = s.guideColorG
-				pixels[idx+2] = s.guideColorR
+				pixels[idx+0] = g.colorB
+				pixels[idx+1] = g.colorG
+				pixels[idx+2] = g.colorR
 				pixels[idx+3] = 255
 			}
 		}
 	}
 
-	// UpdateLayeredWindow 显示
 	var pt win.POINT
 	var size win.SIZE
 	size.CX = int32(w)
@@ -178,7 +198,7 @@ func (s *CardDragOutline) updateGuideWindow(hLines, vLines []int) {
 	blend.AlphaFormat = win.AC_SRC_ALPHA
 
 	guideUpdateLayered.Call(
-		uintptr(s.guideHwnd),
+		uintptr(g.hwnd),
 		uintptr(hdcScreen),
 		0,
 		uintptr(unsafe.Pointer(&size)),
@@ -188,17 +208,25 @@ func (s *CardDragOutline) updateGuideWindow(hLines, vLines []int) {
 		uintptr(unsafe.Pointer(&blend)),
 		uintptr(2)) // ULW_ALPHA
 
-	win.SetWindowPos(s.guideHwnd, win.HWND_TOPMOST,
-		int32(s.workX), int32(s.workY),
+	win.SetWindowPos(g.hwnd, win.HWND_TOPMOST,
+		int32(g.workX), int32(g.workY),
 		int32(w), int32(h),
 		win.SWP_NOACTIVATE|win.SWP_SHOWWINDOW)
 
-	win.ShowWindow(s.guideHwnd, win.SW_SHOWNA)
+	win.ShowWindow(g.hwnd, win.SW_SHOWNA)
 }
 
-func (s *CardDragOutline) destroyGuideWindow() {
-	if s.guideHwnd != 0 {
-		guideDestroyWindow.Call(uintptr(s.guideHwnd))
-		s.guideHwnd = 0
+// hide 隐藏参考线
+func (g *guideLineWindow) hide() {
+	if g.hwnd != 0 {
+		win.ShowWindow(g.hwnd, win.SW_HIDE)
+	}
+}
+
+// destroy 销毁参考线窗口
+func (g *guideLineWindow) destroy() {
+	if g.hwnd != 0 {
+		guideDestroyWindow.Call(uintptr(g.hwnd))
+		g.hwnd = 0
 	}
 }

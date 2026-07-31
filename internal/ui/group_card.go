@@ -1355,6 +1355,12 @@ func (gc *GroupCard) PixelH() int { return gc.pixelH() }
 func (gc *GroupCard) PixelX() int { return gc.pixelX() }
 func (gc *GroupCard) PixelY() int { return gc.pixelY() }
 
+// PixelRight 返回像素右下角 X 坐标（left + width）
+func (gc *GroupCard) PixelRight() int { return gc.pixelX() + gc.pixelW() }
+
+// PixelBottom 返回像素右下角 Y 坐标（top + height）
+func (gc *GroupCard) PixelBottom() int { return gc.pixelY() + gc.pixelH() }
+
 func (gc *GroupCard) SetDragNewPos(x, y int) {
 	gc.dragNewX = x
 	gc.dragNewY = y

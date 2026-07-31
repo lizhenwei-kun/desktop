@@ -199,7 +199,7 @@ func (s *CardDragOutline) OnCardDragOutlineEx(card *ui.GroupCard, newX, newY int
 
 	hLines, vLines := s.detectAlignment(card, newX, newY, cards)
 	logger.Debug("OnCardDragOutlineEx: newX=%d newY=%d hLines=%v vLines=%v", newX, newY, hLines, vLines)
-	s.updateGuideWindow(hLines, vLines)
+	s.guide.show(hLines, vLines)
 	s.guideLastCheck = now
 	s.guideLastX = newX
 	s.guideLastY = newY
@@ -266,7 +266,7 @@ func (s *CardDragOutline) SnapPosition(card *ui.GroupCard, cards []*ui.GroupCard
 
 func (s *CardDragOutline) OnCardDragOutlineEnd(card *ui.GroupCard) {
 	s.destroyDragGhost()
-	s.destroyGuideWindow()
+	s.guide.destroy()
 	s.DragOutlineCard = nil
 }
 
