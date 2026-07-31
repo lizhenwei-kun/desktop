@@ -24,6 +24,9 @@ var (
 
 const ERROR_ALREADY_EXISTS = 183
 
+// AppVersion 当前应用版本号
+const AppVersion = "1.0.0"
+
 func init() {
 	// 初始化 Walk 应用
 	walk.App().SetOrganizationName("DesktopGo")
@@ -66,7 +69,7 @@ func main() {
 	flag.Parse()
 
 	if *showHelp {
-		fmt.Println("DesktopGo 桌面管理工具")
+		fmt.Println("DesktopGo 桌面管理工具 v" + AppVersion)
 		fmt.Println()
 		fmt.Println("用法: desktop_go.exe [参数]")
 		fmt.Println()
