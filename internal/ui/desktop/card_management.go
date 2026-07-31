@@ -124,7 +124,9 @@ func (dm *DesktopMode) setupCardActions(card *ui.GroupCard, grp config.Group) {
 		}
 	})
 	card.SetOnColor(func(name string) {
-		colorStr, ok := ui.ShowColorDialog(dm.MainWindow, "修改颜色", ui.PresetColors)
+		// 以卡片当前颜色作为初始选中色，其余为预设色
+		preset := append([]string{ui.ColorToHex(card.GroupColor())}, ui.PresetColors...)
+		colorStr, ok := ui.ShowColorDialog(dm.MainWindow, "修改颜色", preset)
 		if ok && colorStr != "" {
 			dm.Manager.UpdateGroupColor(name, colorStr)
 			card.SetGroupColor(colorStr)
