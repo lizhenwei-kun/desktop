@@ -16,6 +16,7 @@
 
 ```cmd
 # 桌面模式（替代系统桌面）
+desktop_go.exe
 desktop_go.exe -d
 
 # 窗口模式（独立窗口）
