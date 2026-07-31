@@ -98,29 +98,22 @@ func (dm *DesktopMode) setupCardActions(card *ui.GroupCard, grp config.Group) {
 		card.ClearSelection()
 		dm.clearSelectedItem()
 	})
+	card.SetOnCardClicked(func(c *ui.GroupCard) {
+		dm.bringCardToFrontIfOverlap(c)
+	})
 
 	card.SetOnCardDragOutline(func(c *ui.GroupCard, newX, newY int) {
 		dm.CardDragOutline.OnCardDragOutlineEx(c, newX, newY, dm.Cards)
 	})
 	card.SetOnCardDragOutlineEnd(func(card *ui.GroupCard) {
-		// 用拖拽中的实际位置作为吸附基准（不是原位置）
-		dragX := dm.CardDragOutline.DragOutlineX
-		dragY := dm.CardDragOutline.DragOutlineY
-		snapX, snapY := dm.CardDragOutline.SnapPosition(card, dm.Cards, dragX, dragY)
+		// 用卡片最新的拖拽位置作为吸附基准（DragOutlineX/Y 因 500ms 检测间隔可能滞后）
+		snapX, snapY := dm.CardDragOutline.SnapPosition(card, dm.Cards, card.DragPosX(), card.DragPosY())
 		card.SetDragNewPos(snapX, snapY)
 		dm.CardDragOutline.OnCardDragOutlineEnd(card)
 		cx, cy, cw, ch := card.PixelX(), card.PixelY(), card.PixelW(), card.PixelH()
 		logger.Debug("dragEnd: card=%q snap=(%d,%d) pos=(%d,%d,%dx%d) totalCards=%d",
 			card.GroupName(), snapX, snapY, cx, cy, cw, ch, len(dm.Cards))
-		for _, c := range dm.Cards {
-			if c == card {
-				continue
-			}
-			ox, oy, ow, oh := c.PixelX(), c.PixelY(), c.PixelW(), c.PixelH()
-			if cx < ox+ow && cx+cw > ox && cy < oy+oh && cy+ch > oy {
-				win.InvalidateRect(c.BodyWidgetHandle(), nil, false)
-			}
-		}
+		dm.redrawCardsOverlappingWith(card)
 		dm.InvalidateBody()
 	})
 	card.SetOnRename(func(name string) {
@@ -156,18 +149,15 @@ func (dm *DesktopMode) setupCardActions(card *ui.GroupCard, grp config.Group) {
 		dm.ResizeOutlineState.OnCardResizeOutlineEx(c, newX, newY, newW, newH, dm.Cards)
 	})
 	card.SetOnResizeOutlineEnd(func(card *ui.GroupCard) {
+		// 缩放释放时右下角吸附（endResize 回调后应用 resizeNewX/Y/W/H）
+		sx, sy, sw, sh := dm.ResizeOutlineState.SnapResizePosition(card, dm.Cards,
+			card.ResizeNewX(), card.ResizeNewY(), card.ResizeNewW(), card.ResizeNewH())
+		card.SetResizeNewPos(sx, sy, sw, sh)
 		dm.ResizeOutlineState.OnCardResizeOutlineEnd(card)
 		cx, cy, cw, ch := card.PixelX(), card.PixelY(), card.PixelW(), card.PixelH()
-		logger.Debug("resizeEnd: card=%q pos=(%d,%d,%dx%d) totalCards=%d", card.GroupName(), cx, cy, cw, ch, len(dm.Cards))
-		for _, c := range dm.Cards {
-			if c == card {
-				continue
-			}
-			ox, oy, ow, oh := c.PixelX(), c.PixelY(), c.PixelW(), c.PixelH()
-			if cx < ox+ow && cx+cw > ox && cy < oy+oh && cy+ch > oy {
-				win.InvalidateRect(c.BodyWidgetHandle(), nil, false)
-			}
-		}
+		logger.Debug("resizeEnd: card=%q snap=(%d,%d,%dx%d) pos=(%d,%d,%dx%d) totalCards=%d",
+			card.GroupName(), sx, sy, sw, sh, cx, cy, cw, ch, len(dm.Cards))
+		dm.redrawCardsOverlappingWith(card)
 		dm.InvalidateBody()
 	})
 
@@ -181,8 +171,17 @@ func (dm *DesktopMode) setupCardActions(card *ui.GroupCard, grp config.Group) {
 	card.SetOnItemRename(func(oldPath, newName string) {
 		dm.commitItemRename(newName, oldPath)
 	})
+	// 收缩前收集与当前卡片有交集的其它卡片到重绘队列
+	card.SetOnCollapseStart(func(c *ui.GroupCard) {
+		dm.collectOverlappingCards(c)
+	})
 	card.SetOnCollapseToggle(func(name string, collapsed bool) {
+		logger.Debug("collapseToggle: name=%q collapsed=%v", name, collapsed)
 		dm.Manager.UpdateGroupCollapsed(name, collapsed)
+		if collapsed {
+			// 收缩结束后统一重绘之前收集的、原本被覆盖的卡片
+			dm.flushRedrawQueue()
+		}
 		dm.InvalidateBody()
 	})
 }
@@ -240,6 +239,78 @@ func (dm *DesktopMode) refreshCards() {
 	}
 	win.SendMessage(dm.BodyWidget.Handle(), win.WM_SETREDRAW, 1, 0)
 	dm.InvalidateBody()
+}
+
+// bringCardToFrontIfOverlap 当点击的卡片与其它卡片存在交集时，将当前卡片置顶（z 序最上）
+func (dm *DesktopMode) bringCardToFrontIfOverlap(card *ui.GroupCard) {
+	for _, c := range dm.Cards {
+		if c == card {
+			continue
+		}
+		if card.Overlaps(c) {
+			win.SetWindowPos(card.Container().Handle(), win.HWND_TOP, 0, 0, 0, 0,
+				win.SWP_NOMOVE|win.SWP_NOSIZE|win.SWP_NOACTIVATE)
+			return
+		}
+	}
+}
+
+// redrawCardsOverlappingWith 重绘与指定卡片有交集的其它卡片
+func (dm *DesktopMode) redrawCardsOverlappingWith(card *ui.GroupCard) {
+	cx, cy, cw, ch := card.PixelX(), card.PixelY(), card.PixelW(), card.PixelH()
+	if card.IsCollapsed() {
+		ch = ui.CardHeaderHeight + 4
+	}
+	logger.Debug("redrawCardsOverlappingWith: card=%q bounds=(%d,%d,%dx%d), checking %d other cards",
+		card.GroupName(), cx, cy, cw, ch, len(dm.Cards)-1)
+	for _, c := range dm.Cards {
+		if c == card {
+			continue
+		}
+		ox, oy, ow, oh := c.PixelX(), c.PixelY(), c.PixelW(), c.PixelH()
+		if c.IsCollapsed() {
+			oh = ui.CardHeaderHeight + 4
+		}
+		overlap := card.Overlaps(c)
+		logger.Debug("redrawCardsOverlappingWith: %q(%d,%d,%dx%d) vs %q(%d,%d,%dx%d) overlap=%v",
+			card.GroupName(), cx, cy, cw, ch, c.GroupName(), ox, oy, ow, oh, overlap)
+		if overlap {
+			win.InvalidateRect(c.BodyWidgetHandle(), nil, false)
+		}
+	}
+}
+
+// collectOverlappingCards 收缩前调用：按当前卡片的完整尺寸判断，
+// 把与它有交集的其它卡片收集到重绘队列，待收缩结束后统一重绘。
+func (dm *DesktopMode) collectOverlappingCards(card *ui.GroupCard) {
+	// 每次收集前先清空队列，避免上一次流程异常退出时残留旧卡片被重复重绘
+	dm.redrawQueue = dm.redrawQueue[:0]
+	cx, cy, cw, ch := card.PixelX(), card.PixelY(), card.PixelW(), card.PixelH()
+	logger.Debug("collectOverlappingCards: card=%q fullBounds=(%d,%d,%dx%d), checking %d other cards",
+		card.GroupName(), cx, cy, cw, ch, len(dm.Cards)-1)
+	for _, c := range dm.Cards {
+		if c == card {
+			continue
+		}
+		ox, oy, ow, oh := c.PixelX(), c.PixelY(), c.PixelW(), c.PixelH()
+		if c.IsCollapsed() {
+			oh = ui.CardHeaderHeight + 4
+		}
+		overlap := cx < ox+ow && cx+cw > ox && cy < oy+oh && cy+ch > oy
+		logger.Debug("collectOverlappingCards: %q(%d,%d,%dx%d) vs %q(%d,%d,%dx%d) overlap=%v",
+			card.GroupName(), cx, cy, cw, ch, c.GroupName(), ox, oy, ow, oh, overlap)
+		if overlap {
+			dm.redrawQueue = append(dm.redrawQueue, c)
+		}
+	}
+}
+
+// flushRedrawQueue 统一重绘队列中收集的卡片，然后清空队列。
+func (dm *DesktopMode) flushRedrawQueue() {
+	for _, c := range dm.redrawQueue {
+		win.InvalidateRect(c.BodyWidgetHandle(), nil, false)
+	}
+	dm.redrawQueue = dm.redrawQueue[:0]
 }
 
 func (dm *DesktopMode) reapplyCardPositions() {

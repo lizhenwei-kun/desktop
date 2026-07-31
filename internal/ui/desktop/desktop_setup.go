@@ -40,12 +40,14 @@ func (dm *DesktopMode) Setup() error {
 	dm.CardDragOutline.SetWorkArea(dm.WorkW, dm.WorkH)
 	dm.ResizeOutlineState.Inject(dm.WorkX, dm.WorkY)
 	dm.ResizeOutlineState.SetWorkArea(dm.WorkX, dm.WorkY, dm.WorkW, dm.WorkH)
-	// 应用参考线颜色（从配置，默认红色）
+	// 应用参考线颜色（拖动和缩放共用同一颜色，从配置读取，默认红色）
+	r, g, b := byte(0xFF), byte(0x00), byte(0x00)
 	if gc := dm.Manager.GetConfig(); gc != nil && gc.GuideLineColor != "" {
 		c := ui.ParseHexColor(gc.GuideLineColor)
-		dm.CardDragOutline.SetGuideColor(c.R, c.G, c.B)
-		dm.ResizeOutlineState.SetGuideColor(c.R, c.G, c.B)
+		r, g, b = c.R, c.G, c.B
 	}
+	dm.CardDragOutline.SetGuideColor(r, g, b)
+	dm.ResizeOutlineState.SetGuideColor(r, g, b)
 
 	// 设置主窗口尺寸为工作区
 	dm.MainWindow.SetBoundsPixels(walk.Rectangle{

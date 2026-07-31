@@ -86,10 +86,13 @@ type GroupCard struct {
 	onColor           func(name string)
 	onDelete          func(name string)
 	onCollapseToggle  func(name string, collapsed bool)
+	onCollapseStart   func(card *GroupCard)
 
 	isDropTarget bool
 
 	onCardBodyClick func()
+
+	onCardClicked func(card *GroupCard)
 
 	onIconLeftClick func(card *GroupCard, idx int, item group.GroupItem)
 
@@ -224,6 +227,10 @@ func (gc *GroupCard) setupMouseEvents() {
 
 		gc.isPressed = true
 
+		if gc.onCardClicked != nil {
+			gc.onCardClicked(gc)
+		}
+
 		edge := gc.getResizeEdge(x, y)
 		if edge != ResizeNone {
 			gc.startResize(x, y, edge)
@@ -341,9 +348,6 @@ func (gc *GroupCard) setupMouseEvents() {
 			gc.position.Y = float64(finalY) / float64(gc.workH)
 			gc.applyBounds(finalX, finalY, pixW, pixH)
 			gc.manager.UpdateGroupPosition(gc.groupName, gc.position.X, gc.position.Y)
-		}
-		if gc.onCardDragOutlineEnd != nil {
-			gc.onCardDragOutlineEnd(gc)
 		}
 	})
 
@@ -1186,8 +1190,18 @@ func (gc *GroupCard) SetOnCollapseToggle(fn func(name string, collapsed bool)) {
 	gc.onCollapseToggle = fn
 }
 
+func (gc *GroupCard) SetOnCollapseStart(fn func(card *GroupCard)) {
+	gc.onCollapseStart = fn
+}
+
 func (gc *GroupCard) toggleCollapse() {
 	gc.isCollapsed = !gc.isCollapsed
+	if gc.isCollapsed {
+		// 收缩前先收集有交集的卡片（此时仍是完整尺寸，用完整高度判断）
+		if gc.onCollapseStart != nil {
+			gc.onCollapseStart(gc)
+		}
+	}
 	if !gc.isCollapsed {
 		win.SetWindowPos(gc.container.Handle(), win.HWND_TOP, 0, 0, 0, 0,
 			win.SWP_NOMOVE|win.SWP_NOSIZE|win.SWP_NOACTIVATE)
@@ -1312,6 +1326,10 @@ func (gc *GroupCard) SetOnCardBodyClick(fn func()) {
 	gc.onCardBodyClick = fn
 }
 
+func (gc *GroupCard) SetOnCardClicked(fn func(card *GroupCard)) {
+	gc.onCardClicked = fn
+}
+
 func (gc *GroupCard) SetOnCardDragOutline(fn func(card *GroupCard, newX, newY int)) {
 	gc.onCardDragOutline = fn
 }
@@ -1342,6 +1360,23 @@ func (gc *GroupCard) SetOnGetWallpaper(fn func() *walk.Bitmap) {
 
 func (gc *GroupCard) GroupName() string { return gc.groupName }
 
+func (gc *GroupCard) IsCollapsed() bool { return gc.isCollapsed }
+
+// Overlaps 判断两张卡片（按各自当前实际显示尺寸）的矩形区域是否有交集
+func (gc *GroupCard) Overlaps(other *GroupCard) bool {
+	x, y, w := gc.pixelX(), gc.pixelY(), gc.pixelW()
+	h := gc.pixelH()
+	if gc.isCollapsed {
+		h = cardHeaderHeight + 4
+	}
+	ox, oy, ow := other.pixelX(), other.pixelY(), other.pixelW()
+	oh := other.pixelH()
+	if other.isCollapsed {
+		oh = cardHeaderHeight + 4
+	}
+	return x < ox+ow && x+w > ox && y < oy+oh && y+h > oy
+}
+
 func (gc *GroupCard) BodyWidgetHandle() win.HWND {
 	return gc.bodyWidget.Handle()
 }
@@ -1364,4 +1399,30 @@ func (gc *GroupCard) PixelBottom() int { return gc.pixelY() + gc.pixelH() }
 func (gc *GroupCard) SetDragNewPos(x, y int) {
 	gc.dragNewX = x
 	gc.dragNewY = y
+}
+
+// DragPosX 返回最新拖拽位置 X
+func (gc *GroupCard) DragPosX() int { return gc.dragNewX }
+
+// DragPosY 返回最新拖拽位置 Y
+func (gc *GroupCard) DragPosY() int { return gc.dragNewY }
+
+// ResizeNewX 返回最新缩放位置 X
+func (gc *GroupCard) ResizeNewX() int { return gc.resizeNewX }
+
+// ResizeNewY 返回最新缩放位置 Y
+func (gc *GroupCard) ResizeNewY() int { return gc.resizeNewY }
+
+// ResizeNewW 返回最新缩放宽度
+func (gc *GroupCard) ResizeNewW() int { return gc.resizeNewW }
+
+// ResizeNewH 返回最新缩放高度
+func (gc *GroupCard) ResizeNewH() int { return gc.resizeNewH }
+
+// SetResizeNewPos 设置缩放吸附后的位置和尺寸
+func (gc *GroupCard) SetResizeNewPos(x, y, w, h int) {
+	gc.resizeNewX = x
+	gc.resizeNewY = y
+	gc.resizeNewW = w
+	gc.resizeNewH = h
 }

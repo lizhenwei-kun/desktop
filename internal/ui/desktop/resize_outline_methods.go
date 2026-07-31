@@ -59,6 +59,44 @@ func (s *ResizeOutlineState) detectResizeAlignment(card *ui.GroupCard, newX, new
 	return
 }
 
+// SnapResizePosition 计算缩放释放时的右下角吸附位置。
+// 返回吸附后的 (newX, newY, newW, newH)。
+func (s *ResizeOutlineState) SnapResizePosition(card *ui.GroupCard, cards []*ui.GroupCard, newX, newY, newW, newH int) (sx, sy, sw, sh int) {
+	sx, sy, sw, sh = newX, newY, newW, newH
+
+	dRight := newX + newW
+	dBottom := newY + newH
+
+	// 找最近的右下角对齐
+	bestRight := guideSnapThresh + 1
+	bestBottom := guideSnapThresh + 1
+
+	for _, other := range cards {
+		if other == card {
+			continue
+		}
+		// right 对齐
+		dist := dRight - other.PixelRight()
+		if dist < 0 {
+			dist = -dist
+		}
+		if dist <= guideSnapThresh && dist < bestRight {
+			bestRight = dist
+			sx = other.PixelRight() - newW // 移动 left 使 right 对齐
+		}
+		// bottom 对齐
+		dist = dBottom - other.PixelBottom()
+		if dist < 0 {
+			dist = -dist
+		}
+		if dist <= guideSnapThresh && dist < bestBottom {
+			bestBottom = dist
+			sy = other.PixelBottom() - newH // 移动 top 使 bottom 对齐
+		}
+	}
+	return
+}
+
 // OnCardResizeOutlineEnd 卡片缩放虚框结束 — 隐藏边框窗口和参考线
 func (s *ResizeOutlineState) OnCardResizeOutlineEnd(card *ui.GroupCard) {
 	s.resizeOutline.hide()

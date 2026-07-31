@@ -193,6 +193,9 @@ type DesktopMode struct {
 	Cards      []*ui.GroupCard
 	BodyWidget *walk.CustomWidget
 
+	// redrawQueue 待重绘的卡片列表：收缩等动作先收集需要重绘的卡片，结束后统一重绘
+	redrawQueue []*ui.GroupCard
+
 	ScreenInfo
 	WallpaperState
 	UnifiedDragState

@@ -231,6 +231,7 @@ func (s *CardDragOutline) detectAlignment(card *ui.GroupCard, newX, newY int, ca
 func (s *CardDragOutline) SnapPosition(card *ui.GroupCard, cards []*ui.GroupCard, newX, newY int) (snappedX, snappedY int) {
 	// 默认保持实际拖到的位置
 	snappedX, snappedY = newX, newY
+	logger.Debug("SnapPosition: card=%q input=(%d,%d)", card.GroupName(), newX, newY)
 
 	// X 轴吸附：仅当被拖拽卡 left 接近某张卡 left 时吸附 X
 	// Y 轴吸附：仅当被拖拽卡 top 接近某张卡 top 时吸附 Y
