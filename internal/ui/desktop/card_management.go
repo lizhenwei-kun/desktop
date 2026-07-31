@@ -20,13 +20,11 @@ func (dm *DesktopMode) addNewCard() {
 	dm.refreshCards()
 }
 
-// findFreeGroupPosition 查找不与现有卡片重叠的可用位置（相对坐标）
-// 卡片默认大小约 0.156w x 0.288h，以网格方式排列避免重叠
 func (dm *DesktopMode) findFreeGroupPosition() config.Position {
 	groups := dm.Manager.GetGroups()
 	const (
-		cardW = 0.17 // 卡片宽度 + 间距
-		cardH = 0.31 // 卡片高度 + 间距
+		cardW = 0.17
+		cardH = 0.31
 		cols  = 5
 		baseX = 0.05
 		baseY = 0.05
@@ -78,16 +76,13 @@ func (dm *DesktopMode) createGroupCards() {
 func (dm *DesktopMode) setupCardActions(card *ui.GroupCard, grp config.Group) {
 	card.SetOnPositionChanged(func(name string, x, y float64) {
 		dm.Manager.UpdateGroupPosition(name, x, y)
-		// 位置变了，需要重绘桌面以刷新卡片下方的壁纸背景
 		dm.InvalidateBody()
 	})
 	card.SetOnSizeChanged(func(name string, w, h float64) {
 		dm.Manager.UpdateGroupSize(name, w, h)
-		// 尺寸变了，需要重绘桌面以刷新卡片下方的壁纸背景
 		dm.InvalidateBody()
 	})
 	card.SetOnIconLeftClick(func(c *ui.GroupCard, idx int, item group.GroupItem) {
-		// 清除其他所有卡片的选中
 		for _, c2 := range dm.Cards {
 			if c2 != c {
 				c2.ClearSelection()
@@ -97,19 +92,26 @@ func (dm *DesktopMode) setupCardActions(card *ui.GroupCard, grp config.Group) {
 		dm.selectItem(item.Path)
 	})
 	card.SetOnIconRightClick(func(_ *ui.GroupCard, _ int, item group.GroupItem, screenX, screenY int) {
-		// UI 主线程实时 COM 获取图标右键菜单
 		showIconContextMenuReal(dm.MainWindow.Handle(), dm.Executor, item, screenX, screenY)
 	})
 	card.SetOnCardBodyClick(func() {
 		card.ClearSelection()
 		dm.clearSelectedItem()
 	})
-	card.SetOnCardDragOutline(dm.CardDragOutline.OnCardDragOutline)
+
+	card.SetOnCardDragOutline(func(c *ui.GroupCard, newX, newY int) {
+		dm.CardDragOutline.OnCardDragOutlineEx(c, newX, newY, dm.Cards)
+	})
 	card.SetOnCardDragOutlineEnd(func(card *ui.GroupCard) {
+		// 用拖拽中的实际位置作为吸附基准（不是原位置）
+		dragX := dm.CardDragOutline.DragOutlineX
+		dragY := dm.CardDragOutline.DragOutlineY
+		snapX, snapY := dm.CardDragOutline.SnapPosition(card, dm.Cards, dragX, dragY)
+		card.SetDragNewPos(snapX, snapY)
 		dm.CardDragOutline.OnCardDragOutlineEnd(card)
-		// 仅使与被移动卡片新位置有交集的其他卡片重绘，避免全量刷新导致闪烁
 		cx, cy, cw, ch := card.PixelX(), card.PixelY(), card.PixelW(), card.PixelH()
-		logger.Debug("dragEnd: card=%q pos=(%d,%d,%dx%d) totalCards=%d", card.GroupName(), cx, cy, cw, ch, len(dm.Cards))
+		logger.Debug("dragEnd: card=%q snap=(%d,%d) pos=(%d,%d,%dx%d) totalCards=%d",
+			card.GroupName(), snapX, snapY, cx, cy, cw, ch, len(dm.Cards))
 		for _, c := range dm.Cards {
 			if c == card {
 				continue
@@ -119,7 +121,6 @@ func (dm *DesktopMode) setupCardActions(card *ui.GroupCard, grp config.Group) {
 				win.InvalidateRect(c.BodyWidgetHandle(), nil, false)
 			}
 		}
-		// 刷新桌面，清除卡片原位置残留
 		dm.InvalidateBody()
 	})
 	card.SetOnRename(func(name string) {
@@ -154,7 +155,6 @@ func (dm *DesktopMode) setupCardActions(card *ui.GroupCard, grp config.Group) {
 	card.SetOnResizeOutline(dm.ResizeOutlineState.OnCardResizeOutline)
 	card.SetOnResizeOutlineEnd(func(card *ui.GroupCard) {
 		dm.ResizeOutlineState.OnCardResizeOutlineEnd(card)
-		// 仅使与缩放后卡片新位置有交集的其他卡片重绘，避免全量刷新导致闪烁
 		cx, cy, cw, ch := card.PixelX(), card.PixelY(), card.PixelW(), card.PixelH()
 		logger.Debug("resizeEnd: card=%q pos=(%d,%d,%dx%d) totalCards=%d", card.GroupName(), cx, cy, cw, ch, len(dm.Cards))
 		for _, c := range dm.Cards {
@@ -166,78 +166,51 @@ func (dm *DesktopMode) setupCardActions(card *ui.GroupCard, grp config.Group) {
 				win.InvalidateRect(c.BodyWidgetHandle(), nil, false)
 			}
 		}
-		// 缩放后位置/尺寸变化，也刷新桌面背景
 		dm.InvalidateBody()
 	})
 
-	// 提供桌面壁纸位图，卡片背景从真实壁纸合成
 	card.SetOnGetWallpaper(dm.WallpaperState.getBitmap)
-
-	// 图标按下回调（通知 DesktopMode 通过 UnifiedDragState 统一管理拖拽）
 	card.SetOnIconPress(dm.handleCardIconPress)
-
-	// 图标释放回调（通知 DesktopMode 取消拖拽，防止点击变拖拽）
 	card.SetOnIconRelease(func() {
 		dm.DragPressed = false
 		dm.SourceCard = nil
 		dm.SourceItemIdx = -1
 	})
-
-	// 图标重命名回调（通知 DesktopMode 提交文件重命名）
 	card.SetOnItemRename(func(oldPath, newName string) {
 		dm.commitItemRename(newName, oldPath)
 	})
-
-	// 折叠/展开回调
 	card.SetOnCollapseToggle(func(name string, collapsed bool) {
 		dm.Manager.UpdateGroupCollapsed(name, collapsed)
-		// 收缩后卡片高度变了，刷新桌面背景
 		dm.InvalidateBody()
 	})
 }
 
 var refreshCardsCount int
 
-// refreshCards 刷新所有卡片。
-// 关键：尽量复用现有卡片控件（就地 Refresh + ReapplyBounds），
-// 不要在每次刷新时销毁重建——Dispose 会让卡片窗口瞬间消失、再重建导致可见闪烁。
-// 仅当分组集合（增删分组）发生变化时才销毁/新建对应卡片。
 func (dm *DesktopMode) refreshCards() {
 	refreshCardsCount++
 	logger.Debug("refreshCards #%d: groups=%d cards=%d", refreshCardsCount, len(dm.Manager.GetGroups()), len(dm.Cards))
-
 	groups := dm.Manager.GetGroups()
-
-	// 冻结所有卡片和桌面重绘，所有操作完成后再一次性刷新
 	for _, card := range dm.Cards {
 		win.SendMessage(card.Container().Handle(), win.WM_SETREDRAW, 0, 0)
 		win.SendMessage(card.BodyWidgetHandle(), win.WM_SETREDRAW, 0, 0)
 	}
 	win.SendMessage(dm.BodyWidget.Handle(), win.WM_SETREDRAW, 0, 0)
-
-	// 当前分组名集合
 	groupNames := make(map[string]bool, len(groups))
 	for _, g := range groups {
 		groupNames[g.Name] = true
 	}
-
-	// 1. 复用仍存在的卡片，移除已删除的卡片
 	kept := make([]*ui.GroupCard, 0, len(dm.Cards))
 	for _, card := range dm.Cards {
-		name := card.GroupName()
-		if groupNames[name] {
-			// 分组仍存在：就地刷新内容（不重设位置，reapplyCardPositions 统一处理）
+		if groupNames[card.GroupName()] {
 			card.Refresh()
 			kept = append(kept, card)
 		} else {
-			// 分组已被删除：销毁卡片
 			card.Cleanup()
 			card.Container().Dispose()
 		}
 	}
 	dm.Cards = kept
-
-	// 2. 为新增的分组创建卡片
 	for _, grp := range groups {
 		exists := false
 		for _, card := range dm.Cards {
@@ -257,30 +230,19 @@ func (dm *DesktopMode) refreshCards() {
 		dm.setupCardActions(card, grp)
 		dm.Cards = append(dm.Cards, card)
 	}
-
 	dm.reapplyCardPositions()
-
-	// 解冻所有窗口，让系统自然处理挂起的重绘请求。
-	// 不要在此处额外调用 InvalidateRect/UpdateWindow，因为：
-	// 1. ReapplyBounds 中的 SetBoundsPixels + Invalidate 已在冻结期间标记了脏区域
-	// 2. 额外的 UpdateWindow 强制同步重绘会阻塞 UI 线程，且多次强制重绘导致闪烁
-	// 3. WM_SETREDRAW 1 恢复后系统会自动处理所有挂起的无效区域
 	logger.Debug("refreshCards #%d: unfreeze (no force redraw)", refreshCardsCount)
 	for _, card := range dm.Cards {
 		win.SendMessage(card.Container().Handle(), win.WM_SETREDRAW, 1, 0)
 		win.SendMessage(card.BodyWidgetHandle(), win.WM_SETREDRAW, 1, 0)
 	}
 	win.SendMessage(dm.BodyWidget.Handle(), win.WM_SETREDRAW, 1, 0)
-
-	// 解冻后强制触发 BodyWidget 重绘，确保未分组图标（由 paintAllIcons 绘制）重新显示
 	dm.InvalidateBody()
 }
 
-// reapplyCardPositions 重新应用所有卡片的绝对定位，并确保卡片 Z-order 在 bodyWidget 上方
 func (dm *DesktopMode) reapplyCardPositions() {
 	for i, card := range dm.Cards {
 		card.ReapplyBounds()
-		// 确保卡片在 Z-order 顶部（在 bodyWidget 上方）
 		win.SetWindowPos(card.Container().Handle(), win.HWND_TOP, 0, 0, 0, 0,
 			win.SWP_NOMOVE|win.SWP_NOSIZE|win.SWP_NOACTIVATE)
 		if i == 0 {

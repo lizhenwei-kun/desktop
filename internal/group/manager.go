@@ -260,6 +260,24 @@ func (m *Manager) SetCardFontPreset(preset string) {
 	config.Save(m.cfg)
 }
 
+// GetGuideLineColor 获取参考线颜色（#RRGGBBAA），空时返回默认红色
+func (m *Manager) GetGuideLineColor() string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.cfg.GuideLineColor == "" {
+		return "#FF0000FF"
+	}
+	return m.cfg.GuideLineColor
+}
+
+// SetGuideLineColor 设置参考线颜色并保存
+func (m *Manager) SetGuideLineColor(color string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.cfg.GuideLineColor = color
+	config.Save(m.cfg)
+}
+
 // GetGroups 获取所有分组
 func (m *Manager) GetGroups() []config.Group {
 	m.mu.RLock()

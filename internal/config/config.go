@@ -58,6 +58,7 @@ type Config struct {
 	IconSizeLevel     int               `json:"icon_size_level"`  // 桌面图标大小档位: 0=大(48) 1=中(48) 2=小(32)
 	AutoArrange       bool              `json:"auto_arrange"`     // 是否自动排列图标
 	AlignToGrid       bool              `json:"align_to_grid"`    // 是否将图标与网格对齐
+	GuideLineColor    string            `json:"guide_line_color"` // 卡片拖拽参考线颜色（#RRGGBBAA），默认红色
 }
 
 // DefaultGroups 返回默认分组配置（相对坐标，基于1920x1040工作区计算的比例）
@@ -96,6 +97,7 @@ func Load() *Config {
 		IconSizeLevel:    1,  // 默认中档
 		AutoArrange:      false,
 		AlignToGrid:      false,
+		GuideLineColor:   "#FF0000FF", // 默认红色
 	}
 
 	data, err := os.ReadFile(configPath())

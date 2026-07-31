@@ -191,6 +191,7 @@ const (
 	idPersonalize          = 0x1052
 	idNewCard              = 0x6001
 	idPersonalizeBackground = 0x6002
+	idGuideLineColor       = 0x6003
 )
 
 // desktopCmdName 返回桌面菜单命令 ID 对应的可读名称（用于日志）
@@ -238,6 +239,8 @@ func desktopCmdName(cmd int) string {
 		return "个性化-背景"
 	case idNewCard:
 		return "新建卡片"
+	case idGuideLineColor:
+		return "参考线颜色"
 	}
 	return fmt.Sprintf("未知命令(0x%x)", cmd)
 }
@@ -340,9 +343,24 @@ func (dm *DesktopMode) handleContextMenuCommand(cmd int) {
 	case idPersonalizeBackground:
 		logger.Info("打开个性化-背景 (ms-settings:personalization-background)")
 		ui.OpenPersonalizeBackground()
+	case idGuideLineColor:
+		dm.changeGuideLineColor()
 	default:
 		logger.Warn("未处理的菜单命令: id=0x%x", cmd)
 	}
+}
+
+// changeGuideLineColor 修改参考线颜色（系统颜色对话框）
+func (dm *DesktopMode) changeGuideLineColor() {
+	logger.Info("修改参考线颜色")
+	colorStr, ok := ui.ShowColorDialog(dm.MainWindow, "参考线颜色", []string{dm.Manager.GetGuideLineColor()})
+	if !ok || colorStr == "" {
+		return
+	}
+	dm.Manager.SetGuideLineColor(colorStr)
+	c := ui.ParseHexColor(colorStr)
+	dm.CardDragOutline.SetGuideColor(c.R, c.G, c.B)
+	logger.Info("参考线颜色已改为 %s", colorStr)
 }
 
 // sortAndRefresh 排序刷新

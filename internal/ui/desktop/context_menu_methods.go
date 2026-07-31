@@ -312,6 +312,7 @@ func (s *ContextMenuState) showCachedDesktopContextMenu(hwnd win.HWND, x, y int)
 
 	appendMenuSeparator(hMenu)
 	appendMenu(hMenu, MF_STRING, idRefresh, syscall.StringToUTF16Ptr("刷新(&E)"))
+	appendMenu(hMenu, MF_STRING, idGuideLineColor, syscall.StringToUTF16Ptr("参考线颜色(&L)"))
 	appendMenuSeparator(hMenu)
 	appendMenu(hMenu, MF_STRING, idPaste, syscall.StringToUTF16Ptr("粘贴(&P)"))
 	appendMenu(hMenu, MF_STRING, idPasteShortcut, syscall.StringToUTF16Ptr("粘贴快捷方式(&S)"))
