@@ -507,17 +507,13 @@ func (dm *DesktopMode) commitItemRename(newName string, itemPath string) {
 		return
 	}
 
-	items := dm.Manager.GetUngroupedItems()
-	var currentName string
-	for _, item := range items {
-		if item.Path == itemPath {
-			currentName = item.Name
-			break
-		}
-	}
-	if currentName == "" {
+	// 从所有项目（分组内 + 未分组）中查找当前名称，
+	// 卡片内的图标属于分组项，必须用 GetAllItems 才能找到
+	item := dm.findItemByPath(itemPath)
+	if item == nil {
 		return
 	}
+	currentName := item.Name
 	if newName == currentName {
 		return
 	}
