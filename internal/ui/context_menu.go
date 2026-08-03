@@ -1291,18 +1291,20 @@ func QueryIconMenuItems() ([]RegistryShellItem, bool) {
 }
 
 // getVerbFromContextMenu 从 IContextMenu 获取指定命令的 verb 名称
+// 优先使用 Unicode（GCS_VERBW），失败再回退 ANSI（GCS_VERBA）。
+// 修复：原实现先把 ANSI 字节流误当 UTF-16 解析，且常调用两次 GetCommandString 造成额外开销。
 func getVerbFromContextMenu(cm *iContextMenu, cmdOffset uintptr) string {
+	verbW := make([]uint16, 256)
+	hrW, _, _ := syscall.SyscallN(cm.vtbl.GetCommandString, uintptr(unsafe.Pointer(cm)), cmdOffset, 0x0044, 0, uintptr(unsafe.Pointer(&verbW[0])), uintptr(len(verbW)))
+	if int32(hrW) >= 0 {
+		if s := syscall.UTF16ToString(verbW); s != "" {
+			return s
+		}
+	}
+
 	verbA := make([]byte, 512)
 	hrA, _, _ := syscall.SyscallN(cm.vtbl.GetCommandString, uintptr(unsafe.Pointer(cm)), cmdOffset, 0x0004, 0, uintptr(unsafe.Pointer(&verbA[0])), uintptr(len(verbA)))
 	if int32(hrA) >= 0 {
-		if len(verbA) >= 2 {
-			_ = verbA[1]
-		}
-		verbW := unsafe.Slice((*uint16)(unsafe.Pointer(&verbA[0])), len(verbA)/2)
-		verbName := syscall.UTF16ToString(verbW)
-		if verbName != "" {
-			return verbName
-		}
 		n := bytes.IndexByte(verbA, 0)
 		if n < 0 {
 			n = len(verbA)
@@ -1310,12 +1312,6 @@ func getVerbFromContextMenu(cm *iContextMenu, cmdOffset uintptr) string {
 		if n > 0 {
 			return string(verbA[:n])
 		}
-	}
-
-	verbW2 := make([]uint16, 256)
-	hrW, _, _ := syscall.SyscallN(cm.vtbl.GetCommandString, uintptr(unsafe.Pointer(cm)), cmdOffset, 0x0044, 0, uintptr(unsafe.Pointer(&verbW2[0])), uintptr(len(verbW2)))
-	if int32(hrW) >= 0 {
-		return syscall.UTF16ToString(verbW2)
 	}
 
 	return ""

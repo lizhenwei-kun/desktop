@@ -8,7 +8,9 @@ import (
 )
 
 // contextMenuCacheInterval 右键菜单缓存刷新间隔（秒）
-const contextMenuCacheInterval = 30
+// 右键菜单内容低频变化（主要在安装/卸载软件时），60 秒刷新即可，
+// 避免每 30 秒全量执行 COM 菜单枚举（CoInitialize + QueryContextMenu + GetCommandString）累积开销。
+const contextMenuCacheInterval = 60
 
 // initContextMenuCache 初始化右键菜单缓存定时更新
 // 每 30 秒从注册表读取桌面和文件图标的 Shell 菜单项，并通过 COM IContextMenu
