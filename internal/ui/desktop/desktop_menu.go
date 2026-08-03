@@ -467,6 +467,12 @@ func (dm *DesktopMode) refreshDesktop() {
 		logger.Debug("refreshDesktop: already pending, skipping")
 		return
 	}
+	// 屏幕处于关闭/息屏状态（系统睡眠或仅显示器息屏）：不重绘，避免反复解码壁纸/重载图标累积资源。
+	// 唤醒后（screenOff=false）会触发刷新回调，届时再正常刷新桌面。
+	if dm.WinAPI.IsScreenOff() {
+		logger.Debug("refreshDesktop: screen off, skip reload (will refresh after wake)")
+		return
+	}
 	refreshDesktopPending = true
 
 	// 在 UI 线程捕获当前工作区尺寸快照，避免后台 goroutine 执行时尺寸已被其他逻辑（DPI/分辨率变化）修改，

@@ -123,6 +123,16 @@ func (dm *DesktopMode) Setup() error {
 	// 注册外部文件拖放（从桌面/资源管理器拖文件到应用）
 	dm.RegisterExternalDropTarget()
 
+	// 安装主窗口系统消息监听（子类化 subclassProc）：拦截并处理 WM_POWERBROADCAST / WM_DISPLAYCHANGE。
+	// 这是息屏不重绘、唤醒后刷新、以及最小化拦截的基础——此前该子类化从未被安装导致系统消息丢失。
+	// 注意：主窗口被 SetAsDesktopChild 设为 WorkerW 子窗口后收不到顶层广播，
+	// 但 PowerSettingRegisterNotification 的 PBT_POWERSETTINGCHANGE 直接发往本窗口，仍能可靠收到。
+	mwHandle := dm.MainWindow.Handle()
+	dm.WinAPI.InstallMinimizeBlock(mwHandle)
+	dm.Lifecycle.RegisterCleanup(func() {
+		dm.WinAPI.RemoveMinimizeBlock(mwHandle)
+	})
+
 	dm.BodyWidget.MouseMove().Attach(func(x, y int, button walk.MouseButton) {
 		if dm.DragActive {
 			dm.DragMouseX = x
@@ -240,6 +250,14 @@ func (dm *DesktopMode) delayedSetup() {
 				logger.Debug("system event: refreshing desktop")
 				dm.refreshDesktop()
 			})
+		})
+
+		// 注册显示器电源通知：监听"仅显示器息屏"（系统仍在运行），
+		// 息屏时标记 screenOff 抑制重绘，唤醒后再刷新。系统睡眠/唤醒由 WM_POWERBROADCAST 挂起/恢复消息覆盖。
+		dm.WinAPI.RegisterMonitorPower(dm.MainWindow.Handle())
+		// 退出桌面模式时注销显示器电源通知（LIFO 清理）
+		dm.Lifecycle.RegisterCleanup(func() {
+			dm.WinAPI.UnregisterMonitorPower()
 		})
 
 		// 注册 DPI 变化回调（窗口在不同 DPI 显示器间移动时触发）

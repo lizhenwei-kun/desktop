@@ -1,6 +1,7 @@
 package desktop
 
 import (
+	"sync"
 	"syscall"
 	"time"
 	"unsafe"
@@ -13,6 +14,7 @@ var (
 	user32               = syscall.NewLazyDLL("user32.dll")
 	kernel32             = syscall.NewLazyDLL("kernel32.dll")
 	comctl32             = syscall.NewLazyDLL("comctl32.dll")
+	powrprof             = syscall.NewLazyDLL("powrprof.dll")
 
 	procFindWindowW      = user32.NewProc("FindWindowW")
 	procSetParent        = user32.NewProc("SetParent")
@@ -43,6 +45,9 @@ var (
 	procInvalidateRect       = user32.NewProc("InvalidateRect")
 	procGetLastInputInfo     = user32.NewProc("GetLastInputInfo")
 	procGetTickCount         = kernel32.NewProc("GetTickCount")
+
+	procPowerSettingRegisterNotification   = powrprof.NewProc("PowerSettingRegisterNotification")
+	procPowerSettingUnregisterNotification = powrprof.NewProc("PowerSettingUnregisterNotification")
 
 )
 
@@ -101,10 +106,39 @@ const (
 	WM_DPICHANGED          = 0x02E0
 
 	// WM_POWERBROADCAST wParam 值
-	PBT_APMRESUMEAUTOMATIC = 0x0012
-	PBT_APMRESUMESUSPEND   = 0x0007
+	PBT_APMSUSPEND         = 0x0004 // 系统即将进入睡眠/休眠
+	PBT_APMRESUMEAUTOMATIC = 0x0012 // 系统从睡眠/休眠自动恢复（唤醒）
+	PBT_APMRESUMESUSPEND   = 0x0007 // 系统从挂起恢复（唤醒）
+	PBT_POWERSETTINGCHANGE = 0x8013 // 电源设置变化（含显示器开关）
+
+	// PowerSettingRegisterNotification 标志：通过窗口句柄接收 WM_POWERBROADCAST
+	DEVICE_NOTIFY_WINDOW_HANDLE = 0x00000000
 
 	subclassID = 1
+)
+
+// guidConsoleDisplayState GUID_CONSOLE_DISPLAY_STATE = {6FE69556-704A-47A0-8F24-C28D936FDA47}
+// 用于监听显示器开启/关闭（仅显示器息屏时 Data[0]=0，唤醒时 Data[0]=1）。
+var guidConsoleDisplayState = [16]byte{
+	0x56, 0x95, 0xE6, 0x6F, 0x4A, 0x70, 0xA0, 0x47,
+	0x8F, 0x24, 0xC2, 0x8D, 0x93, 0x6F, 0xDA, 0x47,
+}
+
+// POWERBROADCAST_SETTING PBT_POWERSETTINGCHANGE 消息 lParam 指向的结构体。
+// Data 紧跟在 DataLength 之后，Data[0]=0 表示显示器关闭，1 表示开启。
+type POWERBROADCAST_SETTING struct {
+	PowerSetting [16]byte
+	DataLength   uint32
+}
+
+// screenOff 标记屏幕是否处于关闭/息屏状态（系统睡眠或仅显示器息屏）。
+// 该状态通过 WM_POWERBROADCAST 挂起/唤醒及显示器电源通知维护，
+// 供 refreshDesktop 判断是否跳过重载壁纸/图标（息屏时不重绘，唤醒后再处理）。
+var (
+	screenOff   bool
+	screenOffMu sync.Mutex
+	// 显示器电源通知句柄（PowerSettingRegisterNotification 返回）
+	powerNotificationHandle uintptr
 )
 
 // WindowsAPI Windows API 封装
@@ -533,6 +567,47 @@ func (api *WindowsAPI) SetOnDPIChanged(fn func(newDPI int)) {
 	dpiChangedCallback = fn
 }
 
+// SetScreenOff 设置屏幕关闭/息屏状态（true=息屏，false=唤醒）。线程安全。
+func (api *WindowsAPI) SetScreenOff(off bool) {
+	screenOffMu.Lock()
+	screenOff = off
+	screenOffMu.Unlock()
+}
+
+// IsScreenOff 查询屏幕是否处于关闭/息屏状态。线程安全。
+func (api *WindowsAPI) IsScreenOff() bool {
+	screenOffMu.Lock()
+	defer screenOffMu.Unlock()
+	return screenOff
+}
+
+// RegisterMonitorPower 注册显示器电源通知（监听显示器开启/关闭），通过窗口消息 WM_POWERBROADCAST 接收。
+// 仅显示器息屏（系统仍在运行）时触发，与系统睡眠消息互补。
+func (api *WindowsAPI) RegisterMonitorPower(hwnd win.HWND) {
+	// 防止重复注册导致旧句柄泄漏
+	if powerNotificationHandle != 0 {
+		procPowerSettingUnregisterNotification.Call(powerNotificationHandle)
+		powerNotificationHandle = 0
+	}
+	r, _, _ := procPowerSettingRegisterNotification.Call(
+		uintptr(unsafe.Pointer(&guidConsoleDisplayState[0])),
+		DEVICE_NOTIFY_WINDOW_HANDLE,
+		uintptr(hwnd),
+		uintptr(unsafe.Pointer(&powerNotificationHandle)),
+	)
+	if r == 0 {
+		logger.Warn("RegisterMonitorPower: PowerSettingRegisterNotification failed")
+	}
+}
+
+// UnregisterMonitorPower 注销显示器电源通知
+func (api *WindowsAPI) UnregisterMonitorPower() {
+	if powerNotificationHandle != 0 {
+		procPowerSettingUnregisterNotification.Call(powerNotificationHandle)
+		powerNotificationHandle = 0
+	}
+}
+
 // subclassProc 子类化回调：拦截 WM_SYSCOMMAND SC_MINIMIZE + 监听电源/显示/会话结束事件
 func subclassProc(hwnd uintptr, msg uint32, wParam, lParam, uIDSubclass, dwRefData uintptr) uintptr {
 	switch msg {
@@ -541,12 +616,25 @@ func subclassProc(hwnd uintptr, msg uint32, wParam, lParam, uIDSubclass, dwRefDa
 			return 0
 		}
 	case WM_POWERBROADCAST:
-		if wParam == PBT_APMRESUMEAUTOMATIC || wParam == PBT_APMRESUMESUSPEND {
-			// 系统从睡眠/休眠恢复，触发刷新回调
+		switch wParam {
+		case PBT_APMSUSPEND:
+			// 系统即将进入睡眠/休眠：标记屏幕关闭，期间不再重绘（避免反复刷新累积资源）
+			logger.Debug("subclassProc: system suspending (wParam=0x%X), screen off", wParam)
+			screenOffMu.Lock()
+			screenOff = true
+			screenOffMu.Unlock()
+		case PBT_APMRESUMEAUTOMATIC, PBT_APMRESUMESUSPEND:
+			// 系统从睡眠/休眠恢复（唤醒）：清除息屏标记并触发刷新
 			logger.Debug("subclassProc: power resume event (wParam=0x%X)", wParam)
+			screenOffMu.Lock()
+			screenOff = false
+			screenOffMu.Unlock()
 			if systemEventCallback != nil {
 				systemEventCallback()
 			}
+		case PBT_POWERSETTINGCHANGE:
+			// 电源设置变化：解析显示器开关状态（仅显示器息屏，系统仍在运行）
+			handlePowerSettingChange(lParam)
 		}
 	case WM_DISPLAYCHANGE:
 		// 显示分辨率/状态变更，触发刷新回调
@@ -587,6 +675,46 @@ func subclassProc(hwnd uintptr, msg uint32, wParam, lParam, uIDSubclass, dwRefDa
 }
 
 var subclassCB = syscall.NewCallback(subclassProc)
+
+// handlePowerSettingChange 处理 PBT_POWERSETTINGCHANGE 消息（显示器电源状态变化）。
+// lParam 指向 POWERBROADCAST_SETTING，其 Data[0]：0=显示器关闭，1=显示器开启。
+func handlePowerSettingChange(lParam uintptr) {
+	if lParam == 0 {
+		return
+	}
+	ps := (*POWERBROADCAST_SETTING)(unsafe.Pointer(lParam))
+	if ps.PowerSetting != guidConsoleDisplayState {
+		return
+	}
+	if ps.DataLength < 1 {
+		return
+	}
+	// Data 紧跟在结构体（20 字节）之后，取第一个字节
+	state := *(*byte)(unsafe.Add(unsafe.Pointer(ps), unsafe.Sizeof(POWERBROADCAST_SETTING{})))
+	screenOffMu.Lock()
+	off := screenOff
+	screenOffMu.Unlock()
+	if state == 0 {
+		// 显示器关闭（仅息屏，系统仍在运行）：不重绘
+		if !off {
+			logger.Debug("subclassProc: display turned OFF, screen off")
+			screenOffMu.Lock()
+			screenOff = true
+			screenOffMu.Unlock()
+		}
+	} else {
+		// 显示器开启（唤醒）
+		if off {
+			logger.Debug("subclassProc: display turned ON, refreshing")
+			screenOffMu.Lock()
+			screenOff = false
+			screenOffMu.Unlock()
+			if systemEventCallback != nil {
+				systemEventCallback()
+			}
+		}
+	}
+}
 
 // InstallMinimizeBlock 安装子类化拦截最小化消息（仅影响本窗口）
 func (api *WindowsAPI) InstallMinimizeBlock(hwnd win.HWND) {
