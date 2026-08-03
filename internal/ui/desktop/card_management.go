@@ -87,7 +87,7 @@ func (dm *DesktopMode) setupCardActions(card *ui.GroupCard, grp config.Group) {
 		dm.selectItem(ui.Selection{Path: item.Path, Card: c.GroupName()})
 	})
 	card.SetOnIconRightClick(func(_ *ui.GroupCard, _ int, item group.GroupItem, screenX, screenY int) {
-		showIconContextMenuReal(dm.MainWindow.Handle(), dm.Executor, item, screenX, screenY)
+		showIconContextMenuReal(dm.MainWindow.Handle(), dm.Executor, item, screenX, screenY, nil)
 	})
 	card.SetOnCardBodyClick(func() {
 		dm.clearSelectedItem()

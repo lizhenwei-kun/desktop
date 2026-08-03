@@ -68,3 +68,20 @@ func (dm *DesktopMode) updateRecycleBinIcon() {
 	// 重绘桌面（窗口不可见时自动跳过）
 	dm.InvalidateBody()
 }
+
+// refreshRecycleBinAfterEmpty 执行"清空回收站"菜单命令后调用：
+// 直接查询回收站真实状态并强制更新为最新值，重绘回收站图标。
+// 相比 5 秒轮询，这里能即时反映清空结果，无需等待下一次定时检测。
+func (dm *DesktopMode) refreshRecycleBinAfterEmpty() {
+	dm.Post(func() {
+		nonEmpty := dm.queryRecycleBinNonEmpty()
+		if nonEmpty == dm.RecycleBinState.lastNonEmpty && nonEmpty == dm.RecycleBinState.NonEmpty {
+			// 状态未变化（例如命令实际失败），也重绘一次确保图标与状态一致
+			dm.updateRecycleBinIcon()
+			return
+		}
+		dm.RecycleBinState.lastNonEmpty = nonEmpty
+		dm.RecycleBinState.NonEmpty = nonEmpty
+		dm.updateRecycleBinIcon()
+	})
+}

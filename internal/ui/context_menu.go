@@ -1317,6 +1317,15 @@ func getVerbFromContextMenu(cm *iContextMenu, cmdOffset uintptr) string {
 	return ""
 }
 
+// GetContextMenuVerb 导出版 getVerbFromContextMenu，供 desktop 包识别菜单命令 verb（如回收站"清空回收站"=empty）
+func GetContextMenuVerb(pContextMenu uintptr, cmdOffset uintptr) string {
+	if pContextMenu == 0 {
+		return ""
+	}
+	cm := (*iContextMenu)(unsafe.Pointer(pContextMenu))
+	return getVerbFromContextMenu(cm, cmdOffset)
+}
+
 // Win32 API（供 QueryIconMenuItems 使用）
 var (
 	user32MenuInfo       = syscall.NewLazyDLL("user32.dll")

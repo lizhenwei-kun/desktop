@@ -179,6 +179,7 @@ type ContextMenuState struct {
 	rclickGetCards    func() []*ui.GroupCard
 	rclickOnDesktopCmd func(cmd int)
 	rclickOnNewCard   func()
+	rclickOnEmptyRecycleBin func()
 	rclickScreenX    int
 	rclickScreenY    int
 	rclickClientX    int

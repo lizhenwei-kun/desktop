@@ -118,6 +118,7 @@ func (dm *DesktopMode) Setup() error {
 		func() []*ui.GroupCard { return dm.Cards },
 		func(cmd int) { dm.handleContextMenuCommand(cmd) },
 		dm.addNewCard,
+		dm.refreshRecycleBinAfterEmpty,
 	)
 
 	// 注册外部文件拖放（从桌面/资源管理器拖文件到应用）

@@ -14,7 +14,7 @@ import (
 )
 
 // InstallRightClickHandler 安装右键菜单子类化
-func (s *ContextMenuState) InstallRightClickHandler(bodyWidget *walk.CustomWidget, mainWindow win.HWND, manager *group.Manager, executor *ui.ProgramExecutor, getPixelPos func(string, int) (int, int), getCards func() []*ui.GroupCard, onDesktopCmd func(cmd int), onNewCard func()) {
+func (s *ContextMenuState) InstallRightClickHandler(bodyWidget *walk.CustomWidget, mainWindow win.HWND, manager *group.Manager, executor *ui.ProgramExecutor, getPixelPos func(string, int) (int, int), getCards func() []*ui.GroupCard, onDesktopCmd func(cmd int), onNewCard func(), onEmptyRecycleBin func()) {
 	hwnd := bodyWidget.Handle()
 	if hwnd == 0 {
 		return
@@ -29,6 +29,7 @@ func (s *ContextMenuState) InstallRightClickHandler(bodyWidget *walk.CustomWidge
 	s.rclickGetCards = getCards
 	s.rclickOnDesktopCmd = onDesktopCmd
 	s.rclickOnNewCard = onNewCard
+	s.rclickOnEmptyRecycleBin = onEmptyRecycleBin
 
 	s.RClickCB = syscall.NewCallback(func(hwnd uintptr, msg uint32, wParam, lParam, uIDSubclass, dwRefData uintptr) uintptr {
 		if msg == win.WM_RBUTTONDOWN {
@@ -131,7 +132,7 @@ func (s *ContextMenuState) deferredShowContextMenu() {
 		// 图标菜单：UI 主线程实时 COM（与系统桌面一致，COM 内部有超时保护）
 		s.rclickIsIconMenu = true
 		logger.Debug("rightClick: hit item %q, showing real icon context menu", s.rclickHitItem.Name)
-		showIconContextMenuReal(hwnd, executor, *s.rclickHitItem, s.rclickScreenX, s.rclickScreenY)
+		showIconContextMenuReal(hwnd, executor, *s.rclickHitItem, s.rclickScreenX, s.rclickScreenY, s.rclickOnEmptyRecycleBin)
 	} else {
 		// 桌面菜单：UI 主线程，用缓存
 		s.rclickIsIconMenu = false
@@ -140,8 +141,10 @@ func (s *ContextMenuState) deferredShowContextMenu() {
 	}
 }
 
-// showIconContextMenuReal 在 UI 主线程中执行实时 COM 图标右键菜单
-func showIconContextMenuReal(hwnd win.HWND, executor *ui.ProgramExecutor, item group.GroupItem, x, y int) {
+// showIconContextMenuReal 在 UI 主线程中执行实时 COM 图标右键菜单。
+// onEmptyRecycleBin 为可选的"清空回收站"回调：当目标是回收站且执行的命令 verb 为
+// empty（清空回收站）时，命令执行后调用，用于即时刷新回收站状态图标。
+func showIconContextMenuReal(hwnd win.HWND, executor *ui.ProgramExecutor, item group.GroupItem, x, y int, onEmptyRecycleBin func()) {
 	filePath := item.Path
 
 	var pidl uintptr
@@ -194,6 +197,14 @@ func showIconContextMenuReal(hwnd win.HWND, executor *ui.ProgramExecutor, item g
 		return
 	}
 
+	// 执行前获取该命令的 verb，用于识别"清空回收站"（verb=empty）
+	verb := ui.GetContextMenuVerb(pContextMenu, uintptr(cmd-1))
+	isEmptyRecycleBin := onEmptyRecycleBin != nil &&
+		strings.Contains(filePath, "RecycleBin") && verb == "empty"
+	if isEmptyRecycleBin {
+		logger.Debug("rightClick: recycle bin 'empty' command detected, verb=%q", verb)
+	}
+
 	var ici cmInvokeCommandInfo
 	ici.cbSize = uint32(unsafe.Sizeof(ici))
 	ici.hwnd = uintptr(hwnd)
@@ -201,6 +212,11 @@ func showIconContextMenuReal(hwnd win.HWND, executor *ui.ProgramExecutor, item g
 	ici.nShow = 1
 	ici.lpDirectory = 0
 	syscall.SyscallN(cm.vtbl.InvokeCommand, pContextMenu, uintptr(unsafe.Pointer(&ici)))
+
+	// 执行"清空回收站"后，立即刷新回收站状态图标（无需等待 5 秒轮询）
+	if isEmptyRecycleBin {
+		onEmptyRecycleBin()
+	}
 }
 
 // knownFolderIDs 已知系统文件夹的 KNOWNFOLDERID 映射
