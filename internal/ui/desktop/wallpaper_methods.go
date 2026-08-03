@@ -17,6 +17,17 @@ func (s *WallpaperState) LoadWallpaper(dpiFn func() int, workW, workH int) {
 	if path == "" {
 		return
 	}
+
+	// 壁纸缓存命中：路径与目标尺寸均未变化且已有位图时直接复用，
+	// 跳过昂贵的解码+缩放（2560x1600→2560x1400），避免每次刷新重复分配大块内存。
+	s.mu.Lock()
+	if s.cachedPath == path && s.cachedW == workW && s.cachedH == workH && s.WallpaperBmp != nil {
+		s.mu.Unlock()
+		logger.Debug("loadWallpaper: cache hit, reuse existing wallpaper bitmap")
+		return
+	}
+	s.mu.Unlock()
+
 	img := ui.LoadWallpaperImage(workW, workH)
 	var bmp *walk.Bitmap
 	if img == nil {
@@ -39,18 +50,22 @@ func (s *WallpaperState) LoadWallpaper(dpiFn func() int, workW, workH int) {
 		}
 		bmp = b
 	}
-	s.swapBitmap(bmp)
+	s.swapBitmap(bmp, path, workW, workH)
 }
 
 // swapBitmap 线程安全地替换缓存的壁纸位图：先 Dispose 旧位图，再赋值新位图。
+// 同时更新壁纸缓存键（path/w/h），供后续 LoadWallpaper 命中判断。
 // 加锁避免异步 Work.Post 加载与 UI 绘制线程读 WallpaperBmp 指针竞争。
-func (s *WallpaperState) swapBitmap(bmp *walk.Bitmap) {
+func (s *WallpaperState) swapBitmap(bmp *walk.Bitmap, path string, w, h int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.WallpaperBmp != nil {
 		s.WallpaperBmp.Dispose()
 	}
 	s.WallpaperBmp = bmp
+	s.cachedPath = path
+	s.cachedW = w
+	s.cachedH = h
 }
 
 // getBitmap 线程安全地读取当前壁纸位图
@@ -89,5 +104,5 @@ func (s *WallpaperState) LoadWallpaperSimple(workW, workH int) {
 	if err != nil {
 		return
 	}
-	s.swapBitmap(bmp)
+	s.swapBitmap(bmp, path, workW, workH)
 }

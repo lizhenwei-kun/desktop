@@ -27,6 +27,11 @@ type ScreenInfo struct {
 type WallpaperState struct {
 	mu          sync.Mutex
 	WallpaperBmp *walk.Bitmap
+	// 壁纸缓存键：路径与目标尺寸。命中时复用已加载位图，避免每次刷新重复解码+缩放壁纸
+	// （长时间运行下反复解码大图会持续分配内存，最终可能导致 CreateDIBSection 内存不足）。
+	cachedPath string
+	cachedW    int
+	cachedH    int
 }
 
 type WallpaperInject struct {
