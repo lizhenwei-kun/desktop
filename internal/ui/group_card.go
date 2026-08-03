@@ -30,14 +30,21 @@ const (
 	CardHeaderHeight = 30
 )
 
+// Selection 全局选中/悬停状态：定位到具体图标。
+// Path 当前路径；Card 所在卡片名（空字符串表示未分组）。
+type Selection struct {
+	Path string
+	Card string
+}
+
 // SelectionProvider 提供全局 hover/选中 状态（由桌面层注入）。
 // 未分组与分组图标共用一套全局状态，GroupCard 通过该接口读写，
 // 避免 ui 包与 desktop 包循环依赖。
 type SelectionProvider interface {
-	GetSelectedPath() string
-	SetSelectedPath(path string)
-	GetHoveredPath() string
-	SetHoveredPath(path string)
+	GetSelected() Selection
+	SetSelected(sel Selection)
+	GetHovered() Selection
+	SetHovered(sel Selection)
 	ClearSelection()
 }
 
@@ -288,7 +295,7 @@ func (gc *GroupCard) setupMouseEvents() {
 
 		idx := gc.getItemIndexAt(x, y)
 		if idx >= 0 && idx < len(gc.items) {
-			if gc.selection != nil && gc.selection.GetSelectedPath() == gc.items[idx].Path &&
+			if gc.selection != nil && gc.selection.GetSelected().Path == gc.items[idx].Path &&
 				gc.isCardItemInLabelArea(y, idx) {
 				gc.startCardItemEdit(idx)
 				return
@@ -374,9 +381,9 @@ func (gc *GroupCard) setupMouseEvents() {
 				return
 			}
 			if idx >= 0 && idx < len(gc.items) {
-				gc.selection.SetHoveredPath(gc.items[idx].Path)
+				gc.selection.SetHovered(Selection{Path: gc.items[idx].Path, Card: gc.groupName})
 			} else {
-				gc.selection.SetHoveredPath("")
+				gc.selection.SetHovered(Selection{})
 			}
 		}
 	})
@@ -862,8 +869,8 @@ func (gc *GroupCard) paintIconGrid(canvas *walk.Canvas, bounds walk.Rectangle) {
 
 		var hovered, selected bool
 		if gc.selection != nil {
-			hovered = item.Path == gc.selection.GetHoveredPath()
-			selected = item.Path == gc.selection.GetSelectedPath()
+			hovered = item.Path == gc.selection.GetHovered().Path
+			selected = item.Path == gc.selection.GetSelected().Path
 		}
 		gc.paintIconTile(canvas, item, x, y, hovered, selected)
 	}
@@ -985,6 +992,38 @@ func (gc *GroupCard) getIconTileBounds(idx int) (x, y int) {
 	col := idx % maxCols
 	row := idx / maxCols
 	return startX + col*colWidth, startY + row*desktopIconItemHeight
+}
+
+// invalidateTile 局部重绘指定索引的图标磁贴。
+// 注意：卡片 bodyWidget 为 PaintNoErase 模式，无效矩形会裁剪 BeginPaint 区域，
+// 因此无效高度按图标名最大行数（选中框需容纳全部文字）计算，确保选中/悬停框完整重绘。
+func (gc *GroupCard) invalidateTile(idx int) {
+	if idx < 0 || idx >= len(gc.items) {
+		return
+	}
+	x, y := gc.getIconTileBounds(idx)
+	lines := SplitTextToLines(gc.items[idx].Name, 4)
+	tileH := DesktopIconLabelTop() + len(lines)*DesktopIconLineHeight() + 8
+	if tileH < desktopIconItemHeight {
+		tileH = desktopIconItemHeight
+	}
+	r := win.RECT{
+		Left: int32(x), Top: int32(y),
+		Right: int32(x + TileColWidth()), Bottom: int32(y + tileH),
+	}
+	win.InvalidateRect(gc.bodyWidget.Handle(), &r, false)
+}
+
+// InvalidateTileByPath 精准重绘指定 path 的图标磁贴（仅该卡片）。返回是否命中。
+// 用于全局 hover/选中状态变化时，只重绘发生变化的图标，避免整卡重绘。
+func (gc *GroupCard) InvalidateTileByPath(path string) bool {
+	for i := range gc.items {
+		if gc.items[i].Path == path {
+			gc.invalidateTile(i)
+			return true
+		}
+	}
+	return false
 }
 
 func (gc *GroupCard) startCardItemEdit(idx int) {
@@ -1235,6 +1274,13 @@ func (gc *GroupCard) Refresh() {
 	gc.refreshItems()
 }
 
+// Invalidate 触发卡片内容重绘（不重新拉取 items，用于全局 hover/选中状态变化后刷新）
+func (gc *GroupCard) Invalidate() {
+	if gc.bodyWidget != nil {
+		gc.bodyWidget.Invalidate()
+	}
+}
+
 func (gc *GroupCard) Items() []group.GroupItem { return gc.items }
 
 func (gc *GroupCard) SetOnIconLeftClick(fn func(card *GroupCard, idx int, item group.GroupItem)) {
@@ -1306,7 +1352,7 @@ func (gc *GroupCard) SelectItem(idx int) {
 	if gc.selection == nil || idx < 0 || idx >= len(gc.items) {
 		return
 	}
-	gc.selection.SetSelectedPath(gc.items[idx].Path)
+	gc.selection.SetSelected(Selection{Path: gc.items[idx].Path, Card: gc.groupName})
 }
 
 // ClearSelection 清除全局选中状态

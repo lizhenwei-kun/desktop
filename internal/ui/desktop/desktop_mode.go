@@ -67,10 +67,10 @@ type UnifiedDragState struct {
 }
 
 type UnifiedSelectionState struct {
-	SelectedPath  string
-	HoveredPath   string
-	EditingPath   string
-	EditHwnd      win.HWND
+	Selected    ui.Selection
+	Hovered     ui.Selection
+	EditingPath string
+	EditHwnd    win.HWND
 }
 
 type CardDragOutline struct {

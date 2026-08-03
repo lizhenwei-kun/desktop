@@ -148,9 +148,8 @@ func (dm *DesktopMode) Setup() error {
 			dm.moveGhostWindow(int(screenPt.X), int(screenPt.Y))
 			return
 		}
-		if dm.checkItemHover(x, y) {
-			dm.InvalidateBody()
-		}
+		// checkItemHover 内部通过 SetHoveredPath 精准重绘变化图标，无需全量重绘
+		dm.checkItemHover(x, y)
 	})
 
 	dm.BodyWidget.MouseUp().Attach(func(x, y int, button walk.MouseButton) {

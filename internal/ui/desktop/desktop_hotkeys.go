@@ -24,16 +24,16 @@ func (dm *DesktopMode) setupHotkeys() {
 
 		// Ctrl+C 复制
 		if key == walk.KeyC && walk.ControlDown() {
-			if dm.SelectedPath != "" {
-				ui.CopyFileToClipboard(dm.SelectedPath)
+			if dm.Selected.Path != "" {
+				ui.CopyFileToClipboard(dm.Selected.Path)
 			}
 			return
 		}
 
 		// Ctrl+X 剪切
 		if key == walk.KeyX && walk.ControlDown() {
-			if dm.SelectedPath != "" {
-				ui.CutFileToClipboard(dm.SelectedPath)
+			if dm.Selected.Path != "" {
+				ui.CutFileToClipboard(dm.Selected.Path)
 			}
 			return
 		}
@@ -47,10 +47,10 @@ func (dm *DesktopMode) setupHotkeys() {
 
 		// Delete 删除到回收站
 		if key == walk.KeyDelete {
-			if dm.SelectedPath != "" {
-				ui.DeleteFileToRecycleBin(dm.SelectedPath)
-				dm.Manager.RemoveItem(dm.SelectedPath)
-				dm.SelectedPath = ""
+			if dm.Selected.Path != "" {
+				ui.DeleteFileToRecycleBin(dm.Selected.Path)
+				dm.Manager.RemoveItem(dm.Selected.Path)
+				dm.Selected = ui.Selection{}
 				dm.InvalidateBody()
 			}
 			return

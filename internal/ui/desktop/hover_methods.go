@@ -9,33 +9,33 @@ import (
 )
 
 // checkItemHover 检测鼠标悬停的桌面图标（未分组 + 卡片内图标）。
-// 未分组与分组共用全局 HoveredPath：未分组在此精确检测，卡片内图标由卡片自己的
-// MouseMove 通过 SetHoveredPath 写入全局状态。鼠标在卡片区域内时这里不干预悬停状态。
+// 未分组与分组共用全局 Hovered：未分组在此精确检测，卡片内图标由卡片自己的
+// MouseMove 通过 SetHovered 写入全局状态。鼠标在卡片区域内时这里不干预悬停状态。
 func (dm *DesktopMode) checkItemHover(x, y int) bool {
 	// 检查未分组项目
-	newHovered := ""
+	newHovered := ui.Selection{}
 	ungrouped := dm.Manager.GetUngroupedItems()
 	for i, item := range ungrouped {
 		ix, iy := dm.getFreeItemPixelPos(item.Path, i)
 		if x >= ix && x <= ix+ui.TileWidth() &&
 			y >= iy && y <= iy+ui.TileHeight() {
-			newHovered = item.Path
+			newHovered = ui.Selection{Path: item.Path}
 			break
 		}
 	}
 
-	if newHovered == "" {
+	if newHovered.Path == "" {
 		// 未命中未分组图标：检查是否在任意卡片区域内
 		if dm.isPointInAnyCardRegion(x, y) {
-			// 鼠标在卡片区域内，卡片内悬停由卡片自己写入全局 HoveredPath，
+			// 鼠标在卡片区域内，卡片内悬停由卡片自己写入全局 Hovered，
 			// 这里不干预，直接返回（避免覆盖卡片刚设置的悬停状态）
 			return false
 		}
-		// 空白区域：清除悬停
 	}
 
-	if newHovered != dm.HoveredPath {
-		dm.HoveredPath = newHovered
+	// 通过 SetHovered 设置/清除
+	if newHovered != dm.Hovered {
+		dm.SetHovered(newHovered)
 		return true
 	}
 	return false
@@ -83,8 +83,8 @@ func (dm *DesktopMode) paintAllIcons(canvas *walk.Canvas, bounds walk.Rectangle)
 		}
 
 		// 判断当前项目的选中/悬停/编辑状态（基于路径）
-		isSelected := item.Path == dm.SelectedPath
-		isHovered := item.Path == dm.HoveredPath
+		isSelected := item.Path == dm.Selected.Path
+		isHovered := item.Path == dm.Hovered.Path
 		isEditing := item.Path == dm.EditingPath
 
 		// 预先计算文字行数，选中/悬停时框需要包含全部显示文字

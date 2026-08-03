@@ -228,7 +228,7 @@ func (dm *DesktopMode) handleDesktopMouseDown(x, y int, button walk.MouseButton)
 		if x >= ix && x <= ix+ui.TileWidth() &&
 			y >= iy && y <= iy+ui.TileHeight() {
 
-			if dm.SelectedPath == item.Path && dm.isInLabelArea(y, iy) {
+			if dm.Selected.Path == item.Path && dm.isInLabelArea(y, iy) {
 				dm.startItemEdit(item.Path)
 				return
 			}
@@ -244,7 +244,7 @@ func (dm *DesktopMode) handleDesktopMouseDown(x, y int, button walk.MouseButton)
 			}
 
 			// 单击选中（全局唯一，未分组与分组共用）
-			dm.selectItem(item.Path)
+			dm.selectItem(ui.Selection{Path: item.Path})
 			dm.LastClickTime = time.Now()
 			dm.LastClickPath = item.Path
 
@@ -286,7 +286,7 @@ func (dm *DesktopMode) isPointInAnyCard(cx, cy int) bool {
 				if itemIdx >= 0 {
 					items := card.Items()
 					if itemIdx < len(items) {
-						dm.selectItem(items[itemIdx].Path)
+						dm.selectItem(ui.Selection{Path: items[itemIdx].Path, Card: card.GroupName()})
 					}
 				} else {
 					dm.clearSelectedItem()
@@ -307,39 +307,96 @@ func (dm *DesktopMode) isInLabelArea(y, tileY int) bool {
 
 // --- SelectionProvider 实现（未分组与分组图标共用全局 hover/选中状态）---
 
-// GetSelectedPath 返回全局选中项目路径
-func (dm *DesktopMode) GetSelectedPath() string { return dm.SelectedPath }
-
-// SetSelectedPath 设置全局选中项目路径（变化时触发全量重绘）
-func (dm *DesktopMode) SetSelectedPath(path string) {
-	if dm.SelectedPath != path {
-		dm.SelectedPath = path
-		dm.InvalidateBody()
+// invalidateSelection 精准重绘指定 selection 对应的图标磁贴（分组卡片内 或 未分组）。
+// 未分组图标由桌面 BodyWidget 绘制（PaintBuffered，局部重绘安全）；
+// 分组图标由对应卡片的 bodyWidget 绘制（局部 tile 重绘）。
+// 若 Card 为空则按未分组处理；卡片内索引通过 InvalidateTileByPath 实时反查，避免过期。
+func (dm *DesktopMode) invalidateSelection(sel ui.Selection) {
+	if sel.Path == "" {
+		return
+	}
+	// 分组卡片内图标：只重绘该卡片对应 tile
+	if sel.Card != "" {
+		for _, card := range dm.Cards {
+			if card.GroupName() == sel.Card {
+				card.InvalidateTileByPath(sel.Path)
+				return
+			}
+		}
+		// 卡片不存在（已删除分组等），回退到全卡片查找
+		for _, card := range dm.Cards {
+			if card.InvalidateTileByPath(sel.Path) {
+				return
+			}
+		}
+		return
+	}
+	// 未分组图标：只重绘桌面对应磁贴
+	items := dm.Manager.GetUngroupedItems()
+	for i, item := range items {
+		if item.Path != sel.Path {
+			continue
+		}
+		px, py := dm.getFreeItemPixelPos(item.Path, i)
+		// 重绘高度按 hover/选中框实际显示行数计算，保证框完整刷新
+		h := ui.TileHeight()
+		if sel.Path == dm.Selected.Path {
+			lines := ui.SplitTextToLines(item.Name, 4)
+			h = ui.DesktopIconLabelTop() + len(lines)*ui.DesktopIconLineHeight() + 4
+		} else {
+			hoverLines := ui.GetIconDisplayLines(item.Name, 4)
+			h = ui.DesktopIconLabelTop() + len(hoverLines)*ui.DesktopIconLineHeight() + 4
+		}
+		rect := win.RECT{
+			Left: int32(px), Top: int32(py),
+			Right: int32(px + ui.TileWidth()), Bottom: int32(py + h),
+		}
+		win.InvalidateRect(dm.BodyWidget.Handle(), &rect, false)
+		return
 	}
 }
 
-// GetHoveredPath 返回全局悬停项目路径
-func (dm *DesktopMode) GetHoveredPath() string { return dm.HoveredPath }
+// GetSelected 返回全局选中状态
+func (dm *DesktopMode) GetSelected() ui.Selection { return dm.Selected }
 
-// SetHoveredPath 设置全局悬停项目路径（变化时触发全量重绘）
-func (dm *DesktopMode) SetHoveredPath(path string) {
-	if dm.HoveredPath != path {
-		dm.HoveredPath = path
-		dm.InvalidateBody()
+// SetSelected 设置全局选中状态（仅重绘发生变化的两个图标：旧框清除 + 新框绘制）
+func (dm *DesktopMode) SetSelected(sel ui.Selection) {
+	if dm.Selected == sel {
+		return
 	}
+	old := dm.Selected
+	dm.Selected = sel
+	dm.invalidateSelection(old)
+	dm.invalidateSelection(sel)
 }
 
-// ClearSelection 清除全局选中状态（未分组 + 所有分组卡片共用）
+// GetHovered 返回全局悬停状态
+func (dm *DesktopMode) GetHovered() ui.Selection { return dm.Hovered }
+
+// SetHovered 设置全局悬停状态（仅重绘发生变化的两个图标：旧框清除 + 新框绘制）
+func (dm *DesktopMode) SetHovered(sel ui.Selection) {
+	if dm.Hovered == sel {
+		return
+	}
+	old := dm.Hovered
+	dm.Hovered = sel
+	dm.invalidateSelection(old)
+	dm.invalidateSelection(sel)
+}
+
+// ClearSelection 清除全局选中状态（仅重绘原选中图标）
 func (dm *DesktopMode) ClearSelection() {
-	if dm.SelectedPath != "" {
-		dm.SelectedPath = ""
-		dm.InvalidateBody()
+	if dm.Selected.Path == "" {
+		return
 	}
+	old := dm.Selected
+	dm.Selected = ui.Selection{}
+	dm.invalidateSelection(old)
 }
 
-// selectItem 设置选中的项目路径（全局唯一）
-func (dm *DesktopMode) selectItem(itemPath string) {
-	dm.SetSelectedPath(itemPath)
+// selectItem 设置选中的项目（全局唯一）
+func (dm *DesktopMode) selectItem(sel ui.Selection) {
+	dm.SetSelected(sel)
 }
 
 // clearSelectedItem 清除全局选中状态
@@ -353,7 +410,7 @@ func (dm *DesktopMode) clearSelectedItem() {
 // startItemEdit 开始编辑图标的标题
 func (dm *DesktopMode) startItemEdit(itemPath string) {
 	// 清除选中状态，避免编辑模式下残留选中框
-	dm.SelectedPath = ""
+	dm.Selected = ui.Selection{}
 	dm.InvalidateBody()
 
 	dm.EditingPath = itemPath
@@ -546,24 +603,7 @@ func (dm *DesktopMode) commitItemRename(newName string, itemPath string) {
 	logger.Info("renamed: %q -> %q", oldPath, newPath)
 }
 
-// checkFreeItemHover 悬停检测
-func (dm *DesktopMode) checkFreeItemHover(x, y int) bool {
-	items := dm.Manager.GetUngroupedItems()
-	newHoveredPath := ""
-	for _, item := range items {
-		ix, iy := dm.getFreeItemPixelPos(item.Path, 0)
-		if x >= ix && x <= ix+ui.TileWidth() &&
-			y >= iy && y <= iy+ui.TileHeight() {
-			newHoveredPath = item.Path
-			break
-		}
-	}
-	if newHoveredPath != dm.HoveredPath {
-		dm.HoveredPath = newHoveredPath
-		return true
-	}
-	return false
-}
+
 
 // ============================================================
 // 统一拖拽启动（未分组 + 分组内图标共用入口）
@@ -975,8 +1015,47 @@ func (dm *DesktopMode) handleIconDrop(screenX, screenY int) {
 		}
 	}
 
+	// 若拖放的图标恰是当前选中项，移动位置后需同步更新其所在卡片/索引
+	dm.refreshSelectedPosition()
+
 	// 清理拖拽状态
 	dm.clearDragState()
+}
+
+// refreshSelectedPosition 重新定位全局选中图标所在卡片（空 = 未分组）。
+// 图标被拖拽移动（跨卡片/换位置）后调用，保证 Selected.Card 与最新位置一致。
+func (dm *DesktopMode) refreshSelectedPosition() {
+	if dm.Selected.Path == "" {
+		return
+	}
+	path := dm.Selected.Path
+	// 查分组卡片
+	for _, card := range dm.Cards {
+		items := card.Items()
+		for _, item := range items {
+			if item.Path == path {
+				dm.Selected.Card = card.GroupName()
+				return
+			}
+		}
+	}
+	// 查未分组
+	if item := dm.findUngroupedByPath(path); item != nil {
+		dm.Selected.Card = ""
+		return
+	}
+	// 图标已不存在（被删除等）→ 清空选中
+	dm.Selected = ui.Selection{}
+}
+
+// findUngroupedByPath 在未分组中查找指定 path 的项目，返回 nil 表示不存在
+func (dm *DesktopMode) findUngroupedByPath(path string) *group.GroupItem {
+	for _, item := range dm.Manager.GetUngroupedItems() {
+		if item.Path == path {
+			return &item
+		}
+	}
+	return nil
 }
 
 // clearDragState 清除统一拖拽状态
