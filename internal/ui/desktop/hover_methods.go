@@ -8,44 +8,55 @@ import (
 	"desktop_go/internal/ui"
 )
 
-// checkItemHover 检测鼠标悬停的桌面图标（未分组 + 卡片内图标）
-// 对于卡片内图标：简单检测鼠标是否在卡片范围内
-// 对于未分组图标：精确检测鼠标是否在图标磁贴内
+// checkItemHover 检测鼠标悬停的桌面图标（未分组 + 卡片内图标）。
+// 未分组与分组共用全局 HoveredPath：未分组在此精确检测，卡片内图标由卡片自己的
+// MouseMove 通过 SetHoveredPath 写入全局状态。鼠标在卡片区域内时这里不干预悬停状态。
 func (dm *DesktopMode) checkItemHover(x, y int) bool {
-	prevHovered := dm.HoveredPath
-	dm.HoveredPath = ""
-
 	// 检查未分组项目
+	newHovered := ""
 	ungrouped := dm.Manager.GetUngroupedItems()
 	for i, item := range ungrouped {
 		ix, iy := dm.getFreeItemPixelPos(item.Path, i)
 		if x >= ix && x <= ix+ui.TileWidth() &&
 			y >= iy && y <= iy+ui.TileHeight() {
-			dm.HoveredPath = item.Path
+			newHovered = item.Path
 			break
 		}
 	}
 
-	// 如果未分组未命中，检查是否在任意卡片范围内（简化处理，不精确到单个图标）
-	if dm.HoveredPath == "" {
-		for _, card := range dm.Cards {
-			sb := card.ScreenBounds()
-			var pt win.POINT
-			pt.X = int32(x)
-			pt.Y = int32(y)
-			win.ClientToScreen(dm.BodyWidget.Handle(), &pt)
-			sx := int(pt.X)
-			sy := int(pt.Y)
-			if sx >= sb.X && sx <= sb.X+sb.Width &&
-				sy >= sb.Y && sy <= sb.Y+sb.Height {
-				// 鼠标在卡片区域内，但卡片内图标由卡片自己管理悬停
-				// 这里不清除 HoveredPath，保持为空即可（卡片区域不设置桌面级悬停）
-				break
-			}
+	if newHovered == "" {
+		// 未命中未分组图标：检查是否在任意卡片区域内
+		if dm.isPointInAnyCardRegion(x, y) {
+			// 鼠标在卡片区域内，卡片内悬停由卡片自己写入全局 HoveredPath，
+			// 这里不干预，直接返回（避免覆盖卡片刚设置的悬停状态）
+			return false
 		}
+		// 空白区域：清除悬停
 	}
 
-	return dm.HoveredPath != prevHovered
+	if newHovered != dm.HoveredPath {
+		dm.HoveredPath = newHovered
+		return true
+	}
+	return false
+}
+
+// isPointInAnyCardRegion 判断客户区坐标是否在任意卡片范围内（仅区域判断，无选中副作用）
+func (dm *DesktopMode) isPointInAnyCardRegion(cx, cy int) bool {
+	var pt win.POINT
+	pt.X = int32(cx)
+	pt.Y = int32(cy)
+	win.ClientToScreen(dm.BodyWidget.Handle(), &pt)
+	sx := int(pt.X)
+	sy := int(pt.Y)
+	for _, card := range dm.Cards {
+		sb := card.ScreenBounds()
+		if sx >= sb.X && sx <= sb.X+sb.Width &&
+			sy >= sb.Y && sy <= sb.Y+sb.Height {
+			return true
+		}
+	}
+	return false
 }
 
 // paintAllIcons 绘制所有桌面图标（未分组项目）
@@ -76,19 +87,24 @@ func (dm *DesktopMode) paintAllIcons(canvas *walk.Canvas, bounds walk.Rectangle)
 		isHovered := item.Path == dm.HoveredPath
 		isEditing := item.Path == dm.EditingPath
 
-		// 预先计算文字行数，选中时框需要包含所有文字
+		// 预先计算文字行数，选中/悬停时框需要包含全部显示文字
 		displayName := item.Name
 		lines := ui.SplitTextToLines(displayName, 4)
 		selH := ui.TileHeight()
 		if isSelected {
 			selH = ui.DesktopIconLabelTop() + len(lines)*ui.DesktopIconLineHeight() + 4
+		} else if isHovered {
+			// 悬停只显示最多 2 行（GetIconDisplayLines），框高按实际显示行数，
+			// 避免短名称（1 行）时磁贴底部留出整行空白
+			hoverLines := ui.GetIconDisplayLines(displayName, 4)
+			selH = ui.DesktopIconLabelTop() + len(hoverLines)*ui.DesktopIconLineHeight() + 4
 		}
 
 		// 绘制选中/悬停高亮
 		if isSelected {
 			ui.DrawSelectionRect(canvas, walk.Rectangle{X: px, Y: py, Width: ui.TileWidth(), Height: selH})
 		} else if isHovered {
-			ui.DrawHoverRect(canvas, walk.Rectangle{X: px, Y: py, Width: ui.TileWidth(), Height: ui.TileHeight()})
+			ui.DrawHoverRect(canvas, walk.Rectangle{X: px, Y: py, Width: ui.TileWidth(), Height: selH})
 		}
 
 		// 绘制图标
@@ -110,14 +126,14 @@ func (dm *DesktopMode) paintAllIcons(canvas *walk.Canvas, bounds walk.Rectangle)
 		if font != nil {
 			defer font.Dispose()
 			labelTop := py + ui.DesktopIconLabelTop()
-		if isSelected {
-			// 选中状态：显示所有行，不加省略号
-			drawIconLabel(canvas, font, lines, px, labelTop, ui.TileWidth())
-		} else {
-			// 非选中：最多显示2行，超出省略
-			displayLines := ui.GetIconDisplayLines(displayName, 4)
-			drawIconLabel(canvas, font, displayLines, px, labelTop, ui.TileWidth())
-		}
+			if isSelected {
+				// 选中状态：显示所有行，不加省略号
+				drawIconLabel(canvas, font, lines, px, labelTop, ui.TileWidth())
+			} else {
+				// 非选中：最多显示2行，超出省略
+				displayLines := ui.GetIconDisplayLines(displayName, 4)
+				drawIconLabel(canvas, font, displayLines, px, labelTop, ui.TileWidth())
+			}
 		}
 	}
 }

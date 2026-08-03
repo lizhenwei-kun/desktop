@@ -30,6 +30,17 @@ const (
 	CardHeaderHeight = 30
 )
 
+// SelectionProvider 提供全局 hover/选中 状态（由桌面层注入）。
+// 未分组与分组图标共用一套全局状态，GroupCard 通过该接口读写，
+// 避免 ui 包与 desktop 包循环依赖。
+type SelectionProvider interface {
+	GetSelectedPath() string
+	SetSelectedPath(path string)
+	GetHoveredPath() string
+	SetHoveredPath(path string)
+	ClearSelection()
+}
+
 type GroupCard struct {
 	container  *walk.Composite
 	headerBar  *walk.Composite
@@ -47,8 +58,7 @@ type GroupCard struct {
 	workW int
 	workH int
 
-	hoveredItemIdx  int
-	selectedItemIdx int
+	selection SelectionProvider
 
 	lastClickTime time.Time
 	lastClickIdx  int
@@ -140,8 +150,6 @@ func NewGroupCard(parent walk.Container, grp config.Group, mgr *group.Manager, e
 		owner:           owner,
 		workW:           workW,
 		workH:           workH,
-		hoveredItemIdx:  -1,
-		selectedItemIdx: -1,
 		lastClickIdx:    -1,
 	}
 
@@ -280,7 +288,8 @@ func (gc *GroupCard) setupMouseEvents() {
 
 		idx := gc.getItemIndexAt(x, y)
 		if idx >= 0 && idx < len(gc.items) {
-			if gc.selectedItemIdx == idx && gc.isCardItemInLabelArea(y, idx) {
+			if gc.selection != nil && gc.selection.GetSelectedPath() == gc.items[idx].Path &&
+				gc.isCardItemInLabelArea(y, idx) {
 				gc.startCardItemEdit(idx)
 				return
 			}
@@ -361,17 +370,13 @@ func (gc *GroupCard) setupMouseEvents() {
 		} else {
 			gc.updateCursor(x, y)
 			idx := gc.getItemIndexAt(x, y)
+			if gc.selection == nil {
+				return
+			}
 			if idx >= 0 && idx < len(gc.items) {
-				if idx != gc.hoveredItemIdx {
-					oldIdx := gc.hoveredItemIdx
-					gc.hoveredItemIdx = idx
-					gc.invalidateTile(oldIdx)
-					gc.invalidateTile(idx)
-				}
-			} else if gc.hoveredItemIdx != -1 {
-				oldIdx := gc.hoveredItemIdx
-				gc.hoveredItemIdx = -1
-				gc.invalidateTile(oldIdx)
+				gc.selection.SetHoveredPath(gc.items[idx].Path)
+			} else {
+				gc.selection.SetHoveredPath("")
 			}
 		}
 	})
@@ -855,8 +860,11 @@ func (gc *GroupCard) paintIconGrid(canvas *walk.Canvas, bounds walk.Rectangle) {
 			break
 		}
 
-		hovered := i == gc.hoveredItemIdx
-		selected := i == gc.selectedItemIdx
+		var hovered, selected bool
+		if gc.selection != nil {
+			hovered = item.Path == gc.selection.GetHoveredPath()
+			selected = item.Path == gc.selection.GetSelectedPath()
+		}
 		gc.paintIconTile(canvas, item, x, y, hovered, selected)
 	}
 }
@@ -868,6 +876,11 @@ func (gc *GroupCard) paintIconTile(canvas *walk.Canvas, item group.GroupItem, x,
 	selH := desktopIconItemHeight
 	if selected {
 		selH = DesktopIconLabelTop() + len(lines)*DesktopIconLineHeight() + 8
+	} else if hovered {
+		// 悬停只显示最多 2 行（GetIconDisplayLines），框高按实际显示行数，
+		// 避免短名称（1 行）时磁贴底部留出整行空白
+		hoverLines := GetIconDisplayLines(item.Name, 4)
+		selH = DesktopIconLabelTop() + len(hoverLines)*DesktopIconLineHeight() + 8
 	}
 
 	if selected {
@@ -878,7 +891,7 @@ func (gc *GroupCard) paintIconTile(canvas *walk.Canvas, item group.GroupItem, x,
 	} else if hovered {
 		DrawHoverRect(canvas, walk.Rectangle{
 			X: x, Y: y,
-			Width: desktopIconItemWidth, Height: desktopIconItemHeight,
+			Width: desktopIconItemWidth, Height: selH,
 		})
 	}
 
@@ -972,23 +985,6 @@ func (gc *GroupCard) getIconTileBounds(idx int) (x, y int) {
 	col := idx % maxCols
 	row := idx / maxCols
 	return startX + col*colWidth, startY + row*desktopIconItemHeight
-}
-
-func (gc *GroupCard) invalidateTile(idx int) {
-	if idx < 0 || idx >= len(gc.items) {
-		return
-	}
-	x, y := gc.getIconTileBounds(idx)
-	lines := SplitTextToLines(gc.items[idx].Name, 4)
-	tileH := DesktopIconLabelTop() + len(lines)*DesktopIconLineHeight() + 8
-	if tileH < desktopIconItemHeight {
-		tileH = desktopIconItemHeight
-	}
-	r := win.RECT{
-		Left: int32(x), Top: int32(y),
-		Right: int32(x + TileColWidth()), Bottom: int32(y + tileH),
-	}
-	win.InvalidateRect(gc.bodyWidget.Handle(), &r, false)
 }
 
 func (gc *GroupCard) startCardItemEdit(idx int) {
@@ -1305,20 +1301,18 @@ func (gc *GroupCard) SetIsDropTarget(v bool) {
 
 func (gc *GroupCard) Cleanup() {}
 
+// SelectItem 选中指定索引的图标（委托全局选中状态，未分组与分组共用）
 func (gc *GroupCard) SelectItem(idx int) {
-	if gc.selectedItemIdx != idx {
-		oldIdx := gc.selectedItemIdx
-		gc.selectedItemIdx = idx
-		gc.invalidateTile(oldIdx)
-		gc.invalidateTile(idx)
+	if gc.selection == nil || idx < 0 || idx >= len(gc.items) {
+		return
 	}
+	gc.selection.SetSelectedPath(gc.items[idx].Path)
 }
 
+// ClearSelection 清除全局选中状态
 func (gc *GroupCard) ClearSelection() {
-	if gc.selectedItemIdx != -1 {
-		oldIdx := gc.selectedItemIdx
-		gc.selectedItemIdx = -1
-		gc.invalidateTile(oldIdx)
+	if gc.selection != nil {
+		gc.selection.ClearSelection()
 	}
 }
 
@@ -1356,6 +1350,11 @@ func (gc *GroupCard) SetOnResizeOutlineEnd(fn func(card *GroupCard)) {
 
 func (gc *GroupCard) SetOnGetWallpaper(fn func() *walk.Bitmap) {
 	gc.onGetWallpaper = fn
+}
+
+// SetSelectionProvider 注入全局 hover/选中 状态提供者
+func (gc *GroupCard) SetSelectionProvider(sp SelectionProvider) {
+	gc.selection = sp
 }
 
 func (gc *GroupCard) GroupName() string { return gc.groupName }

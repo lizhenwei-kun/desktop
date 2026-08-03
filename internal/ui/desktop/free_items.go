@@ -243,10 +243,7 @@ func (dm *DesktopMode) handleDesktopMouseDown(x, y int, button walk.MouseButton)
 				return
 			}
 
-			// 单击选中（同时清除所有卡片选中，保证全局唯一）
-			for _, c := range dm.Cards {
-				c.ClearSelection()
-			}
+			// 单击选中（全局唯一，未分组与分组共用）
 			dm.selectItem(item.Path)
 			dm.LastClickTime = time.Now()
 			dm.LastClickPath = item.Path
@@ -289,16 +286,9 @@ func (dm *DesktopMode) isPointInAnyCard(cx, cy int) bool {
 				if itemIdx >= 0 {
 					items := card.Items()
 					if itemIdx < len(items) {
-						for _, c2 := range dm.Cards {
-							if c2 != card {
-								c2.ClearSelection()
-							}
-						}
-						card.SelectItem(itemIdx)
 						dm.selectItem(items[itemIdx].Path)
 					}
 				} else {
-					card.ClearSelection()
 					dm.clearSelectedItem()
 				}
 			}
@@ -315,12 +305,41 @@ func (dm *DesktopMode) isInLabelArea(y, tileY int) bool {
 	return y >= labelStart && y < labelEnd
 }
 
-// selectItem 设置选中的项目路径（全局唯一，不操作卡片选中状态由调用方管理）
-func (dm *DesktopMode) selectItem(itemPath string) {
-	if dm.SelectedPath != itemPath {
-		dm.SelectedPath = itemPath
+// --- SelectionProvider 实现（未分组与分组图标共用全局 hover/选中状态）---
+
+// GetSelectedPath 返回全局选中项目路径
+func (dm *DesktopMode) GetSelectedPath() string { return dm.SelectedPath }
+
+// SetSelectedPath 设置全局选中项目路径（变化时触发全量重绘）
+func (dm *DesktopMode) SetSelectedPath(path string) {
+	if dm.SelectedPath != path {
+		dm.SelectedPath = path
 		dm.InvalidateBody()
 	}
+}
+
+// GetHoveredPath 返回全局悬停项目路径
+func (dm *DesktopMode) GetHoveredPath() string { return dm.HoveredPath }
+
+// SetHoveredPath 设置全局悬停项目路径（变化时触发全量重绘）
+func (dm *DesktopMode) SetHoveredPath(path string) {
+	if dm.HoveredPath != path {
+		dm.HoveredPath = path
+		dm.InvalidateBody()
+	}
+}
+
+// ClearSelection 清除全局选中状态（未分组 + 所有分组卡片共用）
+func (dm *DesktopMode) ClearSelection() {
+	if dm.SelectedPath != "" {
+		dm.SelectedPath = ""
+		dm.InvalidateBody()
+	}
+}
+
+// selectItem 设置选中的项目路径（全局唯一）
+func (dm *DesktopMode) selectItem(itemPath string) {
+	dm.SetSelectedPath(itemPath)
 }
 
 // clearSelectedItem 清除全局选中状态
@@ -328,13 +347,7 @@ func (dm *DesktopMode) clearSelectedItem() {
 	if dm.EditingPath != "" {
 		dm.endItemEdit(false)
 	}
-	for _, c := range dm.Cards {
-		c.ClearSelection()
-	}
-	if dm.SelectedPath != "" {
-		dm.SelectedPath = ""
-		dm.InvalidateBody()
-	}
+	dm.ClearSelection()
 }
 
 // startItemEdit 开始编辑图标的标题

@@ -68,6 +68,7 @@ func (dm *DesktopMode) createGroupCards() {
 		b := card.Container().BoundsPixels()
 		logger.Debug("createGroupCards: card[%d] %q bounds=(%d,%d,%dx%d) visible=%v handle=%v",
 			i, grp.Name, b.X, b.Y, b.Width, b.Height, card.Container().Visible(), card.Container().Handle())
+		card.SetSelectionProvider(dm)
 		dm.setupCardActions(card, grp)
 		dm.Cards = append(dm.Cards, card)
 	}
@@ -83,19 +84,12 @@ func (dm *DesktopMode) setupCardActions(card *ui.GroupCard, grp config.Group) {
 		dm.InvalidateBody()
 	})
 	card.SetOnIconLeftClick(func(c *ui.GroupCard, idx int, item group.GroupItem) {
-		for _, c2 := range dm.Cards {
-			if c2 != c {
-				c2.ClearSelection()
-			}
-		}
-		c.SelectItem(idx)
 		dm.selectItem(item.Path)
 	})
 	card.SetOnIconRightClick(func(_ *ui.GroupCard, _ int, item group.GroupItem, screenX, screenY int) {
 		showIconContextMenuReal(dm.MainWindow.Handle(), dm.Executor, item, screenX, screenY)
 	})
 	card.SetOnCardBodyClick(func() {
-		card.ClearSelection()
 		dm.clearSelectedItem()
 	})
 	card.SetOnCardClicked(func(c *ui.GroupCard) {
