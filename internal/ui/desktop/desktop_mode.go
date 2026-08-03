@@ -149,6 +149,19 @@ func (s *ResizeOutlineState) SetGuideColor(r, g, b byte) {
 	s.guide.setColor(r, g, b)
 }
 
+// RightClickHandlerConfig 右键菜单子类化所需依赖的配置结构体
+type RightClickHandlerConfig struct {
+	BodyWidget        *walk.CustomWidget
+	MainWindow        win.HWND
+	Manager           *group.Manager
+	Executor          *ui.ProgramExecutor
+	GetPixelPos       func(string, int) (int, int)
+	GetCards          func() []*ui.GroupCard
+	OnDesktopCmd      func(cmd int)
+	OnNewCard         func()
+	OnEmptyRecycleBin func()
+}
+
 type ContextMenuState struct {
 	IsAutoArrange      bool
 	IsAlignToGrid      bool

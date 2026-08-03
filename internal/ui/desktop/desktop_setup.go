@@ -113,13 +113,17 @@ func (dm *DesktopMode) Setup() error {
 	dm.BodyWidget.MouseDown().Attach(dm.handleDesktopMouseDown)
 
 	// 右键菜单子类化
-	dm.ContextMenuState.InstallRightClickHandler(
-		dm.BodyWidget, dm.MainWindow.Handle(), dm.Manager, dm.Executor, dm.getFreeItemPixelPos,
-		func() []*ui.GroupCard { return dm.Cards },
-		func(cmd int) { dm.handleContextMenuCommand(cmd) },
-		dm.addNewCard,
-		dm.refreshRecycleBinAfterEmpty,
-	)
+	dm.ContextMenuState.InstallRightClickHandler(RightClickHandlerConfig{
+		BodyWidget:        dm.BodyWidget,
+		MainWindow:        dm.MainWindow.Handle(),
+		Manager:           dm.Manager,
+		Executor:          dm.Executor,
+		GetPixelPos:       dm.getFreeItemPixelPos,
+		GetCards:          func() []*ui.GroupCard { return dm.Cards },
+		OnDesktopCmd:      func(cmd int) { dm.handleContextMenuCommand(cmd) },
+		OnNewCard:         dm.addNewCard,
+		OnEmptyRecycleBin: dm.refreshRecycleBinAfterEmpty,
+	})
 
 	// 注册外部文件拖放（从桌面/资源管理器拖文件到应用）
 	dm.RegisterExternalDropTarget()

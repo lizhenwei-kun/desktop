@@ -14,22 +14,22 @@ import (
 )
 
 // InstallRightClickHandler 安装右键菜单子类化
-func (s *ContextMenuState) InstallRightClickHandler(bodyWidget *walk.CustomWidget, mainWindow win.HWND, manager *group.Manager, executor *ui.ProgramExecutor, getPixelPos func(string, int) (int, int), getCards func() []*ui.GroupCard, onDesktopCmd func(cmd int), onNewCard func(), onEmptyRecycleBin func()) {
-	hwnd := bodyWidget.Handle()
+func (s *ContextMenuState) InstallRightClickHandler(cfg RightClickHandlerConfig) {
+	hwnd := cfg.BodyWidget.Handle()
 	if hwnd == 0 {
 		return
 	}
 
 	// 保存依赖，供异步消息处理器使用
-	s.rclickBodyWidget = bodyWidget
-	s.rclickMainWindow = mainWindow
-	s.rclickManager = manager
-	s.rclickExecutor = executor
-	s.rclickGetPixelPos = getPixelPos
-	s.rclickGetCards = getCards
-	s.rclickOnDesktopCmd = onDesktopCmd
-	s.rclickOnNewCard = onNewCard
-	s.rclickOnEmptyRecycleBin = onEmptyRecycleBin
+	s.rclickBodyWidget = cfg.BodyWidget
+	s.rclickMainWindow = cfg.MainWindow
+	s.rclickManager = cfg.Manager
+	s.rclickExecutor = cfg.Executor
+	s.rclickGetPixelPos = cfg.GetPixelPos
+	s.rclickGetCards = cfg.GetCards
+	s.rclickOnDesktopCmd = cfg.OnDesktopCmd
+	s.rclickOnNewCard = cfg.OnNewCard
+	s.rclickOnEmptyRecycleBin = cfg.OnEmptyRecycleBin
 
 	s.RClickCB = syscall.NewCallback(func(hwnd uintptr, msg uint32, wParam, lParam, uIDSubclass, dwRefData uintptr) uintptr {
 		if msg == win.WM_RBUTTONDOWN {
