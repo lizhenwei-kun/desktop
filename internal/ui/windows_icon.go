@@ -389,6 +389,9 @@ func (ie *IconExtractor) extractIconExtraLarge(filePath string) (image.Image, er
 	// IImageList vtable: QueryInterface(0), AddRef(1), Release(2), Add(3), ReplaceIcon(4),
 	// SetOverlayImage(5), Replace(6), AddMasked(7), Draw(8), Remove(9), GetIcon(10)
 	vtable := *(*[64]uintptr)(unsafe.Pointer(*(*uintptr)(unsafe.Pointer(pImageList))))
+	// SHGetImageList 返回的 IImageList 每次调用都会 AddRef，必须 Release 平衡引用计数，
+	// 否则每次刷新提取图标都会累积 COM 引用计数，长时间运行导致 COM 资源耗尽。
+	defer syscall.SyscallN(vtable[2], pImageList) // IImageList::Release
 	var hIcon uintptr
 	hr2, _, err3 := syscall.SyscallN(vtable[10], // IImageList::GetIcon
 		pImageList,
@@ -915,6 +918,10 @@ func (ie *IconExtractor) GetSystemIconImage(shellPath string) (image.Image, erro
 	}
 
 	vtable := *(*[64]uintptr)(unsafe.Pointer(*(*uintptr)(unsafe.Pointer(pImageList))))
+	// SHGetImageList 返回的 IImageList 每次调用都会 AddRef，必须 Release 平衡引用计数，
+	// 否则长时间反复刷新（每次刷新都提取系统图标）会累积 COM 引用计数，
+	// 最终导致 COM 资源耗尽（GetIcon failed hr=0x8007000E / CreateDIBSection failed）。
+	defer syscall.SyscallN(vtable[2], pImageList) // IImageList::Release
 	var hIcon uintptr
 	hr3, _, _ := syscall.SyscallN(vtable[10], pImageList, uintptr(iconIndex), ILD_TRANSPARENT, uintptr(unsafe.Pointer(&hIcon)))
 	if hr3 != 0 || hIcon == 0 {
