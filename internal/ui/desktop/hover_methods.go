@@ -87,17 +87,16 @@ func (dm *DesktopMode) paintAllIcons(canvas *walk.Canvas, bounds walk.Rectangle)
 		isHovered := item.Path == dm.Hovered.Path
 		isEditing := item.Path == dm.EditingPath
 
-		// 预先计算文字行数，选中/悬停时框需要包含全部显示文字
+		// 预先计算文字行数，选中/悬停框高统一按"实际显示行数"计算，无底部 padding。
+		// 选中框显示全部行（最多 4 行），hover 最多 2 行。
 		displayName := item.Name
 		lines := ui.SplitTextToLines(displayName, 4)
 		selH := ui.TileHeight()
 		if isSelected {
-			selH = ui.DesktopIconLabelTop() + len(lines)*ui.DesktopIconLineHeight() + 4
+			selH = ui.DesktopIconLabelTop() + len(lines)*ui.DesktopIconLineHeight()
 		} else if isHovered {
-			// 悬停只显示最多 2 行（GetIconDisplayLines），框高按实际显示行数，
-			// 避免短名称（1 行）时磁贴底部留出整行空白
 			hoverLines := ui.GetIconDisplayLines(displayName, 4)
-			selH = ui.DesktopIconLabelTop() + len(hoverLines)*ui.DesktopIconLineHeight() + 4
+			selH = ui.DesktopIconLabelTop() + len(hoverLines)*ui.DesktopIconLineHeight()
 		}
 
 		// 绘制选中/悬停高亮

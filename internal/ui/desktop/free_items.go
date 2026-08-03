@@ -331,21 +331,20 @@ func (dm *DesktopMode) invalidateSelection(sel ui.Selection) {
 		}
 		return
 	}
-	// 未分组图标：只重绘桌面对应磁贴
+	// 未分组图标：只重绘桌面对应磁贴。
+	// 重绘高度始终用图标全部文字行数（选中框最大高度），而不是当前 hover/选中状态，
+	// 因为清除选中时 dm.Selected 可能已被改写，若按当前状态算高度会把选中框的
+	// 扩展文字区域残留漏掉。用最大高度保证选中框边线被完整清除。
 	items := dm.Manager.GetUngroupedItems()
 	for i, item := range items {
 		if item.Path != sel.Path {
 			continue
 		}
 		px, py := dm.getFreeItemPixelPos(item.Path, i)
-		// 重绘高度按 hover/选中框实际显示行数计算，保证框完整刷新
-		h := ui.TileHeight()
-		if sel.Path == dm.Selected.Path {
-			lines := ui.SplitTextToLines(item.Name, 4)
-			h = ui.DesktopIconLabelTop() + len(lines)*ui.DesktopIconLineHeight() + 4
-		} else {
-			hoverLines := ui.GetIconDisplayLines(item.Name, 4)
-			h = ui.DesktopIconLabelTop() + len(hoverLines)*ui.DesktopIconLineHeight() + 4
+		lines := ui.SplitTextToLines(item.Name, 4)
+		h := ui.DesktopIconLabelTop() + len(lines)*ui.DesktopIconLineHeight()
+		if h < ui.TileHeight() {
+			h = ui.TileHeight()
 		}
 		rect := win.RECT{
 			Left: int32(px), Top: int32(py),

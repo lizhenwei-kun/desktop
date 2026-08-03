@@ -854,25 +854,44 @@ func (gc *GroupCard) paintIconGrid(canvas *walk.Canvas, bounds walk.Rectangle) {
 		gc.groupName, len(gc.items), bounds.X, bounds.Y, bounds.Width, bounds.Height,
 		startY, colWidth, maxCols, desktopIconItemHeight)
 
+	// 先绘制所有非选中图标，最后再绘制选中的图标。
+	// 选中图标显示全部长文本，可能向下扩展侵入下一行磁贴区域；
+	// 若按索引顺序绘制，下一行图标会后画覆盖选中文本。改为两遍绘制，
+	// 让选中图标最后画、位于最上层，长文本不被下面的图标遮挡。
+	var hoverPath, selectedPath string
+	if gc.selection != nil {
+		hoverPath = gc.selection.GetHovered().Path
+		selectedPath = gc.selection.GetSelected().Path
+	}
+
+	// 第一遍：非选中图标（含 hover 效果）
 	for i, item := range gc.items {
+		if item.Path == selectedPath {
+			continue
+		}
 		col := i % maxCols
 		row := i / maxCols
-
 		x := startX + col*colWidth
 		y := startY + row*desktopIconItemHeight
-
 		if y+desktopIconItemHeight > bounds.Y+bounds.Height {
-			logger.Debug("paintIconGrid: card=%q BREAK at item[%d] name=%q (y=%d + tileH=%d > bottom=%d)",
-				gc.groupName, i, item.Name, y, desktopIconItemHeight, bounds.Y+bounds.Height)
 			break
 		}
+		gc.paintIconTile(canvas, item, x, y, item.Path == hoverPath, false)
+	}
 
-		var hovered, selected bool
-		if gc.selection != nil {
-			hovered = item.Path == gc.selection.GetHovered().Path
-			selected = item.Path == gc.selection.GetSelected().Path
+	// 第二遍：选中图标（位于最上层，长文本不被遮挡）
+	for i, item := range gc.items {
+		if item.Path != selectedPath {
+			continue
 		}
-		gc.paintIconTile(canvas, item, x, y, hovered, selected)
+		col := i % maxCols
+		row := i / maxCols
+		x := startX + col*colWidth
+		y := startY + row*desktopIconItemHeight
+		if y+desktopIconItemHeight > bounds.Y+bounds.Height {
+			break
+		}
+		gc.paintIconTile(canvas, item, x, y, false, true)
 	}
 }
 
@@ -882,12 +901,12 @@ func (gc *GroupCard) paintIconTile(canvas *walk.Canvas, item group.GroupItem, x,
 	lines := SplitTextToLines(item.Name, 4)
 	selH := desktopIconItemHeight
 	if selected {
-		selH = DesktopIconLabelTop() + len(lines)*DesktopIconLineHeight() + 8
+		// 选中框显示全部行，无底部 padding
+		selH = DesktopIconLabelTop() + len(lines)*DesktopIconLineHeight()
 	} else if hovered {
-		// 悬停只显示最多 2 行（GetIconDisplayLines），框高按实际显示行数，
-		// 避免短名称（1 行）时磁贴底部留出整行空白
+		// hover 最多显示 2 行，无底部 padding
 		hoverLines := GetIconDisplayLines(item.Name, 4)
-		selH = DesktopIconLabelTop() + len(hoverLines)*DesktopIconLineHeight() + 8
+		selH = DesktopIconLabelTop() + len(hoverLines)*DesktopIconLineHeight()
 	}
 
 	if selected {
