@@ -135,7 +135,13 @@ func (dm *DesktopMode) checkDelayedRefresh() {
 	// 后台 goroutine 执行 ReloadDesktopItems（涉及文件 I/O），避免阻塞 UI 主线程
 	dm.Work.Post(func() {
 		logger.Debug("desktopWatcher: directory changed, reloading desktop items")
+
+		// 抑制 ReloadDesktopItems 末尾触发的 notifyChange 回调（会投递 dm.Refresh() 到 UI 线程）。
+		// 本函数已通过下方的 dm.Post(InvalidateBody) 主动重绘桌面，若再触发 dm.Refresh()
+		// 会导致同一变更被重绘两次（长时间运行时桌面目录频繁变化会反复产生该重复开销）。
+		dm.Manager.SuppressNotify()
 		dm.Manager.ReloadDesktopItems()
+		dm.Manager.UnsuppressNotify()
 
 		// 预加载所有图标缓存（分组+未分组）
 		ui.GlobalIconBmpCache.LoadAllFromManager(dm.Manager)

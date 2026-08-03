@@ -262,7 +262,11 @@ func (dm *DesktopMode) delayedSetup() {
 			dm.Post(func() {
 				dm.reapplyCardPositions()
 				dm.WallpaperState.LoadWallpaper(dm.MainWindow.DPI, dm.WorkW, dm.WorkH)
+				// 抑制 ReloadDesktopItems 末尾触发的 notifyChange 回调（会投递 dm.Refresh() 到 UI 线程）。
+				// 此处已通过下方的 InvalidateBody 主动重绘桌面，再触发 dm.Refresh() 会造成重复刷新。
+				dm.Manager.SuppressNotify()
 				dm.Manager.ReloadDesktopItems()
+				dm.Manager.UnsuppressNotify()
 				dm.InvalidateBody()
 			})
 		})
