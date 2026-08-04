@@ -182,6 +182,9 @@ func recycleBinIcoPath() string {
 
 // imageToBitmap 将 image.Image 转为 walk.Bitmap
 func imageToBitmap(img image.Image) *walk.Bitmap {
+	if img == nil {
+		return nil
+	}
 	rgbaImg, ok := img.(*image.RGBA)
 	if !ok {
 		b := img.Bounds()
