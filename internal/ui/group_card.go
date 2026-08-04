@@ -73,6 +73,7 @@ type GroupCard struct {
 	bgCacheBmp *walk.Bitmap
 	bgCacheW   int
 	bgCacheH   int
+	scrollY    int // 图标网格垂直滚动偏移（像素，>=0）
 
 	isDragging    bool
 	isPressed     bool
@@ -385,6 +386,31 @@ func (gc *GroupCard) setupMouseEvents() {
 			} else {
 				gc.selection.SetHovered(Selection{})
 			}
+		}
+	})
+
+	gc.bodyWidget.MouseWheel().Attach(func(x, y int, button walk.MouseButton) {
+		if gc.isCollapsed || gc.isResizing || gc.isDragging {
+			return
+		}
+		delta := walk.MouseWheelEventDelta(button)
+		if delta == 0 {
+			return
+		}
+		bounds := gc.bodyWidget.ClientBoundsPixels()
+		colWidth := TileColWidth()
+		if colWidth <= 0 {
+			return
+		}
+		maxCols := (bounds.Width - 8) / colWidth
+		if maxCols < 1 {
+			maxCols = 1
+		}
+		step := desktopIconItemHeight
+		if delta > 0 {
+			gc.setScrollY(bounds, maxCols, gc.scrollY-step)
+		} else {
+			gc.setScrollY(bounds, maxCols, gc.scrollY+step)
 		}
 	})
 }
@@ -839,9 +865,94 @@ func (gc *GroupCard) paintHeader(canvas *walk.Canvas, bounds walk.Rectangle) {
 	}
 }
 
+func (gc *GroupCard) gridStartY(bounds walk.Rectangle) int {
+	return bounds.Y + cardHeaderHeight + 4
+}
+
+func (gc *GroupCard) gridVisibleHeight(bounds walk.Rectangle) int {
+	h := bounds.Height - (cardHeaderHeight + 4)
+	if h < 0 {
+		return 0
+	}
+	return h
+}
+
+func (gc *GroupCard) gridContentHeight(maxCols int) int {
+	if maxCols <= 0 {
+		return 0
+	}
+	rows := (len(gc.items) + maxCols - 1) / maxCols
+	return rows * desktopIconItemHeight
+}
+
+func (gc *GroupCard) maxScrollY(bounds walk.Rectangle, maxCols int) int {
+	contentH := gc.gridContentHeight(maxCols)
+	visibleH := gc.gridVisibleHeight(bounds)
+	maxScroll := contentH - visibleH
+	if maxScroll < 0 {
+		return 0
+	}
+	return maxScroll
+}
+
+func (gc *GroupCard) clampScrollY(bounds walk.Rectangle, maxCols int) {
+	maxScroll := gc.maxScrollY(bounds, maxCols)
+	if gc.scrollY < 0 {
+		gc.scrollY = 0
+	} else if gc.scrollY > maxScroll {
+		gc.scrollY = maxScroll
+	}
+}
+
+func (gc *GroupCard) setScrollY(bounds walk.Rectangle, maxCols, y int) {
+	maxScroll := gc.maxScrollY(bounds, maxCols)
+	if y < 0 {
+		y = 0
+	} else if y > maxScroll {
+		y = maxScroll
+	}
+	if gc.scrollY != y {
+		gc.scrollY = y
+		gc.bodyWidget.Invalidate()
+	}
+}
+
+func (gc *GroupCard) paintScrollBar(canvas *walk.Canvas, bounds walk.Rectangle, maxCols int) {
+	visibleH := gc.gridVisibleHeight(bounds)
+	contentH := gc.gridContentHeight(maxCols)
+	if contentH <= visibleH {
+		return
+	}
+	maxScroll := contentH - visibleH
+	trackY := gc.gridStartY(bounds)
+	trackH := visibleH
+	if trackH <= 0 {
+		return
+	}
+	thumbH := visibleH * visibleH / contentH
+	if thumbH < 16 {
+		thumbH = 16
+	}
+	if thumbH > trackH {
+		thumbH = trackH
+	}
+	thumbY := trackY
+	if maxScroll > 0 {
+		thumbY += gc.scrollY * (trackH - thumbH) / maxScroll
+	}
+	// 半透明滚动条轨道
+	drawAlphaRect(canvas, walk.Rectangle{
+		X: bounds.X + bounds.Width - 6, Y: trackY,
+		Width: 4, Height: trackH,
+	}, 0x80, 0x80, 0x80, 60)
+	// thumb
+	drawAlphaRect(canvas, walk.Rectangle{
+		X: bounds.X + bounds.Width - 6, Y: thumbY,
+		Width: 4, Height: thumbH,
+	}, 0xCC, 0xCC, 0xCC, 100)
+}
+
 func (gc *GroupCard) paintIconGrid(canvas *walk.Canvas, bounds walk.Rectangle) {
-	startY := bounds.Y + cardHeaderHeight + 4
-	startX := bounds.X + 4
 	colWidth := TileColWidth()
 	if colWidth <= 0 {
 		return
@@ -850,9 +961,14 @@ func (gc *GroupCard) paintIconGrid(canvas *walk.Canvas, bounds walk.Rectangle) {
 	if maxCols < 1 {
 		maxCols = 1
 	}
-	logger.Debug("paintIconGrid: card=%q items=%d bounds=(%d,%d,%dx%d) startY=%d colWidth=%d maxCols=%d tileH=%d",
+	gc.clampScrollY(bounds, maxCols)
+
+	startY := gc.gridStartY(bounds) - gc.scrollY
+	startX := bounds.X + 4
+
+	logger.Debug("paintIconGrid: card=%q items=%d bounds=(%d,%d,%dx%d) startY=%d colWidth=%d maxCols=%d tileH=%d scrollY=%d",
 		gc.groupName, len(gc.items), bounds.X, bounds.Y, bounds.Width, bounds.Height,
-		startY, colWidth, maxCols, desktopIconItemHeight)
+		startY, colWidth, maxCols, desktopIconItemHeight, gc.scrollY)
 
 	// 先绘制所有非选中图标，最后再绘制选中的图标。
 	// 选中图标显示全部长文本，可能向下扩展侵入下一行磁贴区域；
@@ -864,6 +980,8 @@ func (gc *GroupCard) paintIconGrid(canvas *walk.Canvas, bounds walk.Rectangle) {
 		selectedPath = gc.selection.GetSelected().Path
 	}
 
+	clientBottom := bounds.Y + bounds.Height
+
 	// 第一遍：非选中图标（含 hover 效果）
 	for i, item := range gc.items {
 		if item.Path == selectedPath {
@@ -873,8 +991,9 @@ func (gc *GroupCard) paintIconGrid(canvas *walk.Canvas, bounds walk.Rectangle) {
 		row := i / maxCols
 		x := startX + col*colWidth
 		y := startY + row*desktopIconItemHeight
-		if y+desktopIconItemHeight > bounds.Y+bounds.Height {
-			break
+		tileBottom := y + desktopIconItemHeight
+		if tileBottom <= bounds.Y || y >= clientBottom {
+			continue
 		}
 		gc.paintIconTile(canvas, item, x, y, item.Path == hoverPath, false)
 	}
@@ -888,11 +1007,17 @@ func (gc *GroupCard) paintIconGrid(canvas *walk.Canvas, bounds walk.Rectangle) {
 		row := i / maxCols
 		x := startX + col*colWidth
 		y := startY + row*desktopIconItemHeight
-		if y+desktopIconItemHeight > bounds.Y+bounds.Height {
-			break
+		// 选中时磁贴可能向下扩展，按最大可能高度估算可见性
+		lines := SplitTextToLines(item.Name, 4)
+		maxSelH := DesktopIconLabelTop() + len(lines)*DesktopIconLineHeight()
+		tileBottom := y + maxSelH
+		if tileBottom <= bounds.Y || y >= clientBottom {
+			continue
 		}
 		gc.paintIconTile(canvas, item, x, y, false, true)
 	}
+
+	gc.paintScrollBar(canvas, bounds, maxCols)
 }
 
 func (gc *GroupCard) paintIconTile(canvas *walk.Canvas, item group.GroupItem, x, y int, hovered, selected bool) {
@@ -972,8 +1097,6 @@ func (gc *GroupCard) paintIconTile(canvas *walk.Canvas, item group.GroupItem, x,
 
 func (gc *GroupCard) getItemIndexAt(x, y int) int {
 	bounds := gc.bodyWidget.ClientBoundsPixels()
-	startY := bounds.Y + cardHeaderHeight + 4
-	startX := bounds.X + 4
 	colWidth := TileColWidth()
 	if colWidth <= 0 {
 		return -1
@@ -982,6 +1105,9 @@ func (gc *GroupCard) getItemIndexAt(x, y int) int {
 	if maxCols < 1 {
 		maxCols = 1
 	}
+	gc.clampScrollY(bounds, maxCols)
+	startY := gc.gridStartY(bounds) - gc.scrollY
+	startX := bounds.X + 4
 
 	for i := range gc.items {
 		col := i % maxCols
@@ -998,8 +1124,6 @@ func (gc *GroupCard) getItemIndexAt(x, y int) int {
 
 func (gc *GroupCard) getIconTileBounds(idx int) (x, y int) {
 	bounds := gc.bodyWidget.ClientBoundsPixels()
-	startY := cardHeaderHeight + 4
-	startX := 4
 	colWidth := TileColWidth()
 	if colWidth <= 0 {
 		return 0, 0
@@ -1008,6 +1132,9 @@ func (gc *GroupCard) getIconTileBounds(idx int) (x, y int) {
 	if maxCols < 1 {
 		maxCols = 1
 	}
+	gc.clampScrollY(bounds, maxCols)
+	startY := gc.gridStartY(bounds) - gc.scrollY
+	startX := 4
 	col := idx % maxCols
 	row := idx / maxCols
 	return startX + col*colWidth, startY + row*desktopIconItemHeight
@@ -1260,6 +1387,7 @@ func (gc *GroupCard) toggleCollapse() {
 		win.SetWindowPos(gc.container.Handle(), win.HWND_TOP, 0, 0, 0, 0,
 			win.SWP_NOMOVE|win.SWP_NOSIZE|win.SWP_NOACTIVATE)
 	}
+	gc.scrollY = 0
 	gc.applyCollapsedBounds()
 	if gc.onCollapseToggle != nil {
 		gc.onCollapseToggle(gc.groupName, gc.isCollapsed)
