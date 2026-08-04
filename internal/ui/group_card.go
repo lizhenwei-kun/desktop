@@ -982,6 +982,12 @@ func (gc *GroupCard) paintIconGrid(canvas *walk.Canvas, bounds walk.Rectangle) {
 
 	clientBottom := bounds.Y + bounds.Height
 
+	// 设置裁剪区域为内容区（排除标题栏），防止向下滚动时图标网格上移漏到标题栏。
+	// 用 Win32 clip 精确裁剪：即使图标坐标进入标题栏区域，也不会被绘制出来。
+	contentTop := gc.gridStartY(bounds)
+	savedDC := win.SaveDC(canvas.HDC())
+	win.IntersectClipRect(canvas.HDC(), int32(bounds.X), int32(contentTop), int32(bounds.X+bounds.Width), int32(clientBottom))
+
 	// 第一遍：非选中图标（含 hover 效果）
 	for i, item := range gc.items {
 		if item.Path == selectedPath {
@@ -1016,6 +1022,9 @@ func (gc *GroupCard) paintIconGrid(canvas *walk.Canvas, bounds walk.Rectangle) {
 		}
 		gc.paintIconTile(canvas, item, x, y, false, true)
 	}
+
+	// 恢复裁剪区域，避免影响后续绘制（滚动条等）
+	win.RestoreDC(canvas.HDC(), savedDC)
 
 	gc.paintScrollBar(canvas, bounds, maxCols)
 }
