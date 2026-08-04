@@ -127,58 +127,120 @@ func NewIconExtractor() *IconExtractor {
 	return &IconExtractor{}
 }
 
-// GetIconImage 获取文件图标图片
+// GetIconImage 获取文件图标图片。
+// 采用"逐尺寸双路径交替"策略：按尺寸阶梯（当前档位优先，其余从大到小）逐个尝试，
+// 每个尺寸先走 extractIcon（SHGetImageList），失败再走 extractIconEx（LoadImageW）。
+// 最大化成功概率，避免直接落到 32x32 被放大导致箭头过大。
 func (ie *IconExtractor) GetIconImage(filePath string) (image.Image, error) {
 	logger.Debug("GetIconImage: ENTER path=%q iconSizeBase=%d dpi=%d target=%d",
 		filePath, desktopIconSizeBase, CurrentDPI(), DesktopIconSize())
 
-	// 直接用原始路径获取图标（SHGetFileInfo/SHGetImageList 能正确处理 .lnk/.url 等）
-	img, err := ie.extractIcon(filePath)
-	if img == nil {
-		logger.Debug("GetIconImage: extractIcon(path=%q) failed: %v", filePath, err)
-		// 尝试解析快捷方式目标路径后重试
-		actualPath := ie.resolveIconPath(filePath)
-		if actualPath != filePath {
-			logger.Debug("GetIconImage: retry extractIcon with resolved=%q", actualPath)
-			img, err = ie.extractIcon(actualPath)
-			if img == nil {
-				logger.Debug("GetIconImage: extractIcon(resolved=%q) also failed: %v", actualPath, err)
-			}
-		}
-	} else {
-		logger.Debug("GetIconImage: extractIcon(path=%q) ok, size=%dx%d",
-			filePath, img.Bounds().Dx(), img.Bounds().Dy())
+	// 尝试原始路径
+	if img := ie.extractIconAlternate(filePath); img != nil {
+		return img, nil
 	}
-	if img == nil {
-		// 尝试 ExtractIconExW（对 exe/dll 有效）
-		logger.Debug("GetIconImage: trying extractIconEx(path=%q)", filePath)
-		img = ie.extractIconEx(filePath)
-		if img != nil {
-			logger.Debug("GetIconImage: extractIconEx(path=%q) ok, size=%dx%d",
-				filePath, img.Bounds().Dx(), img.Bounds().Dy())
-		} else {
-			logger.Debug("GetIconImage: extractIconEx(path=%q) returned nil", filePath)
-		}
-	}
-	if img == nil {
-		// 最后尝试解析 lnk 目标后用 ExtractIconExW
-		actualPath := ie.resolveIconPath(filePath)
-		if actualPath != filePath {
-			logger.Debug("GetIconImage: trying extractIconEx(resolved=%q)", actualPath)
-			img = ie.extractIconEx(actualPath)
-			if img != nil {
-				logger.Debug("GetIconImage: extractIconEx(resolved=%q) ok, size=%dx%d",
-					actualPath, img.Bounds().Dx(), img.Bounds().Dy())
-			}
+	// 解析快捷方式目标路径后重试
+	actualPath := ie.resolveIconPath(filePath)
+	if actualPath != filePath {
+		if img := ie.extractIconAlternate(actualPath); img != nil {
+			return img, nil
 		}
 	}
 
-	if img == nil {
-		logger.Warn("GetIconImage: ALL extraction failed for %q, using fallback", filePath)
-		img = ie.getFallbackIcon(filePath)
-	}
-
+	logger.Warn("GetIconImage: ALL extraction failed for %q, using fallback", filePath)
+	img := ie.getFallbackIcon(filePath)
 	return img, nil
+}
+
+// extractIconAlternate 按尺寸阶梯逐尺寸双路径交替提取图标。
+// 每个尺寸先 extractIcon（SHGetImageList），失败再 extractIconEx（LoadImageW），
+// 成功且非低质量即返回。
+func (ie *IconExtractor) extractIconAlternate(filePath string) image.Image {
+	for _, size := range iconSizeLadder() {
+		// 路径1：SHGetImageList
+		if img := ie.extractIconBySize(filePath, size); img != nil && !ie.isLowQualityIcon(img) {
+			logger.Debug("extractIconAlternate: %q size=%d SHGetImageList ok, got=%dx%d",
+				filePath, size, img.Bounds().Dx(), img.Bounds().Dy())
+			return img
+		}
+		// 路径2：LoadImageW（ExtractIcoFile）
+		if img := ie.extractIconExBySize(filePath, size); img != nil && !ie.isLowQualityIcon(img) {
+			logger.Debug("extractIconAlternate: %q size=%d LoadImageW ok, got=%dx%d",
+				filePath, size, img.Bounds().Dx(), img.Bounds().Dy())
+			return img
+		}
+	}
+	return nil
+}
+
+// iconSizeLadder 返回图标尺寸阶梯，当前档位目标尺寸放在最前，其余按从大到小排列。
+// 大档(64): [64, 256, 48, 32, 16]
+// 中档(48): [48, 256, 64, 32, 16]
+// 小档(32): [32, 256, 64, 48, 16]
+func iconSizeLadder() []int {
+	target := DesktopIconSize()
+	order := []int{256, 64, 48, 32, 16}
+	ladder := make([]int, 0, len(order))
+	// 目标尺寸放最前
+	ladder = append(ladder, target)
+	for _, s := range order {
+		if s != target {
+			ladder = append(ladder, s)
+		}
+	}
+	return ladder
+}
+
+// extractIconBySize 用 SHGetImageList 按指定尺寸提取图标。
+// 尺寸无对应 SHIL 档位时跳过（返回 nil）。
+func (ie *IconExtractor) extractIconBySize(filePath string, size int) image.Image {
+	shil, shilName, ok := shilForSizeExact(size)
+	if !ok {
+		logger.Debug("extractIconBySize: size=%d has no SHIL slot, skip for %q", size, filePath)
+		return nil
+	}
+	img, err := ie.extractIconFromSHIL(filePath, shil, shilName)
+	if err != nil {
+		return nil
+	}
+	return img
+}
+
+// extractIconExBySize 用 LoadImageW 按指定尺寸提取图标（走 ExtractIcoFileSize）。
+// 对 .lnk/.url 先解析目标路径再用 LoadImageW，避免直接对快捷方式调用
+// LoadImageW（非 .ico 必然失败，产生大量无效 WARN 日志）。
+func (ie *IconExtractor) extractIconExBySize(filePath string, size int) image.Image {
+	// 解析 .lnk/.url 目标路径（LoadImageW 需要真实文件 .ico/.exe 等）
+	target := ie.resolveIconPath(filePath)
+	if img := ie.ExtractIcoFileSize(target, size); img != nil {
+		return img
+	}
+	// 若解析出目标但与原始不同，再尝试原始路径兜底
+	if target != filePath {
+		return ie.ExtractIcoFileSize(filePath, size)
+	}
+	return nil
+}
+
+// shilForSizeExact 精确映射尺寸到 SHIL 档位。
+// 返回 (shil, 名称, 是否有对应档位)。
+//   - 256/64：JUMBO(256)，绘制时缩放
+//   - 48：EXTRALARGE(48)
+//   - 32：LARGE(32)
+//   - 16 等：无对应 SHIL 档，返回 ok=false
+func shilForSizeExact(size int) (int, string, bool) {
+	switch size {
+	case 256:
+		return SHIL_JUMBO, "SHIL_JUMBO", true
+	case 64:
+		return SHIL_JUMBO, "SHIL_JUMBO", true
+	case 48:
+		return SHIL_EXTRALARGE, "SHIL_EXTRALARGE", true
+	case 32:
+		return SHIL_LARGE, "SHIL_LARGE", true
+	default:
+		return 0, "", false
+	}
 }
 
 // GetIconPNGPath 获取图标的 PNG 缓存路径
@@ -312,40 +374,6 @@ func (ie *IconExtractor) parseURLIconFile(urlPath string) string {
 		}
 	}
 	return ""
-}
-
-// extractIcon 使用 SHGetImageList 提取 48x48 高清图标
-func (ie *IconExtractor) extractIcon(filePath string) (image.Image, error) {
-	logger.Debug("extractIcon: ENTER path=%q", filePath)
-	// 先尝试获取 48x48 extra large 图标
-	img, err := ie.extractIconExtraLarge(filePath)
-	if err == nil && img != nil {
-		logger.Debug("extractIcon: extractIconExtraLarge ok for %q, size=%dx%d",
-			filePath, img.Bounds().Dx(), img.Bounds().Dy())
-		return img, nil
-	}
-	logger.Debug("extractIcon: extractIconExtraLarge failed for %q: %v, fallback to SHGetFileInfo", filePath, err)
-
-	// 回退到 SHGetFileInfo 获取 32x32 大图标
-	pathPtr, _ := syscall.UTF16PtrFromString(filePath)
-
-	var shfi SHFILEINFOW
-	ret, _, err2 := procSHGetFileInfoW.Call(
-		uintptr(unsafe.Pointer(pathPtr)),
-		0,
-		uintptr(unsafe.Pointer(&shfi)),
-		unsafe.Sizeof(shfi),
-		SHGFI_ICON|SHGFI_LARGEICON,
-	)
-
-	if ret == 0 || shfi.HIcon == 0 {
-		logger.Debug("extractIcon: SHGetFileInfo(LARGEICON) failed for %q ret=%d err=%v", filePath, ret, err2)
-		return nil, os.ErrNotExist
-	}
-	defer procDestroyIcon.Call(shfi.HIcon)
-	logger.Debug("extractIcon: SHGetFileInfo ok for %q hIcon=0x%X", filePath, shfi.HIcon)
-
-	return ie.hIconToImage(shfi.HIcon)
 }
 
 // extractIconExtraLarge 使用 SHGetImageList 获取图标，按当前图标档位选择对应的尺寸列表。
@@ -593,9 +621,15 @@ func (ie *IconExtractor) ExtractIcoFromMemory(data []byte) image.Image {
 	return nil
 }
 
+// ExtractIcoFile 从 .ico 文件中提取图标，目标尺寸取当前档位。
 func (ie *IconExtractor) ExtractIcoFile(filePath string) image.Image {
-	target := DesktopIconSize()
-	logger.Debug("ExtractIcoFile: ENTER file=%q targetIconSize=%d (desktopIconSizeBase=%d, dpi=%d)",
+	return ie.ExtractIcoFileSize(filePath, DesktopIconSize())
+}
+
+// ExtractIcoFileSize 从 .ico 文件中提取指定目标尺寸附近的图标。
+// 目标尺寸不存在时先向大扩展，再向小扩展。
+func (ie *IconExtractor) ExtractIcoFileSize(filePath string, target int) image.Image {
+	logger.Debug("ExtractIcoFileSize: ENTER file=%q targetIconSize=%d (desktopIconSizeBase=%d, dpi=%d)",
 		filePath, target, desktopIconSizeBase, CurrentDPI())
 
 	pathPtr, _ := syscall.UTF16PtrFromString(filePath)
@@ -676,11 +710,6 @@ func buildIconRequestSizes(target int) []int {
 		}
 	}
 	return sizes
-}
-
-// extractIconEx 使用 ExtractIconExW 提取图标（对 exe/dll/ico 文件有效）
-func (ie *IconExtractor) extractIconEx(filePath string) image.Image {
-	return ie.ExtractIcoFile(filePath)
 }
 
 // hIconToImage 将 HICON 转换为 image.Image
