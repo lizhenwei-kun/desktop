@@ -764,12 +764,12 @@ const (
 // getDesktopIconSize 获取当前桌面图标大小
 func GetDesktopIconSize() int {
 	switch desktopIconSizeBase {
+	case 64:
+		return iconSizeLarge // 大档 64px
 	case 48:
-		return iconSizeLarge // 大档/中档都用 48px，通过档位记录区分
-	case 28:
-		return iconSizeSmall
+		return iconSizeMedium // 中档 48px
 	default:
-		return iconSizeSmall
+		return iconSizeSmall // 小档 32px
 	}
 }
 
@@ -790,19 +790,19 @@ func CurrentIconSizeLevel() int {
 // setDesktopIconSize 设置桌面图标大小（同时调整标签字号）
 //
 // 档位规格：
-//   - 大档：图标 48px，文字 11pt，磁贴间距 10px
-//   - 中档：图标 48px（与大档同尺寸），文字 10pt，磁贴间距 8px
+//   - 大档：图标 64px，文字 11pt，磁贴间距 10px
+//   - 中档：图标 48px，文字 10pt，磁贴间距 8px
 //   - 小档：图标 32px，文字 9pt， 磁贴间距 6px
 //
 // 中档使用 48px 标准尺寸，避免 40px 非标尺寸导致部分 .ico 加载失败
 // 或缩放时出现白色框等异常。切换档位时必须清空图标缓存。
 func SetDesktopIconSize(size int) {
-	logger.Info("SetDesktopIconSize: ENTER size=%d (0=large/48, 1=medium/48, 2=small/32), dpi=%d, prevBase=%d",
+	logger.Info("SetDesktopIconSize: ENTER size=%d (0=large/64, 1=medium/48, 2=small/32), dpi=%d, prevBase=%d",
 		size, CurrentDPI(), desktopIconSizeBase)
 	SetDesktopIconSizeLevel(size) // 记录档位
 	switch size {
 	case iconSizeLarge:
-		desktopIconSizeBase = 48
+		desktopIconSizeBase = 64
 		setIconFontSize(11) // 大档 11pt
 		setIconGap(10)
 	case iconSizeMedium:

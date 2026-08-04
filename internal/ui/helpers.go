@@ -72,7 +72,7 @@ func DpiPx(base96 int) int {
 // ============================================================
 
 // desktopIconSizeBase 当前档位下的图标位图基准尺寸（96 DPI）。
-// 大档 48，中档 48（与大档同尺寸，仅字号/间距不同），小档 32。实际像素 = DpiPx(desktopIconSizeBase)。
+// 大档 64，中档 48，小档 32。实际像素 = DpiPx(desktopIconSizeBase)。
 var desktopIconSizeBase = baseDesktopIconSize
 
 // DesktopIconSize 返回图标位图实际像素尺寸（随 DPI + 档位缩放）

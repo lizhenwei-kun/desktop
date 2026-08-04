@@ -348,13 +348,42 @@ func (ie *IconExtractor) extractIcon(filePath string) (image.Image, error) {
 	return ie.hIconToImage(shfi.HIcon)
 }
 
-// extractIconExtraLarge 使用 SHGetImageList 获取 48x48 图标
+// extractIconExtraLarge 使用 SHGetImageList 获取图标，按当前图标档位选择对应的尺寸列表。
+//   - 大档(64)：优先 SHIL_JUMBO (256x256)，若 256 提取失败或无数据空壳，
+//     回退 SHIL_EXTRALARGE (48x48)，避免落到 SHGetFileInfo 的 32x32 被放大 2 倍（箭头过大）
+//   - 中档(48)：SHIL_EXTRALARGE (48x48)
+//   - 小档(32)：SHIL_LARGE (32x32)，原生尺寸无需缩放
 func (ie *IconExtractor) extractIconExtraLarge(filePath string) (image.Image, error) {
 	// 锁定 goroutine 到 OS 线程，确保 COM 在当前线程正确初始化
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 	ComInitThread()
 
+	// 按当前档位选择 SHIL 图标列表
+	shil, shilName, _ := shilForSize(DesktopIconSize())
+	logger.Debug("extractIconExtraLarge: target=%d choose %s", DesktopIconSize(), shilName)
+
+	img, err := ie.extractIconFromSHIL(filePath, shil, shilName)
+
+	// 大档回退：JUMBO(256) 提取失败（GetIcon 无效句柄）或提取出的图标是空壳
+	// （alpha 全零/可见像素过少）时，降级到 EXTRALARGE(48) 重新提取。
+	// 避免直接落到外层 SHGetFileInfo 的 32x32 —— 32 源放大到 64 会放大 2 倍，
+	// 导致快捷方式箭头过大、图标发糊。
+	if shil == SHIL_JUMBO && (err != nil || ie.isLowQualityIcon(img)) {
+		logger.Debug("extractIconExtraLarge: %q JUMBO(256) unavailable (err=%v), fallback to EXTRALARGE(48)", filePath, err)
+		fallback, ferr := ie.extractIconFromSHIL(filePath, SHIL_EXTRALARGE, "SHIL_EXTRALARGE")
+		if ferr == nil && fallback != nil && !ie.isLowQualityIcon(fallback) {
+			return fallback, nil
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+	return img, nil
+}
+
+// extractIconFromSHIL 从指定 SHIL 图标列表提取指定文件的图标。
+func (ie *IconExtractor) extractIconFromSHIL(filePath string, shil int, shilName string) (image.Image, error) {
 	pathPtr, _ := syscall.UTF16PtrFromString(filePath)
 
 	// 获取文件在系统图标列表中的索引
@@ -367,21 +396,21 @@ func (ie *IconExtractor) extractIconExtraLarge(filePath string) (image.Image, er
 		SHGFI_SYSICONINDEX,
 	)
 	if ret == 0 {
-		logger.Debug("extractIconExtraLarge: SHGetFileInfoW(SYSICONINDEX) failed for %q ret=0 err=%v", filePath, err1)
+		logger.Debug("extractIconFromSHIL: SHGetFileInfoW(SYSICONINDEX) failed for %q ret=0 err=%v", filePath, err1)
 		return nil, os.ErrNotExist
 	}
 	iconIndex := shfi.IIcon
-	logger.Debug("extractIconExtraLarge: path=%q iconIndex=%d", filePath, iconIndex)
+	logger.Debug("extractIconFromSHIL: path=%q iconIndex=%d shil=%s", filePath, iconIndex, shilName)
 
-	// 获取 Extra Large (48x48) 图标列表 — 返回 IImageList COM 接口
+	// 获取对应尺寸的图标列表 — 返回 IImageList COM 接口
 	var pImageList uintptr
 	hr, _, err2 := procSHGetImageList.Call(
-		SHIL_EXTRALARGE,
+		uintptr(shil),
 		uintptr(unsafe.Pointer(&IID_IImageList)),
 		uintptr(unsafe.Pointer(&pImageList)),
 	)
 	if hr != 0 || pImageList == 0 {
-		logger.Debug("extractIconExtraLarge: SHGetImageList(SHIL_EXTRALARGE) failed for %q hr=0x%X err=%v", filePath, hr, err2)
+		logger.Debug("extractIconFromSHIL: SHGetImageList(%s) failed for %q hr=0x%X err=%v", shilName, filePath, hr, err2)
 		return nil, os.ErrNotExist
 	}
 
@@ -406,20 +435,42 @@ func (ie *IconExtractor) extractIconExtraLarge(filePath string) (image.Image, er
 	//    的图标加载失败时），此时 GetIconInfo/GetDIBits 可能读到垃圾数据，
 	//    导致出现全白/异常图标（如"飞鸽传书"中档显示白色框的问题）
 	if hr2 != 0 || hIcon == 0 || (hIcon>>32) != 0 {
-		logger.Debug("extractIconExtraLarge: GetIcon failed for %q hr=0x%X idx=%d hIcon=0x%X err=%v",
+		logger.Debug("extractIconFromSHIL: GetIcon failed for %q hr=0x%X idx=%d hIcon=0x%X err=%v",
 			filePath, hr2, iconIndex, hIcon, err3)
 		return nil, os.ErrNotExist
 	}
 	defer procDestroyIcon.Call(hIcon)
-	logger.Debug("extractIconExtraLarge: GetIcon ok for %q hIcon=0x%X", filePath, hIcon)
+	logger.Debug("extractIconFromSHIL: GetIcon ok for %q hIcon=0x%X", filePath, hIcon)
 
 	img, err := ie.hIconToImage(hIcon)
 	if err != nil {
-		logger.Debug("extractIconExtraLarge: hIconToImage failed for %q: %v", filePath, err)
+		logger.Debug("extractIconFromSHIL: hIconToImage failed for %q: %v", filePath, err)
 		return nil, err
 	}
-	logger.Debug("extractIconExtraLarge: ok for %q size=%dx%d", filePath, img.Bounds().Dx(), img.Bounds().Dy())
+	logger.Debug("extractIconFromSHIL: ok for %q size=%dx%d shil=%s", filePath, img.Bounds().Dx(), img.Bounds().Dy(), shilName)
 	return img, nil
+}
+
+// shilForSize 根据目标图标尺寸选择对应的 SHGetImageList 列表。
+// 返回 (shil 值, 列表名称, 源尺寸)。
+//   - 目标 >= 128：JUMBO (256)
+//   - 目标 64：JUMBO (256)，绘制时缩放
+//   - 目标 48：EXTRALARGE (48)
+//   - 目标 32：LARGE (32)
+//   - 其他：默认 EXTRALARGE (48)
+func shilForSize(target int) (int, string, int) {
+	switch {
+	case target >= 128:
+		return SHIL_JUMBO, "SHIL_JUMBO", 256
+	case target == 64:
+		return SHIL_JUMBO, "SHIL_JUMBO", 256
+	case target == 48:
+		return SHIL_EXTRALARGE, "SHIL_EXTRALARGE", 48
+	case target == 32:
+		return SHIL_LARGE, "SHIL_LARGE", 32
+	default:
+		return SHIL_EXTRALARGE, "SHIL_EXTRALARGE", 48
+	}
 }
 
 // ExtractIcoFile 从 .ico 文件中提取指定尺寸的图标（默认 48x48）
@@ -548,62 +599,83 @@ func (ie *IconExtractor) ExtractIcoFile(filePath string) image.Image {
 		filePath, target, desktopIconSizeBase, CurrentDPI())
 
 	pathPtr, _ := syscall.UTF16PtrFromString(filePath)
-	const requestSize = 48
-	hIcon, _, err1 := procLoadImageW.Call(
-		0,
-		uintptr(unsafe.Pointer(pathPtr)),
-		IMAGE_ICON,
-		uintptr(requestSize),
-		uintptr(requestSize),
-		LR_LOADFROMFILE,
-	)
-	if hIcon == 0 {
-		logger.Warn("ExtractIcoFile: LoadImageW(48) failed for %q, err=%v", filePath, err1)
-		// LoadImageW 失败：可能 .ico 不含 48 这一档。尝试 32（另一个常见标准尺寸）
-		hIcon2, _, err2 := procLoadImageW.Call(
+
+	// 扩展尺寸阶梯：目标不存在时先向大扩展，再向小扩展。
+	// 大方向：目标 → 64 → 128（封顶 128，不再往上）；小方向：32 → 16。
+	// 目标档位对应尺寸（32/48/64），其中 64 档在大方向必然经过。
+	sizes := buildIconRequestSizes(target)
+
+	for _, size := range sizes {
+		hIcon, _, err := procLoadImageW.Call(
 			0,
 			uintptr(unsafe.Pointer(pathPtr)),
 			IMAGE_ICON,
-			32, 32,
+			uintptr(size),
+			uintptr(size),
 			LR_LOADFROMFILE,
 		)
-		if hIcon2 == 0 {
-			logger.Warn("ExtractIcoFile: LoadImageW(32) also failed for %q, err=%v", filePath, err2)
-			// 回退到 ExtractIconExW
-			var hIconLarge uintptr
-			ret, _, err3 := procExtractIconExW.Call(
-				uintptr(unsafe.Pointer(pathPtr)),
-				0,
-				uintptr(unsafe.Pointer(&hIconLarge)),
-				0,
-				1,
-			)
-			if ret == 0 || hIconLarge == 0 {
-				logger.Warn("ExtractIcoFile: ExtractIconExW also failed for %q, ret=%d err=%v", filePath, ret, err3)
-				return nil
-			}
-			defer procDestroyIcon.Call(hIconLarge)
-			img, err := ie.hIconToImage(hIconLarge)
-			if err != nil {
-				logger.Warn("ExtractIcoFile: hIconToImage(ExtractIconExW) failed for %q: %v", filePath, err)
-				return nil
-			}
-			logger.Debug("ExtractIcoFile: ExtractIconExW fallback ok for %q, size=%dx%d", filePath, img.Bounds().Dx(), img.Bounds().Dy())
-			return img
+		if hIcon == 0 {
+			logger.Warn("ExtractIcoFile: LoadImageW(%d) failed for %q, err=%v", size, filePath, err)
+			continue
 		}
-		hIcon = hIcon2
-		logger.Debug("ExtractIcoFile: LoadImageW(32) succeeded for %q", filePath)
+		img, err := ie.hIconToImage(hIcon)
+		procDestroyIcon.Call(hIcon)
+		if err != nil {
+			logger.Warn("ExtractIcoFile: hIconToImage failed for %q at size=%d: %v", filePath, size, err)
+			continue
+		}
+		logger.Debug("ExtractIcoFile: LoadImageW(%d) ok for %q, size=%dx%d, targetIconSize=%d",
+			size, filePath, img.Bounds().Dx(), img.Bounds().Dy(), target)
+		return img
 	}
-	defer procDestroyIcon.Call(hIcon)
 
-	img, err := ie.hIconToImage(hIcon)
-	if err != nil {
-		logger.Warn("ExtractIcoFile: hIconToImage failed for %q: %v", filePath, err)
+	logger.Warn("ExtractIcoFile: LoadImageW all sizes failed for %q, fallback to ExtractIconExW", filePath)
+	// 回退到 ExtractIconExW
+	var hIconLarge uintptr
+	ret, _, err3 := procExtractIconExW.Call(
+		uintptr(unsafe.Pointer(pathPtr)),
+		0,
+		uintptr(unsafe.Pointer(&hIconLarge)),
+		0,
+		1,
+	)
+	if ret == 0 || hIconLarge == 0 {
+		logger.Warn("ExtractIcoFile: ExtractIconExW also failed for %q, ret=%d err=%v", filePath, ret, err3)
 		return nil
 	}
-	logger.Debug("ExtractIcoFile: LoadImageW ok for %q, size=%dx%d, targetIconSize=%d",
-		filePath, img.Bounds().Dx(), img.Bounds().Dy(), target)
+	defer procDestroyIcon.Call(hIconLarge)
+	img, err := ie.hIconToImage(hIconLarge)
+	if err != nil {
+		logger.Warn("ExtractIcoFile: hIconToImage(ExtractIconExW) failed for %q: %v", filePath, err)
+		return nil
+	}
+	logger.Debug("ExtractIcoFile: ExtractIconExW fallback ok for %q, size=%dx%d", filePath, img.Bounds().Dx(), img.Bounds().Dy())
 	return img
+}
+
+// buildIconRequestSizes 构建图标提取的请求尺寸阶梯。
+// 顺序：目标尺寸 → 向大扩展（64 → 128，封顶 128）→ 向小扩展（32 → 16）。
+// 目标档位为 32/48/64，其他目标值按最近的 32/48/64 归一后参与扩展。
+func buildIconRequestSizes(target int) []int {
+	if target <= 0 {
+		target = 48
+	}
+	sizes := make([]int, 0, 6)
+	// 目标本身
+	sizes = append(sizes, target)
+	// 向大扩展，到 128 封顶
+	for _, s := range []int{64, 128} {
+		if s > target && s <= 128 {
+			sizes = append(sizes, s)
+		}
+	}
+	// 向小扩展
+	for _, s := range []int{32, 16} {
+		if s < target {
+			sizes = append(sizes, s)
+		}
+	}
+	return sizes
 }
 
 // extractIconEx 使用 ExtractIconExW 提取图标（对 exe/dll/ico 文件有效）
@@ -892,15 +964,38 @@ func (ie *IconExtractor) GetSystemIconImage(shellPath string) (image.Image, erro
 	iconIndex := shfi.IIcon
 	logger.Debug("GetSystemIconImage: iconIndex=%d", iconIndex)
 
-	// 从 SHIL_EXTRALARGE (48x48) 图标列表提取
+	// 按当前图标档位选择 SHIL 列表（与 extractIconExtraLarge 一致）：
+	// 大档(64)用 JUMBO(256)，中档(48)用 EXTRALARGE(48)，小档(32)用 LARGE(32)
+	shil, shilName, _ := shilForSize(DesktopIconSize())
+	logger.Debug("GetSystemIconImage: target=%d choose %s", DesktopIconSize(), shilName)
+
+	img, err := ie.extractSystemIconFromSHIL(pidl, iconIndex, shil, shilName)
+
+	// 大档回退：JUMBO(256) 提取失败或提取出的系统图标是空壳
+	// （alpha 全零/可见像素过少）时，降级到 EXTRALARGE(48) 重新提取。
+	if shil == SHIL_JUMBO && (err != nil || ie.isLowQualityIcon(img)) {
+		logger.Debug("GetSystemIconImage: shell:%x JUMBO(256) unavailable (err=%v), fallback to EXTRALARGE(48)", iconIndex, err)
+		fallback, ferr := ie.extractSystemIconFromSHIL(pidl, iconIndex, SHIL_EXTRALARGE, "SHIL_EXTRALARGE")
+		if ferr == nil && fallback != nil && !ie.isLowQualityIcon(fallback) {
+			return fallback, nil
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+	return img, nil
+}
+
+// extractSystemIconFromSHIL 从指定 SHIL 图标列表提取系统图标（使用 PIDL + 索引）。
+func (ie *IconExtractor) extractSystemIconFromSHIL(pidl uintptr, iconIndex int32, shil int, shilName string) (image.Image, error) {
 	var pImageList uintptr
 	hr2, _, _ := procSHGetImageList.Call(
-		SHIL_EXTRALARGE,
+		uintptr(shil),
 		uintptr(unsafe.Pointer(&IID_IImageList)),
 		uintptr(unsafe.Pointer(&pImageList)),
 	)
 	if hr2 != 0 || pImageList == 0 {
-		logger.Warn("GetSystemIconImage: SHGetImageList failed hr=0x%X", hr2)
+		logger.Warn("extractSystemIconFromSHIL: SHGetImageList(%s) failed hr=0x%X", shilName, hr2)
 		// 回退：SHGetFileInfoW 直接获取 32x32 图标
 		var shfi2 SHFILEINFOW
 		ret2, _, _ := procSHGetFileInfoW.Call(
@@ -925,7 +1020,7 @@ func (ie *IconExtractor) GetSystemIconImage(shellPath string) (image.Image, erro
 	var hIcon uintptr
 	hr3, _, _ := syscall.SyscallN(vtable[10], pImageList, uintptr(iconIndex), ILD_TRANSPARENT, uintptr(unsafe.Pointer(&hIcon)))
 	if hr3 != 0 || hIcon == 0 {
-		logger.Warn("GetSystemIconImage: GetIcon failed hr=0x%X idx=%d", hr3, iconIndex)
+		logger.Warn("extractSystemIconFromSHIL: GetIcon failed hr=0x%X idx=%d", hr3, iconIndex)
 		return nil, os.ErrNotExist
 	}
 	defer procDestroyIcon.Call(hIcon)
@@ -934,7 +1029,7 @@ func (ie *IconExtractor) GetSystemIconImage(shellPath string) (image.Image, erro
 	if err != nil {
 		return nil, err
 	}
-	logger.Debug("GetSystemIconImage: ok size=%dx%d", img.Bounds().Dx(), img.Bounds().Dy())
+	logger.Debug("extractSystemIconFromSHIL: ok size=%dx%d shil=%s", img.Bounds().Dx(), img.Bounds().Dy(), shilName)
 	return img, nil
 }
 
