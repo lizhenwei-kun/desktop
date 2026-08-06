@@ -216,6 +216,31 @@ func (m *Manager) removeDesktopItem(path string) {
 	}
 }
 
+// moveItemToGroupEnd 将项目移动到目标分组的末尾（保持分组内有序）
+// 若项目不存在则追加到切片末尾并设置分组。清除目标分组的 itemOrder，使顺序由切片控制。
+// 注意：调用方需持有 m.mu 写锁
+func (m *Manager) moveItemToGroupEnd(path, groupName string) {
+	// 从切片移除该项
+	idx := m.desktopItemIndex(path)
+	if idx < 0 {
+		m.cfg.DesktopItems = append(m.cfg.DesktopItems, config.DesktopItem{Path: path, Group: groupName})
+		return
+	}
+	item := m.cfg.DesktopItems[idx]
+	item.Group = groupName
+	m.cfg.DesktopItems = append(m.cfg.DesktopItems[:idx], m.cfg.DesktopItems[idx+1:]...)
+	// 找到目标分组最后一项的位置，插入其后；若无分组项则插到切片末尾
+	insertAt := len(m.cfg.DesktopItems)
+	for i := range m.cfg.DesktopItems {
+		if m.cfg.DesktopItems[i].Group == groupName {
+			insertAt = i + 1
+		}
+	}
+	m.cfg.DesktopItems = append(m.cfg.DesktopItems, config.DesktopItem{})
+	copy(m.cfg.DesktopItems[insertAt+1:], m.cfg.DesktopItems[insertAt:])
+	m.cfg.DesktopItems[insertAt] = item
+}
+
 // GetConfig 获取当前配置
 func (m *Manager) GetConfig() *config.Config {
 	m.mu.RLock()
@@ -629,13 +654,15 @@ func (m *Manager) RenameGroup(oldName, newName string) {
 }
 
 // AddItemToGroup 添加项目到分组
+// 将项目移动到目标分组末尾，保证分组内有序显示
 func (m *Manager) AddItemToGroup(groupName, itemPath, itemName string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	m.setItemGroup(itemPath, groupName)
-	// 追加到 order 末尾
-	m.itemOrder[groupName] = append(m.itemOrder[groupName], itemPath)
+	// 清除目标分组 order（改由切片顺序控制）
+	delete(m.itemOrder, groupName)
+
+	m.moveItemToGroupEnd(itemPath, groupName)
 	m.save()
 	m.notifyChange()
 }
@@ -686,6 +713,7 @@ func (m *Manager) RemoveItem(itemPath string) {
 }
 
 // MoveItemToGroup 移动项目到指定分组
+// 将项目从切片原位置移动到目标分组的末尾（保持分组内有序）
 func (m *Manager) MoveItemToGroup(itemPath, groupName string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -700,13 +728,13 @@ func (m *Manager) MoveItemToGroup(itemPath, groupName string) {
 			}
 		}
 	}
+	// 清除目标分组 order（改由切片顺序控制，保持拖入项在组内末尾）
+	delete(m.itemOrder, groupName)
 
 	// 清除未分组索引记录
 	delete(m.cfg.UngroupedIndices, itemPath)
 
-	m.setItemGroup(itemPath, groupName)
-	// 追加到新分组 order
-	m.itemOrder[groupName] = append(m.itemOrder[groupName], itemPath)
+	m.moveItemToGroupEnd(itemPath, groupName)
 
 	m.save()
 	m.notifyChange()
