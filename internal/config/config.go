@@ -31,14 +31,16 @@ type Group struct {
 
 // SystemItem 系统桌面项（如"此电脑"）
 type SystemItem struct {
-	ID   string `json:"id"`   // 唯一标识，如 "MyComputer"
-	Name string `json:"name"` // 显示名称
+	ID    string `json:"id"`    // 唯一标识，如 "MyComputer"
+	Name  string `json:"name"`  // 显示名称
+	Index int    `json:"index,omitempty"` // 网格索引（列优先），-1 表示待分配
 }
 
 // DesktopItem 桌面项（文件）
 type DesktopItem struct {
 	Path  string `json:"path"`  // 文件完整路径
 	Group string `json:"group"` // 所属分组名，"" 表示未分组
+	Index int    `json:"index,omitempty"` // 未分组项的网格索引（列优先：从上到下，再从左到右），-1 表示待分配；分组项不使用该字段
 }
 
 // CardFontPresets 卡片标题字体预设
@@ -56,7 +58,6 @@ var CardFontPresets = map[string]struct {
 type Config struct {
 	Groups            []Group           `json:"groups"`
 	DesktopItems      []DesktopItem     `json:"desktop_items"`   // 桌面项有序切片（保持配置中的顺序）
-	UngroupedIndices  map[string]int    `json:"ungrouped_indices"` // 未分组项路径 -> 网格索引（列优先：从上到下，再从左到右），-1 表示待分配
 	SystemItems       []SystemItem      `json:"system_items"`    // 系统桌面项
 	CardFontName      string            `json:"card_font_name"`
 	CardFontSize      int               `json:"card_font_size"`
@@ -94,10 +95,9 @@ func configPath() string {
 // Load 加载配置，不存在则使用默认值
 func Load() *Config {
 	cfg := &Config{
-		Groups:           DefaultGroups(),
-		DesktopItems:     []DesktopItem{},
-		UngroupedIndices: make(map[string]int),
-		CardFontName:     "Consolas",
+		Groups:         DefaultGroups(),
+		DesktopItems:   []DesktopItem{},
+		CardFontName:   "Consolas",
 		CardFontSize:     14,
 		CardFontPreset:   "consolas",
 		IconFontName:     "宋体",
@@ -157,28 +157,34 @@ func Load() *Config {
 		}
 	}
 
-	// 读取旧版字段 ungrouped_positions（路径 -> {X,Y} 相对坐标），迁移到 ungrouped_indices
-	// 旧版使用相对坐标 + 网格密度反算索引；新版直接存网格索引（列优先：从上到下、从左到右）
+	// 旧版字段 ungrouped_indices（路径 -> 网格索引）迁移到 DesktopItem.Index
+	// 旧版字段 ungrouped_positions（路径 -> {X,Y} 相对坐标）迁移：相对坐标 + 网格密度反算索引
+	var legacyIndices struct {
+		UngroupedIndices map[string]int `json:"ungrouped_indices"`
+	}
 	type legacyPosition struct {
 		X float64 `json:"x"`
 		Y float64 `json:"y"`
 	}
-	var legacy struct {
+	var legacyPos struct {
 		UngroupedPositions map[string]legacyPosition `json:"ungrouped_positions"`
 	}
-	if json.Unmarshal(data, &legacy) == nil && len(legacy.UngroupedPositions) > 0 {
-		if loaded.UngroupedIndices == nil {
-			loaded.UngroupedIndices = make(map[string]int)
-		}
+	_ = json.Unmarshal(data, &legacyIndices)
+	_ = json.Unmarshal(data, &legacyPos)
+
+	// 合并两者的索引：优先 ungrouped_indices，其次反算 ungrouped_positions
+	indexMap := make(map[string]int, len(legacyIndices.UngroupedIndices)+len(legacyPos.UngroupedPositions))
+	for p, idx := range legacyIndices.UngroupedIndices {
+		indexMap[p] = idx
+	}
+	if len(legacyPos.UngroupedPositions) > 0 {
 		// 旧版网格参数（与迁移前的 free_items.go 保持一致）
-		// 磁贴宽度 132（desktopIconItemWidth 默认值）、高度 104、间距 8、网格起点 (20,60)
-		// 参考工作区 1920x1040（旧版默认）
 		const (
 			legacyFreeGridLeft = 20
 			legacyFreeGridTop  = 60
 			legacyIconGap      = 8
-			legacyTileW        = 132 // desktopIconItemWidth（迁移前默认值）
-			legacyTileH        = 104 // desktopIconItemHeight（迁移前默认值）
+			legacyTileW        = 132
+			legacyTileH        = 104
 			legacyRefW         = 1920.0
 			legacyRefH         = 1040.0
 		)
@@ -188,12 +194,12 @@ func Load() *Config {
 		if legacyMaxRow < 1 {
 			legacyMaxRow = 1
 		}
-		for path, pos := range legacy.UngroupedPositions {
-			if _, exists := loaded.UngroupedIndices[path]; exists {
+		for path, pos := range legacyPos.UngroupedPositions {
+			if _, ok := indexMap[path]; ok {
 				continue
 			}
 			if pos.X < 0 || pos.Y < 0 {
-				loaded.UngroupedIndices[path] = -1
+				indexMap[path] = -1
 				continue
 			}
 			px := int(pos.X * legacyRefW)
@@ -206,8 +212,26 @@ func Load() *Config {
 			if row < 0 {
 				row = 0
 			}
-			// 列优先索引：index = col * maxRow + row
-			loaded.UngroupedIndices[path] = col*legacyMaxRow + row
+			indexMap[path] = col*legacyMaxRow + row
+		}
+	}
+	// 将 indexMap 应用到对应 DesktopItem（仅未分组项；分组项不使用 Index）
+	// 未分组项不在 indexMap 中则置为 -1（待分配）
+	for i := range loaded.DesktopItems {
+		if loaded.DesktopItems[i].Group == "" {
+			if idx, ok := indexMap[loaded.DesktopItems[i].Path]; ok {
+				loaded.DesktopItems[i].Index = idx
+			} else {
+				loaded.DesktopItems[i].Index = -1
+			}
+		}
+	}
+	// 将 indexMap 应用到系统项（SystemItem.Index），key 形如 "shell:MyComputerFolder"
+	for i := range loaded.SystemItems {
+		if idx, ok := indexMap["shell:"+loaded.SystemItems[i].ID]; ok {
+			loaded.SystemItems[i].Index = idx
+		} else {
+			loaded.SystemItems[i].Index = -1
 		}
 	}
 
@@ -217,9 +241,6 @@ func Load() *Config {
 	}
 	if loaded.DesktopItems == nil {
 		loaded.DesktopItems = []DesktopItem{}
-	}
-	if loaded.UngroupedIndices == nil {
-		loaded.UngroupedIndices = make(map[string]int)
 	}
 	if loaded.SystemItems == nil {
 		loaded.SystemItems = []SystemItem{}

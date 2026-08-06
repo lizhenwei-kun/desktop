@@ -112,10 +112,14 @@ type Manager struct {
 // NewManager 创建分组管理器
 func NewManager() *Manager {
 	cfg := config.Load()
-	return &Manager{
+	m := &Manager{
 		cfg:       cfg,
 		itemOrder: make(map[string][]string),
 	}
+	// 启动时规范化未分组项索引，避免重复
+	m.normalizeFreeIndices()
+	m.save()
+	return m
 }
 
 // SetOnChange 设置变更回调函数
@@ -136,12 +140,32 @@ func (m *Manager) UnsuppressNotify() {
 	atomic.AddInt32(&m.suppressNotify, -1)
 }
 
+// systemItemIndexByPath 返回系统项在 SystemItems 中的索引，path 形如 "shell:MyComputerFolder"
+// 注意：调用方需持有 m.mu 锁
+func (m *Manager) systemItemIndexByPath(path string) int {
+	if len(path) < 6 || path[:6] != "shell:" {
+		return -1
+	}
+	id := path[6:]
+	for i := range m.cfg.SystemItems {
+		if m.cfg.SystemItems[i].ID == id {
+			return i
+		}
+	}
+	return -1
+}
+
 // SetFreeItemIndex 设置未分组项的网格索引（列优先：从上到下、从左到右）
 // idx 为 -1 表示待分配（稍后由 DesktopMode 自动分配空闲格子）
+// 支持普通文件项（desktop_items）和系统项（system_items，path 形如 "shell:MyComputerFolder"）
 func (m *Manager) SetFreeItemIndex(path string, idx int) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.cfg.UngroupedIndices[path] = idx
+	if si := m.systemItemIndexByPath(path); si >= 0 {
+		m.cfg.SystemItems[si].Index = idx
+	} else if i := m.desktopItemIndex(path); i >= 0 {
+		m.cfg.DesktopItems[i].Index = idx
+	}
 	config.Save(m.cfg)
 }
 
@@ -149,8 +173,11 @@ func (m *Manager) SetFreeItemIndex(path string, idx int) {
 func (m *Manager) GetFreeItemIndex(path string) int {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	if idx, ok := m.cfg.UngroupedIndices[path]; ok {
-		return idx
+	if si := m.systemItemIndexByPath(path); si >= 0 {
+		return m.cfg.SystemItems[si].Index
+	}
+	if i := m.desktopItemIndex(path); i >= 0 {
+		return m.cfg.DesktopItems[i].Index
 	}
 	return -1
 }
@@ -159,7 +186,11 @@ func (m *Manager) GetFreeItemIndex(path string) int {
 func (m *Manager) RemoveFreeItemIndex(path string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	delete(m.cfg.UngroupedIndices, path)
+	if si := m.systemItemIndexByPath(path); si >= 0 {
+		m.cfg.SystemItems[si].Index = -1
+	} else if i := m.desktopItemIndex(path); i >= 0 {
+		m.cfg.DesktopItems[i].Index = -1
+	}
 	config.Save(m.cfg)
 }
 
@@ -228,6 +259,7 @@ func (m *Manager) moveItemToGroupEnd(path, groupName string) {
 	}
 	item := m.cfg.DesktopItems[idx]
 	item.Group = groupName
+	item.Index = 0 // 分组项不使用 Index
 	m.cfg.DesktopItems = append(m.cfg.DesktopItems[:idx], m.cfg.DesktopItems[idx+1:]...)
 	// 找到目标分组最后一项的位置，插入其后；若无分组项则插到切片末尾
 	insertAt := len(m.cfg.DesktopItems)
@@ -246,6 +278,66 @@ func (m *Manager) GetConfig() *config.Config {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.cfg
+}
+
+// normalizeFreeIndices 规范化未分组项（含系统项）的网格索引，保证唯一。
+// 重复的索引会重新分配为第一个未占用的空闲索引；-1（待分配）保持不变。
+// 注意：调用方需持有 m.mu 写锁
+func (m *Manager) normalizeFreeIndices() {
+	// 记录已占用的索引
+	occupied := make(map[int]bool)
+	// 记录待处理项（引用切片索引或系统项索引，便于回写）
+	type ref struct {
+		isSystem bool
+		idx      int // DesktopItems 或 SystemItems 中的索引
+	}
+	var pending []ref
+
+	for i := range m.cfg.DesktopItems {
+		if m.cfg.DesktopItems[i].Group != "" {
+			continue
+		}
+		idx := m.cfg.DesktopItems[i].Index
+		if idx >= 0 {
+			if occupied[idx] {
+				pending = append(pending, ref{isSystem: false, idx: i})
+			} else {
+				occupied[idx] = true
+			}
+		}
+	}
+	for i := range m.cfg.SystemItems {
+		idx := m.cfg.SystemItems[i].Index
+		if idx >= 0 {
+			if occupied[idx] {
+				pending = append(pending, ref{isSystem: true, idx: i})
+			} else {
+				occupied[idx] = true
+			}
+		}
+	}
+
+	// 为重复项分配空闲索引
+	for _, p := range pending {
+		free := 0
+		for occupied[free] {
+			free++
+		}
+		occupied[free] = true
+		if p.isSystem {
+			m.cfg.SystemItems[p.idx].Index = free
+		} else {
+			m.cfg.DesktopItems[p.idx].Index = free
+		}
+	}
+}
+
+// NormalizeFreeIndices 公开方法：规范化未分组项索引并持久化
+func (m *Manager) NormalizeFreeIndices() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.normalizeFreeIndices()
+	m.save()
 }
 
 // GetIconSizeLevel 获取桌面图标大小档位
@@ -618,8 +710,9 @@ func (m *Manager) DeleteGroup(name string) {
 	for i := range m.cfg.DesktopItems {
 		if m.cfg.DesktopItems[i].Group == name {
 			m.cfg.DesktopItems[i].Group = ""
-			if _, exists := m.cfg.UngroupedIndices[m.cfg.DesktopItems[i].Path]; !exists {
-				m.cfg.UngroupedIndices[m.cfg.DesktopItems[i].Path] = -1
+			// 分配待定索引（-1 表示待分配）
+			if m.cfg.DesktopItems[i].Index == 0 {
+				m.cfg.DesktopItems[i].Index = -1
 			}
 		}
 	}
@@ -696,9 +789,6 @@ func (m *Manager) RemoveItem(itemPath string) {
 	// 从 DesktopItems 中移除
 	m.removeDesktopItem(itemPath)
 
-	// 从 UngroupedIndices 中移除
-	delete(m.cfg.UngroupedIndices, itemPath)
-
 	// 从所有分组的 order 中移除
 	for groupName, order := range m.itemOrder {
 		for i, p := range order {
@@ -731,9 +821,6 @@ func (m *Manager) MoveItemToGroup(itemPath, groupName string) {
 	// 清除目标分组 order（改由切片顺序控制，保持拖入项在组内末尾）
 	delete(m.itemOrder, groupName)
 
-	// 清除未分组索引记录
-	delete(m.cfg.UngroupedIndices, itemPath)
-
 	m.moveItemToGroupEnd(itemPath, groupName)
 
 	m.save()
@@ -757,8 +844,10 @@ func (m *Manager) MoveItemToDesktop(itemPath string) {
 
 	m.setItemGroup(itemPath, "")
 	// 确保未分组项有默认索引（-1 表示稍后在 DesktopMode 中分配）
-	if _, exists := m.cfg.UngroupedIndices[itemPath]; !exists {
-		m.cfg.UngroupedIndices[itemPath] = -1 // 标记为待分配
+	if i := m.desktopItemIndex(itemPath); i >= 0 {
+		if m.cfg.DesktopItems[i].Group == "" {
+			m.cfg.DesktopItems[i].Index = -1 // 标记为待分配
+		}
 	}
 	m.save()
 	m.notifyChange()
@@ -775,7 +864,9 @@ func (m *Manager) AddItemToDesktop(itemPath, itemName string) {
 	}
 
 	m.setItemGroup(itemPath, "")
-	m.cfg.UngroupedIndices[itemPath] = -1 // 标记为待分配
+	if i := m.desktopItemIndex(itemPath); i >= 0 {
+		m.cfg.DesktopItems[i].Index = -1 // 标记为待分配
+	}
 	m.save()
 	m.notifyChange()
 }
@@ -927,15 +1018,9 @@ func (m *Manager) RenameItem(oldPath, newName string) (string, error) {
 		return "", err
 	}
 
-	// 更新 DesktopItems（保持原位置，仅替换路径）
+	// 更新 DesktopItems（保持原位置，仅替换路径；Index 字段随项保留）
 	if i := m.desktopItemIndex(oldPath); i >= 0 {
 		m.cfg.DesktopItems[i].Path = newPath
-	}
-
-	// 更新 UngroupedIndices
-	if idx, ok := m.cfg.UngroupedIndices[oldPath]; ok {
-		delete(m.cfg.UngroupedIndices, oldPath)
-		m.cfg.UngroupedIndices[newPath] = idx
 	}
 
 	// 更新 itemOrder
@@ -973,7 +1058,6 @@ func (m *Manager) ReloadDesktopItems() {
 		path := m.cfg.DesktopItems[i].Path
 		if !desktopSet[path] {
 			m.cfg.DesktopItems = append(m.cfg.DesktopItems[:i], m.cfg.DesktopItems[i+1:]...)
-			delete(m.cfg.UngroupedIndices, path)
 			// 同步清理 itemOrder，避免残留幽灵路径
 			for gName, order := range m.itemOrder {
 				for j, p := range order {
@@ -988,10 +1072,10 @@ func (m *Manager) ReloadDesktopItems() {
 		}
 	}
 
-	// 添加桌面目录中存在但配置中缺失的项（默认未分组，追加到末尾）
+	// 添加桌面目录中存在但配置中缺失的项（默认未分组，追加到末尾，索引待分配）
 	for _, item := range desktopPaths {
 		if m.desktopItemIndex(item.Path) < 0 {
-			m.cfg.DesktopItems = append(m.cfg.DesktopItems, config.DesktopItem{Path: item.Path, Group: ""})
+			m.cfg.DesktopItems = append(m.cfg.DesktopItems, config.DesktopItem{Path: item.Path, Group: "", Index: -1})
 		}
 	}
 
