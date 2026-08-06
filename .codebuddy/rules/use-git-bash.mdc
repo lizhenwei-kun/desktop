@@ -1,0 +1,15 @@
+---
+description: 
+alwaysApply: true
+enabled: true
+updatedAt: 2026-08-06T00:00:00.000Z
+provider: 
+---
+
+## 执行命令行工具优先使用 Git Bash
+
+**当需要执行命令行工具（尤其涉及 git、文件 I/O 或复杂解析时），优先使用 UGit 自带的 Git Bash，而不是 cmd.exe / PowerShell。**
+
+- Git Bash 路径：`C:\Users\locojoy\AppData\Local\UGit\app-5.51.0\resources\app\git\bin\bash.exe`
+- 调用方式：`"C:\Users\locojoy\AppData\Local\UGit\app-5.51.0\resources\app\git\bin\bash.exe" -c "<命令>"`
+- git 可执行文件通常位于该 git 目录下的 `bin\git.exe` 或 `cmd\git.exe`

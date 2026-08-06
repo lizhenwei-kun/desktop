@@ -178,6 +178,44 @@ func (m *Manager) save() {
 	config.Save(m.cfg)
 }
 
+// desktopItemIndex 返回路径在 DesktopItems 切片中的索引，不存在返回 -1
+// 注意：调用方需持有 m.mu 锁（读锁或写锁）
+func (m *Manager) desktopItemIndex(path string) int {
+	for i := range m.cfg.DesktopItems {
+		if m.cfg.DesktopItems[i].Path == path {
+			return i
+		}
+	}
+	return -1
+}
+
+// getItemGroup 获取项目所属分组名（或空字符串）
+// 注意：调用方需持有 m.mu 锁（读锁或写锁）
+func (m *Manager) getItemGroup(path string) string {
+	if i := m.desktopItemIndex(path); i >= 0 {
+		return m.cfg.DesktopItems[i].Group
+	}
+	return ""
+}
+
+// setItemGroup 设置项目分组；不存在则追加到末尾
+// 注意：调用方需持有 m.mu 写锁
+func (m *Manager) setItemGroup(path, group string) {
+	if i := m.desktopItemIndex(path); i >= 0 {
+		m.cfg.DesktopItems[i].Group = group
+		return
+	}
+	m.cfg.DesktopItems = append(m.cfg.DesktopItems, config.DesktopItem{Path: path, Group: group})
+}
+
+// removeDesktopItem 从 DesktopItems 切片中移除路径
+// 注意：调用方需持有 m.mu 写锁
+func (m *Manager) removeDesktopItem(path string) {
+	if i := m.desktopItemIndex(path); i >= 0 {
+		m.cfg.DesktopItems = append(m.cfg.DesktopItems[:i], m.cfg.DesktopItems[i+1:]...)
+	}
+}
+
 // GetConfig 获取当前配置
 func (m *Manager) GetConfig() *config.Config {
 	m.mu.RLock()
@@ -288,50 +326,45 @@ func (m *Manager) GetGroups() []config.Group {
 }
 
 // GetGroupItems 获取指定分组的所有项目
+// DesktopItems 为有序切片，默认按配置中的顺序返回；若存在 itemOrder（拖拽排序）则按 itemOrder 顺序。
 func (m *Manager) GetGroupItems(groupName string) []GroupItem {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	// Build map: path -> name
-	itemMap := make(map[string]string)
-	for path, gName := range m.cfg.DesktopItems {
-		if gName == groupName {
-			name := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
-			itemMap[path] = name
+	// 从有序切片中筛选该分组的项，保持配置顺序
+	ordered := make([]GroupItem, 0)
+	for _, di := range m.cfg.DesktopItems {
+		if di.Group == groupName {
+			name := strings.TrimSuffix(filepath.Base(di.Path), filepath.Ext(di.Path))
+			ordered = append(ordered, GroupItem{Path: di.Path, Name: name})
 		}
 	}
 
-	// Use itemOrder if available
+	// 有拖拽排序记录时，按 itemOrder 顺序排列（未记录的项追加到末尾，保持配置顺序）
 	if order, ok := m.itemOrder[groupName]; ok && len(order) > 0 {
+		itemMap := make(map[string]bool, len(ordered))
+		for _, it := range ordered {
+			itemMap[it.Path] = true
+		}
 		var items []GroupItem
 		added := make(map[string]bool, len(order))
 		for _, path := range order {
-			if name, ok := itemMap[path]; ok {
+			if itemMap[path] {
+				name := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 				items = append(items, GroupItem{Path: path, Name: name})
 				added[path] = true
 			}
 		}
-		// Append items not yet in order
-		for path, name := range itemMap {
-			if !added[path] {
-				items = append(items, GroupItem{Path: path, Name: name})
+		// 追加不在 order 中的项（保持配置切片顺序，稳定）
+		for _, it := range ordered {
+			if !added[it.Path] {
+				items = append(items, it)
 			}
 		}
 		return items
 	}
 
-	// Fallback: sorted by name
-	var items []GroupItem
-	for path, gName := range m.cfg.DesktopItems {
-		if gName == groupName {
-			name := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
-			items = append(items, GroupItem{Path: path, Name: name})
-		}
-	}
-	sort.Slice(items, func(i, j int) bool {
-		return items[i].Name < items[j].Name
-	})
-	return items
+	return ordered
 }
 
 // GetSystemItems 获取系统桌面项（如"此电脑"），作为未分组项展示
@@ -401,11 +434,11 @@ func (m *Manager) GetUngroupedItems() []GroupItem {
 	}
 
 	var items []GroupItem
-	for path, gName := range m.cfg.DesktopItems {
+	for _, di := range m.cfg.DesktopItems {
 		// 未分组 或 分组卡片不存在的项目
-		if gName == "" || !existingGroups[gName] {
-			name := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
-			items = append(items, GroupItem{Path: path, Name: name})
+		if di.Group == "" || !existingGroups[di.Group] {
+			name := strings.TrimSuffix(filepath.Base(di.Path), filepath.Ext(di.Path))
+			items = append(items, GroupItem{Path: di.Path, Name: name})
 		}
 	}
 
@@ -454,10 +487,10 @@ func (m *Manager) GetAllItems() []ItemInfo {
 		existingGroups[g.Name] = true
 	}
 	var ungrouped []ItemInfo
-	for path, gName := range m.cfg.DesktopItems {
-		if gName == "" || !existingGroups[gName] {
-			name := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
-			ungrouped = append(ungrouped, ItemInfo{Path: path, Name: name, GroupName: gName})
+	for _, di := range m.cfg.DesktopItems {
+		if di.Group == "" || !existingGroups[di.Group] {
+			name := strings.TrimSuffix(filepath.Base(di.Path), filepath.Ext(di.Path))
+			ungrouped = append(ungrouped, ItemInfo{Path: di.Path, Name: name, GroupName: di.Group})
 		}
 	}
 	sort.Slice(ungrouped, func(i, j int) bool {
@@ -477,46 +510,47 @@ func (m *Manager) GetAllItems() []ItemInfo {
 	return result
 }
 
-// collectGroupItems 收集指定分组内的项目（按 itemOrder 或名称排序）
+// collectGroupItems 收集指定分组内的项目（按 itemOrder 或配置切片顺序）
 func (m *Manager) collectGroupItems(groupName string) []ItemInfo {
-	itemMap := make(map[string]string)
-	for path, gName := range m.cfg.DesktopItems {
-		if gName == groupName {
-			name := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
-			itemMap[path] = name
+	// 从有序切片中筛选该分组的项，保持配置顺序
+	ordered := make([]ItemInfo, 0)
+	for _, di := range m.cfg.DesktopItems {
+		if di.Group == groupName {
+			name := strings.TrimSuffix(filepath.Base(di.Path), filepath.Ext(di.Path))
+			ordered = append(ordered, ItemInfo{Path: di.Path, Name: name, GroupName: groupName})
 		}
 	}
 
-	var items []ItemInfo
 	if order, ok := m.itemOrder[groupName]; ok && len(order) > 0 {
+		pathSet := make(map[string]bool, len(ordered))
+		for _, it := range ordered {
+			pathSet[it.Path] = true
+		}
+		var items []ItemInfo
 		added := make(map[string]bool, len(order))
 		for _, path := range order {
-			if name, ok := itemMap[path]; ok {
+			if pathSet[path] {
+				name := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 				items = append(items, ItemInfo{Path: path, Name: name, GroupName: groupName})
 				added[path] = true
 			}
 		}
-		for path, name := range itemMap {
-			if !added[path] {
-				items = append(items, ItemInfo{Path: path, Name: name, GroupName: groupName})
+		// 追加不在 order 中的项（保持配置切片顺序，稳定）
+		for _, it := range ordered {
+			if !added[it.Path] {
+				items = append(items, it)
 			}
 		}
-	} else {
-		for path, name := range itemMap {
-			items = append(items, ItemInfo{Path: path, Name: name, GroupName: groupName})
-		}
-		sort.Slice(items, func(i, j int) bool {
-			return items[i].Name < items[j].Name
-		})
+		return items
 	}
-	return items
+	return ordered
 }
 
 // GetItemGroupPath 获取项目所属分组名（或空字符串）
 func (m *Manager) GetItemGroupPath(path string) string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return m.cfg.DesktopItems[path]
+	return m.getItemGroup(path)
 }
 
 // CreateGroup 创建新分组
@@ -556,11 +590,11 @@ func (m *Manager) DeleteGroup(name string) {
 	m.cfg.Groups = newGroups
 
 	// 将该分组的项目标记为未分组，并分配索引标记
-	for path, gName := range m.cfg.DesktopItems {
-		if gName == name {
-			m.cfg.DesktopItems[path] = ""
-			if _, exists := m.cfg.UngroupedIndices[path]; !exists {
-				m.cfg.UngroupedIndices[path] = -1
+	for i := range m.cfg.DesktopItems {
+		if m.cfg.DesktopItems[i].Group == name {
+			m.cfg.DesktopItems[i].Group = ""
+			if _, exists := m.cfg.UngroupedIndices[m.cfg.DesktopItems[i].Path]; !exists {
+				m.cfg.UngroupedIndices[m.cfg.DesktopItems[i].Path] = -1
 			}
 		}
 	}
@@ -583,10 +617,10 @@ func (m *Manager) RenameGroup(oldName, newName string) {
 		}
 	}
 
-	// 更新桌面项映射
-	for path, gName := range m.cfg.DesktopItems {
-		if gName == oldName {
-			m.cfg.DesktopItems[path] = newName
+	// 更新桌面项分组
+	for i := range m.cfg.DesktopItems {
+		if m.cfg.DesktopItems[i].Group == oldName {
+			m.cfg.DesktopItems[i].Group = newName
 		}
 	}
 
@@ -599,7 +633,7 @@ func (m *Manager) AddItemToGroup(groupName, itemPath, itemName string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	m.cfg.DesktopItems[itemPath] = groupName
+	m.setItemGroup(itemPath, groupName)
 	// 追加到 order 末尾
 	m.itemOrder[groupName] = append(m.itemOrder[groupName], itemPath)
 	m.save()
@@ -611,8 +645,8 @@ func (m *Manager) RemoveItemFromGroup(groupName, itemPath string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if m.cfg.DesktopItems[itemPath] == groupName {
-		m.cfg.DesktopItems[itemPath] = ""
+	if m.getItemGroup(itemPath) == groupName {
+		m.setItemGroup(itemPath, "")
 	}
 	// 从 order 中移除
 	if order, ok := m.itemOrder[groupName]; ok {
@@ -633,7 +667,7 @@ func (m *Manager) RemoveItem(itemPath string) {
 	defer m.mu.Unlock()
 
 	// 从 DesktopItems 中移除
-	delete(m.cfg.DesktopItems, itemPath)
+	m.removeDesktopItem(itemPath)
 
 	// 从 UngroupedIndices 中移除
 	delete(m.cfg.UngroupedIndices, itemPath)
@@ -657,7 +691,7 @@ func (m *Manager) MoveItemToGroup(itemPath, groupName string) {
 	defer m.mu.Unlock()
 
 	// 从旧分组的 order 移除
-	oldGroup := m.cfg.DesktopItems[itemPath]
+	oldGroup := m.getItemGroup(itemPath)
 	if order, ok := m.itemOrder[oldGroup]; ok {
 		for i, p := range order {
 			if p == itemPath {
@@ -670,7 +704,7 @@ func (m *Manager) MoveItemToGroup(itemPath, groupName string) {
 	// 清除未分组索引记录
 	delete(m.cfg.UngroupedIndices, itemPath)
 
-	m.cfg.DesktopItems[itemPath] = groupName
+	m.setItemGroup(itemPath, groupName)
 	// 追加到新分组 order
 	m.itemOrder[groupName] = append(m.itemOrder[groupName], itemPath)
 
@@ -683,7 +717,7 @@ func (m *Manager) MoveItemToDesktop(itemPath string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	oldGroup := m.cfg.DesktopItems[itemPath]
+	oldGroup := m.getItemGroup(itemPath)
 	if order, ok := m.itemOrder[oldGroup]; ok {
 		for i, p := range order {
 			if p == itemPath {
@@ -693,7 +727,7 @@ func (m *Manager) MoveItemToDesktop(itemPath string) {
 		}
 	}
 
-	m.cfg.DesktopItems[itemPath] = ""
+	m.setItemGroup(itemPath, "")
 	// 确保未分组项有默认索引（-1 表示稍后在 DesktopMode 中分配）
 	if _, exists := m.cfg.UngroupedIndices[itemPath]; !exists {
 		m.cfg.UngroupedIndices[itemPath] = -1 // 标记为待分配
@@ -708,29 +742,31 @@ func (m *Manager) AddItemToDesktop(itemPath, itemName string) {
 	defer m.mu.Unlock()
 
 	// 如果已存在则跳过
-	if _, exists := m.cfg.DesktopItems[itemPath]; exists {
+	if m.desktopItemIndex(itemPath) >= 0 {
 		return
 	}
 
-	m.cfg.DesktopItems[itemPath] = ""
+	m.setItemGroup(itemPath, "")
 	m.cfg.UngroupedIndices[itemPath] = -1 // 标记为待分配
 	m.save()
 	m.notifyChange()
 }
 
 // MoveItemWithinGroup 在分组内移动项目到新位置（拖拽排序）
+// DesktopItems 为有序切片，直接重排切片顺序即可，无需维护 itemOrder。
 func (m *Manager) MoveItemWithinGroup(groupName, itemPath string, newIndex int) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	order := m.itemOrder[groupName]
-	// 如果 order 为空（首次拖拽），从所有分组项目构建初始排序
-	if len(order) == 0 {
-		for path, gName := range m.cfg.DesktopItems {
-			if gName == groupName {
-				order = append(order, path)
-			}
+	// 收集该分组当前的项目路径（保持切片顺序）
+	var order []string
+	for _, di := range m.cfg.DesktopItems {
+		if di.Group == groupName {
+			order = append(order, di.Path)
 		}
+	}
+	if len(order) == 0 {
+		return
 	}
 
 	// 移除当前项目
@@ -751,7 +787,37 @@ func (m *Manager) MoveItemWithinGroup(groupName, itemPath string, newIndex int) 
 		copy(newOrder[newIndex+1:], newOrder[newIndex:])
 		newOrder[newIndex] = itemPath
 	}
-	m.itemOrder[groupName] = newOrder
+
+	// 按新顺序重排该分组的项；非分组项保持原位。
+	// 先收集该分组项，按 newOrder 顺序重建，再遍历原切片用新顺序替换分组项位置。
+	byPath := make(map[string]config.DesktopItem)
+	reordered := make([]config.DesktopItem, 0, len(newOrder))
+	for _, di := range m.cfg.DesktopItems {
+		if di.Group == groupName {
+			byPath[di.Path] = di
+		}
+	}
+	for _, p := range newOrder {
+		if di, ok := byPath[p]; ok {
+			reordered = append(reordered, di)
+		}
+	}
+	rebuilt := make([]config.DesktopItem, 0, len(m.cfg.DesktopItems))
+	rc := 0
+	for _, di := range m.cfg.DesktopItems {
+		if di.Group == groupName {
+			rebuilt = append(rebuilt, reordered[rc])
+			rc++
+		} else {
+			rebuilt = append(rebuilt, di)
+		}
+	}
+	m.cfg.DesktopItems = rebuilt
+
+	// 清除 itemOrder，使读取路径回退到切片顺序
+	delete(m.itemOrder, groupName)
+
+	m.save()
 	m.notifyChange()
 }
 
@@ -833,10 +899,9 @@ func (m *Manager) RenameItem(oldPath, newName string) (string, error) {
 		return "", err
 	}
 
-	// 更新 DesktopItems 映射
-	if gName, ok := m.cfg.DesktopItems[oldPath]; ok {
-		delete(m.cfg.DesktopItems, oldPath)
-		m.cfg.DesktopItems[newPath] = gName
+	// 更新 DesktopItems（保持原位置，仅替换路径）
+	if i := m.desktopItemIndex(oldPath); i >= 0 {
+		m.cfg.DesktopItems[i].Path = newPath
 	}
 
 	// 更新 UngroupedIndices
@@ -876,17 +941,29 @@ func (m *Manager) ReloadDesktopItems() {
 	}
 
 	// 删除配置中存在但桌面目录中已不存在的项（以系统桌面目录为准）
-	for path := range m.cfg.DesktopItems {
+	for i := 0; i < len(m.cfg.DesktopItems); {
+		path := m.cfg.DesktopItems[i].Path
 		if !desktopSet[path] {
-			delete(m.cfg.DesktopItems, path)
+			m.cfg.DesktopItems = append(m.cfg.DesktopItems[:i], m.cfg.DesktopItems[i+1:]...)
 			delete(m.cfg.UngroupedIndices, path)
+			// 同步清理 itemOrder，避免残留幽灵路径
+			for gName, order := range m.itemOrder {
+				for j, p := range order {
+					if p == path {
+						m.itemOrder[gName] = append(order[:j], order[j+1:]...)
+						break
+					}
+				}
+			}
+		} else {
+			i++
 		}
 	}
 
-	// 添加桌面目录中存在但配置中缺失的项（默认未分组）
+	// 添加桌面目录中存在但配置中缺失的项（默认未分组，追加到末尾）
 	for _, item := range desktopPaths {
-		if _, exists := m.cfg.DesktopItems[item.Path]; !exists {
-			m.cfg.DesktopItems[item.Path] = ""
+		if m.desktopItemIndex(item.Path) < 0 {
+			m.cfg.DesktopItems = append(m.cfg.DesktopItems, config.DesktopItem{Path: item.Path, Group: ""})
 		}
 	}
 

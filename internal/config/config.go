@@ -1,9 +1,11 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sort"
 )
 
 // Position 表示位置坐标（相对坐标，0.0~1.0 表示在工作区中的比例）
@@ -33,6 +35,12 @@ type SystemItem struct {
 	Name string `json:"name"` // 显示名称
 }
 
+// DesktopItem 桌面项（文件）
+type DesktopItem struct {
+	Path  string `json:"path"`  // 文件完整路径
+	Group string `json:"group"` // 所属分组名，"" 表示未分组
+}
+
 // CardFontPresets 卡片标题字体预设
 // key 为 preset 名（小写），value 为 {字体名, 字号}
 var CardFontPresets = map[string]struct {
@@ -47,7 +55,7 @@ var CardFontPresets = map[string]struct {
 // Config 表示应用配置
 type Config struct {
 	Groups            []Group           `json:"groups"`
-	DesktopItems      map[string]string `json:"desktop_items"`   // 桌面项路径 -> 分组名
+	DesktopItems      []DesktopItem     `json:"desktop_items"`   // 桌面项有序切片（保持配置中的顺序）
 	UngroupedIndices  map[string]int    `json:"ungrouped_indices"` // 未分组项路径 -> 网格索引（列优先：从上到下，再从左到右），-1 表示待分配
 	SystemItems       []SystemItem      `json:"system_items"`    // 系统桌面项
 	CardFontName      string            `json:"card_font_name"`
@@ -87,7 +95,7 @@ func configPath() string {
 func Load() *Config {
 	cfg := &Config{
 		Groups:           DefaultGroups(),
-		DesktopItems:     make(map[string]string),
+		DesktopItems:     []DesktopItem{},
 		UngroupedIndices: make(map[string]int),
 		CardFontName:     "Consolas",
 		CardFontSize:     14,
@@ -105,9 +113,48 @@ func Load() *Config {
 		return cfg
 	}
 
+	// desktop_items 兼容迁移：
+	// 旧版格式为对象 {路径: 分组名}，新版格式为数组 [{path, group}, ...]。
+	// 由于类型不同（map vs slice），直接整体 Unmarshal 会在旧格式下失败导致配置丢失。
+	// 因此先从原始 JSON 中剥离 desktop_items，主体正常解析，再单独处理 desktop_items。
+	var probe struct {
+		DesktopItems json.RawMessage `json:"desktop_items"`
+	}
+	_ = json.Unmarshal(data, &probe)
+
+	// 构造去除 desktop_items 的 JSON，避免类型不匹配导致整体解析失败
+	filtered := filterOutKey(data, "desktop_items")
+
 	loaded := &Config{}
-	if err := json.Unmarshal(data, loaded); err != nil {
+	if err := json.Unmarshal(filtered, loaded); err != nil {
 		return cfg
+	}
+
+	if len(probe.DesktopItems) > 0 {
+		trimmed := bytes.TrimSpace(probe.DesktopItems)
+		if len(trimmed) > 0 && trimmed[0] == '{' {
+			// 旧版对象格式 {路径: 分组名}，迁移为切片
+			var legacyDesktopItems map[string]string
+			if json.Unmarshal(probe.DesktopItems, &legacyDesktopItems) == nil {
+				items := make([]DesktopItem, 0, len(legacyDesktopItems))
+				// 排序保证顺序稳定
+				paths := make([]string, 0, len(legacyDesktopItems))
+				for p := range legacyDesktopItems {
+					paths = append(paths, p)
+				}
+				sort.Strings(paths)
+				for _, p := range paths {
+					items = append(items, DesktopItem{Path: p, Group: legacyDesktopItems[p]})
+				}
+				loaded.DesktopItems = items
+			}
+		} else if len(trimmed) > 0 && trimmed[0] == '[' {
+			// 新版数组格式，直接解析
+			var items []DesktopItem
+			if json.Unmarshal(probe.DesktopItems, &items) == nil {
+				loaded.DesktopItems = items
+			}
+		}
 	}
 
 	// 读取旧版字段 ungrouped_positions（路径 -> {X,Y} 相对坐标），迁移到 ungrouped_indices
@@ -169,7 +216,7 @@ func Load() *Config {
 		loaded.Groups = DefaultGroups()
 	}
 	if loaded.DesktopItems == nil {
-		loaded.DesktopItems = make(map[string]string)
+		loaded.DesktopItems = []DesktopItem{}
 	}
 	if loaded.UngroupedIndices == nil {
 		loaded.UngroupedIndices = make(map[string]int)
@@ -187,6 +234,24 @@ func Load() *Config {
 	migrateAbsoluteToRelative(loaded)
 
 	return loaded
+}
+
+// filterOutKey 从 JSON 中移除指定顶层 key（用于剥离类型不兼容的字段后再整体解析）。
+// data 必须是 JSON 对象；若不是对象则原样返回。
+func filterOutKey(data []byte, key string) []byte {
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(data, &m); err != nil {
+		return data
+	}
+	if _, ok := m[key]; !ok {
+		return data
+	}
+	delete(m, key)
+	out, err := json.Marshal(m)
+	if err != nil {
+		return data
+	}
+	return out
 }
 
 // migrateAbsoluteToRelative 将旧版绝对像素坐标迁移为相对坐标
