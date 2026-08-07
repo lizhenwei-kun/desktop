@@ -73,11 +73,7 @@ type Config struct {
 // DefaultGroups 返回默认分组配置（相对坐标，基于1920x1040工作区计算的比例）
 func DefaultGroups() []Group {
 	return []Group{
-		{Name: "快捷方式", Position: Position{0.017, 0.079}, Size: Size{0.156, 0.563}, Color: "#342333B8"},
-		{Name: "备份文件", Position: Position{0.175, 0.079}, Size: Size{0.158, 0.225}, Color: "#A783BEB8"},
-		{Name: "Word", Position: Position{0.334, 0.079}, Size: Size{0.168, 0.225}, Color: "#24A892B8"},
-		{Name: "图片", Position: Position{0.175, 0.367}, Size: Size{0.158, 0.225}, Color: "#276BA6B8"},
-		{Name: "桌面", Position: Position{0.334, 0.367}, Size: Size{0.168, 0.225}, Color: "#C54834B8"},
+		{Name: "桌面", Position: Position{0.334, 0.367}, Size: Size{0.168, 0.225}, Color: "#276BA6B8"},
 	}
 }
 
