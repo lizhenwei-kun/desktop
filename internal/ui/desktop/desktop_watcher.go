@@ -51,15 +51,20 @@ func (dm *DesktopMode) initDesktopWatcher() {
 		return
 	}
 	desktopDir := filepath.Join(home, "Desktop")
+	// 公共桌面目录（与 collectDesktopPaths 保持一致）
+	publicDesktop := filepath.Join(os.Getenv("PUBLIC"), "Desktop")
+	if publicDesktop == filepath.Join("", "Desktop") {
+		publicDesktop = `C:\Users\Public\Desktop`
+	}
 
 	dm.DesktopWatcherState.stopCh = make(chan struct{})
 
-	// 启动监听 goroutine
-	safego.Go("watchDesktopDirectory", func() { dm.watchDesktopDirectory(desktopDir) })
+	// 启动监听 goroutine（同时监听用户桌面与公共桌面）
+	safego.Go("watchDesktopDirectory", func() { dm.watchDesktopDirectories([]string{desktopDir, publicDesktop}) })
 }
 
-// watchDesktopDirectory 在独立 goroutine 中使用 fsnotify 监听桌面目录
-func (dm *DesktopMode) watchDesktopDirectory(dir string) {
+// watchDesktopDirectories 在独立 goroutine 中使用 fsnotify 监听多个桌面目录
+func (dm *DesktopMode) watchDesktopDirectories(dirs []string) {
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		logger.Warn("desktopWatcher: fsnotify.NewWatcher failed: %v", err)
@@ -67,12 +72,22 @@ func (dm *DesktopMode) watchDesktopDirectory(dir string) {
 	}
 	defer watcher.Close()
 
-	if err := watcher.Add(dir); err != nil {
-		logger.Warn("desktopWatcher: watcher.Add(%q) failed: %v", dir, err)
+	added := 0
+	for _, dir := range dirs {
+		if dir == "" {
+			continue
+		}
+		if err := watcher.Add(dir); err != nil {
+			logger.Warn("desktopWatcher: watcher.Add(%q) failed: %v", dir, err)
+			continue
+		}
+		logger.Debug("desktopWatcher: watching %q with fsnotify", dir)
+		added++
+	}
+	if added == 0 {
+		logger.Warn("desktopWatcher: no directory added, watcher not running")
 		return
 	}
-
-	logger.Debug("desktopWatcher: watching %q with fsnotify", dir)
 	dm.DesktopWatcherState.setRunning(true)
 
 	// 定时器 ticker，每秒检查一次是否需要触发延迟刷新
